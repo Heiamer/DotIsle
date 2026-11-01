@@ -120,7 +120,7 @@ impl Backend{
             if media.is_none()&&Instant::now()>=retry{match Media::new(){Ok(m)=>media=Some(m),Err(e)=>{io::log(&self.logs,"SMTC",&e.to_string());retry=Instant::now()+Duration::from_secs(5);}}}
             if let Some(reader)=media.as_mut(){match reader.read(&filter){
                 Ok(sample)=>{let feed=MediaFeed{sample,active:reader.active.clone(),events:reader.events.load(Ordering::Relaxed),captured:Instant::now()};if let Ok(mut slot)=self.media_feed.lock(){*slot=Some(feed);}},
-                Err(error)=>{io::log(&self.logs,"SMTC",&error.to_string());if let Ok(mut slot)=self.media_feed.lock(){*slot=None;}media=None;retry=Instant::now()+Duration::from_secs(1);},
+                Err(error)=>{io::log(&self.logs,"SMTC",&error.to_string());media=None;retry=Instant::now()+Duration::from_secs(1);},
             }}
             std::thread::sleep(Duration::from_millis(160));
         }
@@ -157,7 +157,7 @@ impl Backend{
                     if let Some(track)=job{self.start_search(track);}
                     let key=sample.playback.track.as_ref().map(|t|LyricSyncService::build_stable_track_identity(t)).unwrap_or_default();
                     if key!=last_cover{last_cover=key.clone();cover_retry=Instant::now();}
-                    if let Some(url)=cover_url{let needed=self.state.lock().is_ok_and(|s|s.artwork_identity.is_empty());if needed&&Instant::now()>=cover_retry{cover_retry=Instant::now()+Duration::from_secs(15);self.start_artwork(key,url);}}
+                    if let Some(url)=cover_url{let needed=self.state.lock().is_ok_and(|s|s.cover.is_none());if needed&&Instant::now()>=cover_retry{cover_retry=Instant::now()+Duration::from_secs(15);self.start_artwork(key,url);}}
                 }
 
             std::thread::sleep(Duration::from_millis(160));
@@ -176,7 +176,7 @@ impl Backend{
         let key=p.track.as_ref().map(LyricSyncService::build_stable_track_identity).unwrap_or_default();
         let changed=key!=s.track_key;
         if changed{s.track_key=key.clone();s.cover_key=sample.cover_identity.clone();s.cover=p.cover_image_bytes.clone();s.cover_version+=1;s.artwork_identity.clear();}
-        else if s.artwork_identity.is_empty()&&p.cover_image_bytes!=s.cover{s.cover=p.cover_image_bytes.clone();s.cover_version+=1;}
+        else if p.cover_image_bytes.is_some()&&p.cover_image_bytes!=s.cover{s.cover=p.cover_image_bytes.clone();s.cover_version+=1;s.artwork_identity.clear();}
         p.cover_image_bytes=None;
         let position=s.clock.observe(&p,sample.updated_ms,unix_ms(),self.started.elapsed().as_secs_f64(),native);p.position=Duration::from_secs_f64(position.clamp(0.,86400.));
         s.duration_source=if native{"网易云实时读取"}else if p.track.as_ref().is_some_and(|t|t.duration>Duration::ZERO){"播放器"}else{"正在补取歌曲时长"}.into();
@@ -211,27 +211,28 @@ impl Backend{
         let mut mapped=track.clone();mapped.title=mapping.title;mapped.artist=mapping.artist;if let Some(a)=mapping.album{mapped.album=a}
         let local=settings["LocalFolders"].as_array().map(|a|a.iter().filter_map(Value::as_str).map(str::to_string).collect::<Vec<_>>()).unwrap_or_default();
         if !local.is_empty(){let provider=LocalLyricProvider::new(local);if let Some((content,acquisition))=provider.get_parsed_lyrics(&mapped){return LyricResolutionResult::from_lyrics(Some(ResolvedLyrics{provider_id:known_providers::local(),candidate_id:track.id.clone(),content,acquisition,diagnostics:Default::default()}))}}
-        let order=known_providers::online_trust_order();let providers=if let Some(p)=mapping.preferred_provider{order.iter().filter(|i|i.eq_ignore_ascii_case(&p)).cloned().collect::<Vec<_>>()}else{order.clone()};
+        let mut order=known_providers::online_trust_order();if let Some(official)=lyric_core::policy::LyricSourceRoutingPolicy::try_get_official_provider(Some(&track.source_app)){if let Some(index)=order.iter().position(|p|*p==official){let primary=order.remove(index);order.insert(0,primary);}}let providers=if let Some(p)=mapping.preferred_provider{order.iter().filter(|i|i.eq_ignore_ascii_case(&p)).cloned().collect::<Vec<_>>()}else{order.clone()};
         let (tx,rx)=mpsc::channel();let primary_cancel=Arc::new(AtomicBool::new(false));
         for provider in &providers{
             let tx=tx.clone();let provider=provider.clone();let mapped=mapped.clone();let raw=self.raw.clone();let parsed=self.parsed.clone();let cancel=cancel.clone();let secondary=primary_cancel.clone();let logs=self.logs.clone();
             std::thread::spawn(move||{
-                if cancel.load(Ordering::Acquire){return}let context=RequestContext{cancelled:secondary,deadline:Instant::now()+Duration::from_secs(5)};
+                if cancel.load(Ordering::Acquire){return}let context=RequestContext{cancelled:secondary,deadline:Instant::now()+Duration::from_secs(9)};
                 // One coordinator per provider, so its trust policy has to name exactly that provider.
                 // Leaving it to the default asks for the whole online order and fails with
                 // MissingProvider, which used to be swallowed by unwrap_or_else and turned every
                 // online resolution into "unavailable" (i.e. no lyrics unless it was already cached).
                 let trust_policy=lyric_core::policy::LyricProviderTrustPolicy::new(vec![provider.clone()],vec![provider.clone()]).ok();
-                let coordinator=LyricResolutionCoordinator::new(LyricResolutionCoordinatorBuilder{sources:vec![Box::new(OnlineSource::new(provider.value(),context))],trust_policy,pipeline_cache:Some(LyricPipelineCache::new(Box::new(CompactStore::<RawLyricCacheEnvelope>::new(raw)),Box::new(CompactStore::<ParsedLyricCacheEnvelope>::new(parsed)))),..Default::default()});
+                let coordinator=LyricResolutionCoordinator::new(LyricResolutionCoordinatorBuilder{sources:vec![Box::new(OnlineSource::new(provider.value(),context))],source_timeout:Some(Duration::from_secs(9)),trust_policy,pipeline_cache:Some(LyricPipelineCache::new(Box::new(CompactStore::<RawLyricCacheEnvelope>::new(raw)),Box::new(CompactStore::<ParsedLyricCacheEnvelope>::new(parsed)))),..Default::default()});
                 let result=match coordinator{Ok(coordinator)=>coordinator.resolve(&mapped),Err(error)=>{io::log(&logs,"LYRIC_ERROR",&format!("coordinator for {} could not be built: {error}",provider.value()));LyricResolutionResult::unavailable()}};
                 if !cancel.load(Ordering::Acquire){let _=tx.send((provider,result));}
             });
         }
-        drop(tx);let mut results=vec![];let until=Instant::now()+Duration::from_secs(6);
+        drop(tx);let mut results=vec![];let mut until=Instant::now()+Duration::from_secs(10);
         while results.len()<providers.len()&&Instant::now()<until{
             if cancel.load(Ordering::Acquire)||self.closed.load(Ordering::Acquire){primary_cancel.store(true,Ordering::Release);return LyricResolutionResult::unavailable()}
             if let Ok((provider,result))=rx.recv_timeout(Duration::from_millis(40)){
                 if providers.first()==Some(&provider)&&result.lyrics.as_ref().and_then(ResolvedLyrics::identity_score).is_some_and(|s|s>=95){primary_cancel.store(true,Ordering::Release);if let Some(r)=&result.lyrics{self.final_cache.put(track,r)}return result}
+                if result.lyrics.as_ref().and_then(ResolvedLyrics::identity_score).is_some_and(|score|score>=95){until=until.min(Instant::now()+Duration::from_millis(600));}
                 results.push((provider,result));
             }
         }
@@ -252,7 +253,7 @@ impl Backend{
     fn start_artwork(self:&Arc<Self>,key:String,url:String){
         let Some(rest)=url.strip_prefix("https://").or_else(||url.strip_prefix("http://"))else{return};let host=rest.split('/').next().unwrap_or("").to_ascii_lowercase();if host!="music.126.net"&&!host.ends_with(".music.126.net"){return}
         let url=format!("https://{rest}{}",if rest.contains('?'){""}else{"?param=300y300"});let backend=self.clone();
-        std::thread::spawn(move||{let ctx=RequestContext::new(Duration::from_secs(5));match http::request(&url,"GET",&[],"","",&ctx,4*1024*1024){Ok(bytes)=>{if let Ok(mut s)=backend.state.lock(){if s.track_key==key&&!backend.closed.load(Ordering::Acquire){s.cover=Some(bytes);s.cover_version+=1;s.artwork_identity=format!("Netease|{}|{}",s.playback.track.as_ref().and_then(|t|t.song_id.clone()).unwrap_or_default(),url);s.playback.is_cover_loading=false;}}},Err(e)=>io::log(&backend.logs,"ARTWORK",&e)}});
+        std::thread::spawn(move||{let ctx=RequestContext::new(Duration::from_secs(5));match http::request(&url,"GET",&[],"","",&ctx,4*1024*1024){Ok(bytes)=>{if let Ok(mut s)=backend.state.lock(){if s.track_key==key&&s.cover.is_none()&&!backend.closed.load(Ordering::Acquire){s.cover=Some(bytes);s.cover_version+=1;s.artwork_identity=format!("Netease|{}|{}",s.playback.track.as_ref().and_then(|t|t.song_id.clone()).unwrap_or_default(),url);s.playback.is_cover_loading=false;}}},Err(e)=>io::log(&backend.logs,"ARTWORK",&e)}});
     }
 }
 fn wait_delay(cancel:&AtomicBool,delay:Duration)->bool{let until=Instant::now()+delay;while Instant::now()<until{if cancel.load(Ordering::Acquire){return false}std::thread::sleep(Duration::from_millis(30));}true}

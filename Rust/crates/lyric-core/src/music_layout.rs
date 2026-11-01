@@ -17,7 +17,10 @@ pub fn music_height(mix:f64,font:f64)->f64{220.+16.*(mix*2.).clamp(0.,1.)+(font+
 /// The v2.1.6 native layout transition: 230 ms, with zero speed at both ends.
 /// Both the island and the settings preview use this exact timing.
 pub fn music_layout_mix(from:f64,target:f64,elapsed_seconds:f64)->f64{
- let spec=crate::shared_motion::Spec::token(crate::shared_motion::Scheme::Expressive,crate::shared_motion::Kind::Spatial,crate::shared_motion::Speed::Default);let(value,velocity)=spec.sample(from,target,0.,elapsed_seconds);if(value-target).abs()<0.00001&&velocity.abs()<0.0001{target}else{value}
+    let t=(elapsed_seconds/0.23).clamp(0.,1.);
+    if t>=1.{return target}
+    let e=t*t*(3.-2.*t);
+    from+(target-from)*e
 }
 /// The expanded music layouts. This is a layout type, not a set of switches.
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]

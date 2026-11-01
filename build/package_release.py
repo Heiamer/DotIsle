@@ -59,7 +59,7 @@ def main():
             subprocess.run(command,stdout=log,stderr=subprocess.STDOUT,check=True)
     compile_setup(out,[])
     if args.qa_setup:
-        compile_setup(scratch/'qa-setup',['/DAppId=DotIsle.QA.Release313','/DOutputBase='+name+'-QA-Setup'])
+        compile_setup(scratch/'qa-setup',['/DAppId=DotIsle.QA.Release318','/DOutputBase='+name+'-QA-Setup'])
     (runtime/'Portable.json').write_text(json.dumps({'portable':True,'version':args.version})+'\n',encoding='utf8')
     archive(runtime,out/(name+'-Portable.zip'),name)
     legacy='LyricIsland-'+args.version

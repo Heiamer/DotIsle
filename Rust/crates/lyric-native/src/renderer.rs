@@ -1,5 +1,4 @@
 //! Vello island painter. The v2 layout, activity model, hit targets and motion are retained.
-use lyric_core::shared_motion::{Spec as MotionSpec,Scheme as MotionScheme,Kind as MotionKind,Speed as MotionSpeed};
 use std::{path::Path,sync::Arc,collections::HashMap,time::{Instant,Duration}};
 use windows::{core::{Result,Error,HRESULT},Win32::Foundation::HWND};
 use vello::{Scene as VScene,kurbo::{Affine,RoundedRect,Stroke,Circle,BezPath,Line,Cap},peniko::{Fill,Color,ImageData,ImageFormat,ImageAlphaType,Blob,Gradient,Mix}};
@@ -11,11 +10,11 @@ pub fn color(argb:u32)->Color{Color::from_rgba8((argb>>16)as u8,(argb>>8)as u8,a
 
 pub struct PreparedCover{image:ImageData,bgra:Vec<u8>,width:u32,height:u32,seed:Option<u32>}
 impl PreparedCover{pub fn save_preview(&self,path:&Path)->std::result::Result<(),String>{image::save_buffer(path,self.image.data.data(),self.width,self.height,image::ColorType::Rgba8).map_err(|e|e.to_string())}}
-pub struct Renderer{window:HWND,glass:crate::glass::Sampler,glass_live:bool,glass_allowed:bool,glass_active:bool,
+pub struct Renderer{transport_ink:Option<(u32,Vec<u32>,u32)>,window:HWND,glass:crate::glass::Sampler,glass_live:bool,glass_allowed:bool,glass_active:bool,
     gpu:crate::vello_surface::Surface,canvas:VScene,text:Text,
     blurred_cover:Option<(u32,ImageData)>,cover:Option<ImageData>,previous_cover:Option<ImageData>,notification_icon:Option<ImageData>,
     device_images:HashMap<String,ImageData>,cover_palette:crate::cover_color::CoverPalette,paint_palette:crate::cover_color::CoverPalette,cover_seed:Option<u32>,dynamic_resolved:Option<dotisle_domain::dynamic_color::Resolved>,
-    color_motion:dotisle_domain::dynamic_color::RoleMotion,m3_cache:Option<(u32,bool,dotisle_domain::monet::Scheme)>,preview_pixels:Option<(Vec<u8>,u32,u32)>,cover_changed:Instant,flip_from:f64,flip_velocity:f64,
+    color_motion:dotisle_domain::dynamic_color::RoleMotion,m3_cache:Option<(u32,bool,dotisle_domain::monet::Scheme)>,preview_pixels:Option<(Vec<u8>,u32,u32)>,cover_changed:Instant,flip_from:f64,
     pub body_line_spacing:f64,pub body_baseline:f64,pub width:u32,pub height:u32,pub dpi:f32,
 }
 impl Renderer{
@@ -27,7 +26,7 @@ impl Renderer{
         // Register the Japanese fallback only when text first requires it.
         let japanese=font.with_file_name("NotoSansJP.ttf");
         text.defer_japanese(japanese);
-        Ok(Self{window:hwnd,glass:Default::default(),glass_live:false,glass_allowed:true,glass_active:false,gpu,canvas:VScene::new(),text,color_motion:Default::default(),m3_cache:None,blurred_cover:None,cover:None,previous_cover:None,notification_icon:None,device_images:HashMap::new(),cover_palette:Default::default(),paint_palette:Default::default(),cover_seed:None,dynamic_resolved:None,preview_pixels:None,cover_changed:Instant::now()-Duration::from_secs(1),flip_from:0.,flip_velocity:0.,body_line_spacing:1.448,body_baseline:1.16,width,height,dpi})
+        Ok(Self{transport_ink:None,window:hwnd,glass:Default::default(),glass_live:false,glass_allowed:true,glass_active:false,gpu,canvas:VScene::new(),text,color_motion:Default::default(),m3_cache:None,blurred_cover:None,cover:None,previous_cover:None,notification_icon:None,device_images:HashMap::new(),cover_palette:Default::default(),paint_palette:Default::default(),cover_seed:None,dynamic_resolved:None,preview_pixels:None,cover_changed:Instant::now()-Duration::from_secs(1),flip_from:0.,body_line_spacing:1.448,body_baseline:1.16,width,height,dpi})
     }
     fn fill(&mut self,r:Rect,radius:f64,c:u32){if r.w>0.&&r.h>0.{self.canvas.fill(Fill::NonZero,Affine::IDENTITY,color(c),None,&RoundedRect::from_rect(vr(r),radius));}}
     fn outline(&mut self,r:Rect,radius:f64,c:u32,width:f64){self.canvas.stroke(&Stroke::new(width),Affine::IDENTITY,color(c),None,&RoundedRect::from_rect(vr(r),radius));}
@@ -66,12 +65,13 @@ impl Renderer{
         Ok(decoded.map(|(image,bgra,width,height)|{let small=image::RgbaImage::from_raw(width,height,image.data.data().to_vec()).map(|rgba|image::imageops::thumbnail(&rgba,64,64));let seed=small.as_ref().and_then(|p|dotisle_domain::monet::seed(p.as_raw()));PreparedCover{image,bgra,width,height,seed}}))
     }
     pub fn apply_cover(&mut self,prepared:Option<PreparedCover>){
-        let(phase,velocity)=MotionSpec::token(MotionScheme::Expressive,MotionKind::Spatial,MotionSpeed::Default).sample(self.flip_from,1.,self.flip_velocity,self.cover_changed.elapsed().as_secs_f64());let phase=phase.clamp(0.,1.);
-        if phase>=0.5||self.previous_cover.is_none(){self.previous_cover=self.cover.clone();self.flip_from=1.-phase;self.flip_velocity=-velocity;}else{self.flip_from=phase;self.flip_velocity=velocity;}
+        let phase=(self.flip_from+(1.-self.flip_from)*self.cover_changed.elapsed().as_secs_f64()/0.28).clamp(0.,1.);
+        if phase>=0.5||self.previous_cover.is_none(){self.previous_cover=self.cover.clone();self.flip_from=1.-phase;}else{self.flip_from=phase;}
         self.cover=None;self.blurred_cover=None;self.preview_pixels=None;self.cover_palette=Default::default();self.cover_seed=None;
         if let Some(p)=prepared{self.cover_seed=p.seed;if let Some(seed)=p.seed{let roles=dotisle_domain::dynamic_color::roles(seed,true,true,false);self.cover_palette=crate::cover_color::CoverPalette{background:roles.surface_container_high,accent:roles.primary};}self.paint_palette=self.cover_palette;self.preview_pixels=Some((p.bgra,p.width,p.height));self.cover=Some(p.image);}
         self.cover_changed=Instant::now();
     }
+    pub fn clear_track_cover(&mut self){self.cover=None;self.previous_cover=None;self.blurred_cover=None;self.preview_pixels=None;self.cover_seed=None;self.cover_palette=Default::default();self.paint_palette=Default::default();self.flip_from=1.;}
     pub unsafe fn set_cover(&mut self,bytes:Option<&[u8]>)->std::result::Result<(),Box<dyn std::error::Error>>{let prepared=Self::prepare_cover(bytes)?;self.apply_cover(prepared);Ok(())}
     pub unsafe fn set_notification_icon(&mut self,bytes:Option<&[u8]>)->std::result::Result<(),Box<dyn std::error::Error>>{self.notification_icon=bytes.map(Self::decode).transpose()?.map(|d|d.0);Ok(())}
     pub fn material_theme(&self,material:Material,cover_background:bool)->MaterialTheme{MaterialTheme{glass_refraction:self.glass_allowed,roles:self.dynamic_resolved.map(|v|v.roles),material,cover_background,palette:self.paint_palette,pixels:self.preview_pixels.clone()}}
@@ -82,10 +82,18 @@ impl Renderer{
     pub fn preview_palette(&self)->(u32,u32){(self.paint_palette.background,self.paint_palette.accent)}
     pub fn preview_art(&self,path:&Path)->std::result::Result<(),Box<dyn std::error::Error>>{if let Some(image)=&self.cover{if let Some(p)=path.parent(){std::fs::create_dir_all(p)?;}image::save_buffer(path,image.data.data(),image.width,image.height,image::ColorType::Rgba8)?;}Ok(())}
     fn cover(&mut self,r:Rect,radius:f64,opacity:f32){if let Some(image)=self.cover.clone(){self.image(&image,r,radius,opacity);}else{let tones=self.m3_cache.map(|(_,_,c)|c).unwrap_or_else(||dotisle_domain::dynamic_color::scheme(0x496b55,true));self.fill(r,radius,0xff000000|tones.secondary_container);let size=r.w*0.56;self.icon(Icon::Music,Rect::new(r.x+(r.w-size)/2.,r.y+(r.h-size)/2.,size,size),0xff000000|tones.on_secondary_container);}}
-    fn flipping_cover(&mut self,r:Rect,s:&Scene<'_>){let radius=crate::layout::cover_corner_radius(s.radius,r.w,r.h);let t=if s.animate{MotionSpec::token(s.motion_scheme,MotionKind::Spatial,MotionSpeed::Default).paced(s.motion_speed).sample(self.flip_from,1.,self.flip_velocity,s.cover_age_ms/1000.).0.clamp(0.,1.)}else{1.};if t>=1.||self.previous_cover.is_none(){self.cover(r,radius,s.cover_opacity as f32);return}
+    fn flipping_cover(&mut self,r:Rect,s:&Scene<'_>){let radius=crate::layout::cover_corner_radius(s.radius,r.w,r.h);let t=if s.animate{(self.flip_from+(1.-self.flip_from)*s.cover_age_ms/280.).clamp(0.,1.)}else{1.};if t>=1.||self.previous_cover.is_none(){self.cover(r,radius,s.cover_opacity as f32);return}
         let sx=(std::f64::consts::PI*t).cos().abs().max(0.018);let sy=1.-0.06*(std::f64::consts::PI*t).sin();let image=if t<0.5{self.previous_cover.clone()}else{self.cover.clone()};let part=self.collect(|a|{if let Some(image)=image{a.image(&image,r,radius,s.cover_opacity as f32);}else{a.cover(r,radius,s.cover_opacity as f32);}});let cx=r.x+r.w/2.;let cy=r.y+r.h/2.;self.canvas.append(&part,Some(Affine::translate((cx,cy))*Affine::scale_non_uniform(sx,sy)*Affine::translate((-cx,-cy))));
     }
     fn surface_spec(s:&Scene<'_>)->crate::surface::Surface{crate::surface::Surface{material:s.material,compact:if s.mini{s.mini_capsule}else{s.classic_capsule},reveal:s.frame.card_reveal,overlay:s.notification_mix.max(s.osd_mix),mini:s.mini,transparent:s.transparent,cover_background:s.expanded_cover_background,compact_cover_background:s.cover_background,cover_overlay:s.cover_overlay&&!s.dynamic_high_contrast,card_frost:s.acrylic_card_frost,card_opacity:if s.dynamic_high_contrast{0.}else{s.acrylic_card_opacity},capsule_frost:s.acrylic_capsule_frost,capsule_opacity:if s.dynamic_high_contrast{0.}else{s.acrylic_capsule_opacity}}}
+    fn music_surface_spec(s:&Scene<'_>)->crate::surface::Surface{
+        let mut surface=Self::surface_spec(s);
+        let immersion=(s.music_mix-3.).clamp(0.,1.);
+        if s.panel.is_none()&&s.notification.is_none()&&s.osd.is_none()&&immersion>0.&&!s.dynamic_high_contrast{
+            surface.material=Material::Acrylic;surface.cover_background=s.expanded_cover_background;surface.cover_overlay=s.cover_overlay;surface.card_frost=surface.card_frost+(64.-surface.card_frost)*immersion;surface.card_opacity=surface.card_opacity+(62.-surface.card_opacity)*immersion;
+        }
+        surface
+    }
     fn material_surface(&mut self,r:Rect,radius:f64,s:crate::surface::Surface){
         let p=s.paint(self.paint_palette);let gradient=Gradient::new_linear((r.x,r.y),(r.x,r.y+r.h)).with_stops([color(p.top),color(p.bottom)]);self.canvas.fill(Fill::NonZero,Affine::IDENTITY,&gradient,None,&RoundedRect::from_rect(vr(r),radius));
         if p.cover_alpha>0.001{if let Some(image)=self.cover.clone(){let blur=p.cover_blur.max(0.).round()as u32;if self.blurred_cover.as_ref().is_none_or(|(key,_)|*key!=blur){if let Some(rgba)=image::RgbaImage::from_raw(image.width,image.height,image.data.data().to_vec()){let small=image::imageops::thumbnail(&rgba,128,128);let ratio=small.width()as f32/image.width as f32;let blurred=image::imageops::blur(&small,blur as f32*ratio);let(w,h)=blurred.dimensions();let mut pixels=blurred.into_raw();
@@ -96,10 +104,10 @@ impl Renderer{
         if self.glass_allowed&&((s.material==Material::Glass&&p.amount>0.001)||(s.compact==Material::Glass&&p.amount<0.999)){self.glass_active=true;if let Some(edge)=self.glass.image(self.window,r,radius,self.dpi,self.glass_live){self.image(&edge,r,radius,1.);}}
         let edge=Rect::new(r.x+0.5,r.y+0.5,r.w-1.,r.h-1.);self.outline(edge,(radius-0.5).max(0.),((18.+30.*p.reflection)as u32)<<24|0xffffff,0.8);
     }
-    fn music_lyric(&mut self,text:&str,r:Rect,size:f64,align:f64,ink:u32,s:&Scene<'_>){let weight=if s.music_mix>3.5&&size>=20.{500}else{400};let width=self.text.measure_weighted(text,size as f32,weight).min(r.w);let x=r.x+(r.w-width)*align;let phase=if s.animate{MotionSpec::token(s.motion_scheme,MotionKind::Effects,MotionSpeed::Fast).paced(s.motion_speed).sample(0.,1.,0.,s.lyric_age_ms/1000.).0.clamp(0.,1.)}else{1.};let y=r.y+4.*(1.-if s.animate{MotionSpec::token(s.motion_scheme,MotionKind::Spatial,MotionSpeed::Fast).paced(s.motion_speed).sample(0.,1.,0.,s.lyric_age_ms/1000.).0}else{1.});let boundary=x+width*s.highlight.clamp(0.,1.);
+    fn music_lyric(&mut self,text:&str,r:Rect,size:f64,align:f64,ink:u32,s:&Scene<'_>){let weight=if s.music_mix>3.5&&size>=20.{500}else{400};let width=self.text.measure_weighted(text,size as f32,weight).min(r.w);let x=r.x+(r.w-width)*align;let phase=if s.animate{(s.lyric_age_ms/180.).clamp(0.,1.)}else{1.};let y=r.y+4.*(1.-phase).powi(3);let boundary=x+width*s.highlight.clamp(0.,1.);
         for (clip,c) in [(Rect::new(r.x,r.y,(boundary-r.x).max(0.),r.h+5.),s.progress_color),(Rect::new(boundary,r.y,(r.x+r.w-boundary).max(0.),r.h+5.),ink)]{if clip.w>0.{self.clip(clip,0.,phase as f32);self.text.line_weighted(&mut self.canvas,text,vr(Rect::new(x,y,width,r.h)),size as f32,c,weight,0.);self.canvas.pop_layer();}}
     }
-    fn compact_music(&mut self,s:&Scene<'_>){let tones=self.m3(s);let c=s.layout.capsule;let cover=s.layout.compact_cover(s.layout_scale);self.cover(cover,6.,s.cover_opacity as f32);let double=!s.compact_secondary.is_empty();let(h,line,second)=self.compact_metrics(s.font_size,double,s.layout_scale);let y=c.y+(c.h-h)/2.;let viewport=Rect::new(c.x+42.,y,c.w-76.,line);let phase=if s.animate{MotionSpec::token(s.motion_scheme,MotionKind::Effects,MotionSpeed::Fast).paced(s.motion_speed).sample(0.,1.,0.,s.lyric_age_ms/1000.).0.clamp(0.,1.)}else{1.};
+    fn compact_music(&mut self,s:&Scene<'_>){let tones=self.m3(s);let c=s.layout.capsule;let cover=s.layout.compact_cover(s.layout_scale);self.cover(cover,6.,s.cover_opacity as f32);let double=!s.compact_secondary.is_empty();let(h,line,second)=self.compact_metrics(s.font_size,double,s.layout_scale);let y=c.y+(c.h-h)/2.;let viewport=Rect::new(c.x+42.,y,c.w-76.,line);let phase=if s.animate{(s.lyric_age_ms/180.).clamp(0.,1.)}else{1.};
         if phase<1.&&!s.previous_lyric.is_empty(){self.clip(Rect::new(viewport.x,c.y,viewport.w,c.h),0.,(1.-phase)as f32);self.text_at(s.previous_lyric,Rect::new(viewport.x,y-5.*phase,viewport.w,line),s.font_size,500,0xff000000|tones.on_surface,if double{0.5}else{0.});self.canvas.pop_layer();}
         self.music_lyric(s.lyric,viewport,s.font_size,if double{0.5}else{0.},0xff000000|tones.on_surface,s);
         if double{self.text_at(s.compact_secondary,Rect::new(viewport.x,y+line+1.,viewport.w,second),(s.font_size*0.78).clamp(9.,11.5),400,0xff000000|tones.on_surface_variant,0.5);}
@@ -108,13 +116,30 @@ impl Renderer{
     fn compact_view(&mut self,s:&Scene<'_>){let mut compact=*s;compact.expressive_dark=true;let s=&compact;if s.mini{let tones=self.m3(s);let c=s.layout.capsule;let accent=if s.panel.is_some(){0xff000000|tones.primary}else{s.progress_color};let moving=s.panel.map(|p|p.running).unwrap_or(s.playing);let breath=if moving&&s.animate{0.68+0.32*(s.time_ms/2800.*std::f64::consts::TAU).sin()}else{0.8};let dot=3.2+breath*1.2;self.fill(Rect::new(c.x+11.-dot/2.,c.y+(c.h-dot)/2.,dot,dot),dot/2.,((255.*breath)as u32)<<24|(accent&0xffffff));let label=s.panel.map(|p|format!("{}  {}",p.title,p.value)).unwrap_or_else(||s.lyric.to_string());self.text_at(&label,Rect::new(c.x+22.,c.y,c.w-44.,c.h),crate::compact::mini_font_size(s.font_size),500,if s.mini_glass{s.mini_ink}else{0xff000000|tones.on_surface},0.5);return}
         if let Some(p)=s.panel{let tones=self.m3(s);let c=s.layout.capsule;let cy=c.y+c.h/2.;let accent=0xff000000|tones.primary;if p.kind==3{self.update_ring(c.x+22.,cy,10.,p.progress,s.time_ms,s.animate,accent);}else{self.icon(if p.kind==1{Icon::Focus}else if p.kind==2{Icon::Check}else{Icon::Import},Rect::new(c.x+12.,cy-10.,20.,20.),accent);}if p.kind==3{self.text_at(&p.title,Rect::new(c.x+42.,cy-16.,c.w-56.,19.),11.,600,0xff000000|tones.on_surface,0.);self.text_at(&p.subtitle,Rect::new(c.x+42.,cy+4.,c.w-56.,14.),9.,400,accent,0.);}else{self.text_at(&p.value,Rect::new(c.x+40.,cy-17.,c.w-70.,19.),14.,600,0xff000000|tones.on_surface,0.5);self.text_at(&p.title,Rect::new(c.x+40.,cy+3.,c.w-70.,13.),9.,400,accent,0.5);}if p.kind!=3{let a=if p.running&&s.animate{0.7+0.3*(s.time_ms/2400.*std::f64::consts::TAU).sin()}else{0.65};self.fill(Rect::new(c.x+c.w-18.,cy-3.,6.,6.),3.,((255.*a)as u32)<<24|(accent&0xffffff));}}else{let tones=self.m3(s);let mut music=*s;music.progress_color=s.progress_color;if s.lyric_cover_color{let mut accent=s.progress_color;for _ in 0..12{if crate::cover_color::contrast(accent,tones.container)>=3.{break}accent=0xff000000|crate::cover_color::mix(accent,tones.on_surface,0.15);}music.progress_color=accent;}self.compact_music(&music);}
     }
-    fn button(&mut self,id:i32,r:Rect,s:&Scene<'_>){let disabled=([3,4,5].contains(&id)&&!s.has_track)||(id==2&&!s.floating)||(id==9&&!s.favorite_enabled)||(id==6&&!s.translation_button);let mut c=s.component_color;if disabled{c=0x4d000000|(c&0xffffff);}if id==6&&s.translation_enabled&&!disabled{self.fill(r,12.,0x30000000|(c&0xffffff));}let feedback=s.feedback.get(id as usize).copied().unwrap_or(0.);if feedback>0.001&&!disabled&&![3,5].contains(&id){self.fill(r,12.,((feedback*255.)as u32)<<24|0xffffff);}let pressed=s.press.get(id as usize).copied().unwrap_or(0.)as f64;let press=1.-pressed*0.04;
+    fn music_surface_samples(&self,s:&Scene<'_>)->Vec<u32>{
+        let p=Self::music_surface_spec(s).paint(self.paint_palette);let(shape,_)=s.layout.morph_shape_with_radii(s.frame.card_reveal,s.capsule_radius,s.radius);
+        let scale=(shape.w/s.layout.card.w).min(shape.h/s.layout.card.h).max(0.0001);let tx=shape.x+(shape.w-s.layout.card.w*scale)/2.;let ty=shape.y+(shape.h-s.layout.card.h*scale)/2.+s.frame.content_offset_y*scale;
+        let g=crate::layout::music_geometry(s.layout.card.w,s.music_layout,s.music_mix,s.layout_scale,s.font_size);let image=if p.cover_alpha>0.001{self.blurred_cover.as_ref().map(|(_,i)|i).or(self.cover.as_ref())}else{None};let mut samples=Vec::new();
+        for(id,r)in g.buttons{if ![3,5].contains(&id){continue}for dx in [-7.,0.,7.]{for dy in [-7.,0.,7.]{
+            let x=tx+(r.x+r.w/2.+dx)*scale;let y=ty+(r.y+r.h/2.+dy)*scale;let t=((y-shape.y)/shape.h.max(1.)).clamp(0.,1.);let base=crate::cover_color::mix(p.top,p.bottom,t);let alpha=(p.top>>24)as f64/255.;
+            for under in [0x000000,0xffffff]{let mut bg=crate::cover_color::mix(under,base,alpha);
+                if let Some(image)=image{let fit=(shape.w/image.width as f64).max(shape.h/image.height as f64).max(0.0001);let ix=((x-(shape.x+shape.w/2.-image.width as f64*fit/2.))/fit).floor().clamp(0.,image.width.saturating_sub(1)as f64)as usize;let iy=((y-(shape.y+shape.h/2.-image.height as f64*fit/2.))/fit).floor().clamp(0.,image.height.saturating_sub(1)as f64)as usize;let at=(iy*image.width as usize+ix)*4;
+                    if let Some(pixel)=image.data.data().get(at..at+4){let rgb=(pixel[0]as u32)<<16|(pixel[1]as u32)<<8|pixel[2]as u32;bg=crate::cover_color::mix(bg,rgb,p.cover_alpha*pixel[3]as f64/255.);}
+                    let scrim=crate::cover_color::mix(0x10171a,self.paint_palette.background,0.4*p.tint);bg=crate::cover_color::mix(bg,scrim,(80.+36.*(1.-p.amount))/255.);
+                }
+                bg=crate::cover_color::mix(bg,0xffffff,p.frost*15./255.*(1.-t));samples.push(bg);if alpha>=1.{break}
+            }
+        }}}samples
+    }
+    fn music_control_ink(&mut self,s:&Scene<'_>)->u32{let preferred=s.component_color&0xffffff;let samples=self.music_surface_samples(s);if let Some((old,bg,ink))=&self.transport_ink{if *old==preferred&&*bg==samples{return *ink}}let ink=dotisle_domain::music_controls::tinted_on_surfaces(&samples,preferred);self.transport_ink=Some((preferred,samples,ink));ink}
+    pub fn transport_diagnostics(&self)->serde_json::Value{self.transport_ink.as_ref().map(|(preferred,samples,ink)|serde_json::json!({"preferred":format!("#{preferred:06X}"),"foreground":format!("#{ink:06X}"),"backgrounds":samples,"minimumContrast":samples.iter().map(|bg|crate::cover_color::contrast(*ink,*bg)).fold(f64::INFINITY,f64::min),"minimumStateContrast":samples.iter().flat_map(|bg|[0.,0.08,0.12].map(move|alpha|crate::cover_color::contrast(*ink,crate::cover_color::mix(*bg,*ink,alpha)))).fold(f64::INFINITY,f64::min)})).unwrap_or(serde_json::Value::Null)}
+    fn button(&mut self,id:i32,r:Rect,s:&Scene<'_>){let disabled=([3,4,5].contains(&id)&&!s.has_track)||(id==2&&!s.floating)||(id==9&&!s.favorite_enabled)||(id==6&&!s.translation_button);let mut c=s.component_color;if disabled{c=0x4d000000|(c&0xffffff);}if id==6&&s.translation_enabled&&!disabled{self.fill(r,12.,0x30000000|(c&0xffffff));}let feedback=s.feedback.get(id as usize).copied().unwrap_or(0.);if feedback>0.001&&!disabled&&![3,5].contains(&id){self.fill(r,12.,((feedback*255.)as u32)<<24|0xffffff);}let press=if s.pressed==id{0.96}else{1.};
         // Skip controls are unfilled; only interaction feedback paints a subtle state layer.
-        if [3,5].contains(&id)&&!disabled{c=0xff000000|dotisle_domain::music_controls::on_surface(self.paint_palette.background,c);if feedback>0.001{self.fill(r,12.,((feedback*255.)as u32)<<24|(c&0xffffff));}}let size=if id==4{24.}else{if [3,5].contains(&id){22.}else{20.}}*press;let icon=Rect::new(r.x+(r.w-size)/2.,r.y+(r.h-size)/2.,size,size);
+        if [3,5].contains(&id)&&!disabled{c=0xff000000|self.music_control_ink(s);if feedback>0.001{self.fill(r,12.,((feedback.min(0.12)*255.)as u32)<<24|(c&0xffffff));}}let size=if id==4{24.}else{if [3,5].contains(&id){22.}else{20.}}*press;let icon=Rect::new(r.x+(r.w-size)/2.,r.y+(r.h-size)/2.,size,size);
         if id==4{
             let mix=if s.animate{s.play_shape.clamp(0.,1.)}else{if s.playing{1.}else{0.}};
-            let inset=pressed*1.5;let body=Rect::new(r.x+inset,r.y+inset,r.w-inset*2.,r.h-inset*2.);
-            self.fill(body,body.h*(0.5-0.22*if s.animate{s.play_shape.clamp(-0.08,1.10)}else{mix}),c);
+            let inset=(feedback as f64*9.).min(1.5);let body=Rect::new(r.x+inset,r.y+inset,r.w-inset*2.,r.h-inset*2.);
+            self.fill(body,body.h*(0.5-0.22*mix),c);
             let ink=if crate::cover_color::contrast(c,0x17201d)>crate::cover_color::contrast(c,0xffffff){0xff17201d}else{0xffffffff};
             if mix<0.999{self.icon(Icon::Play,icon,(((1.-mix)*255.)as u32)<<24|(ink&0xffffff));}
             if mix>0.001{self.icon(Icon::Pause,icon,((mix*255.)as u32)<<24|(ink&0xffffff));}
@@ -162,11 +187,7 @@ impl Renderer{
     fn osd_content(&mut self,n:&crate::notifications::Notice,r:Rect,dark:bool){let roles=self.dynamic_resolved.map(|v|v.roles).unwrap_or_else(||dotisle_domain::dynamic_color::roles(0x496b55,true,false,false));let icon=Rect::new(r.x+12.,r.y+(r.h-30.)/2.,30.,30.);self.fill(icon,10.,0x1affffff);let kind=n.app_id.strip_prefix("LyricIsland.System.").unwrap_or("");let on=if kind=="Mic"{n.body=="已静音"}else{n.body=="已开启"};let tint=0xff000000|if kind=="Mic"&&on{roles.error}else if on{roles.primary}else{roles.on_surface_variant};self.device_glyph(Rect::new(icon.x+5.,icon.y+5.,20.,20.),if kind=="Mic"&&on{"MicOff"}else{kind},tint);self.text_line(&n.title,Rect::new(r.x+50.,r.y+13.,70.,18.),12.5,600,(0xff000000|roles.on_surface));self.text_line(&n.body,Rect::new(r.x+122.,r.y+14.,r.w-134.,15.),10.5,500,tint);}
     pub unsafe fn render(&mut self,s:&Scene<'_>,present:bool)->Result<()>{self.glass_active=false;self.glass_live=present&&!s.resizing&&!s.drag_active;self.glass_allowed=s.glass_refraction&&!s.dynamic_high_contrast;self.text.set_family(s.font_family);self.prepare_dynamic(s);let(mut themed,compact)=cover_scenes(s,Some(self.paint_palette));if s.expanded_cover_background{if let Some(resolved)=self.dynamic_resolved{themed.text_color=0xff000000|resolved.roles.on_surface;}}let s=&themed;self.canvas=VScene::new();if let Some(background)=self.glass.background(){self.image(&background,s.layout.host,0.,1.);}let(base,base_radius)=s.layout.morph_shape_with_radii(s.frame.card_reveal,s.capsule_radius,s.radius);let p=s.frame.card_reveal;let(shape,radius)=if s.notification.is_some(){(s.notification_rect,s.notification_radius)}else if s.osd.is_some(){(s.osd_rect,s.osd_radius)}else{(base,base_radius)};let music_alpha=if s.notification.is_some(){1.-s.notification_mix}else if s.osd.is_some(){1.-s.osd_mix}else{1.};self.clip(s.layout.host,0.,s.opacity);
         self.canvas.draw_blurred_rounded_rect(Affine::translate((0.,5.)),vr(shape),color(if s.mini&&p<0.01{0x0a000000}else{0x38000000}),radius,22./3.);
-        let mut surface=Self::surface_spec(s);
-        let immersion=(s.music_mix-3.).clamp(0.,1.);
-        if s.panel.is_none()&&s.notification.is_none()&&s.osd.is_none()&&immersion>0.&&!s.dynamic_high_contrast{
-            surface.material=Material::Acrylic;surface.cover_background=s.expanded_cover_background;surface.cover_overlay=s.cover_overlay;surface.card_frost=surface.card_frost+(64.-surface.card_frost)*immersion;surface.card_opacity=surface.card_opacity+(62.-surface.card_opacity)*immersion;
-        }
+        let mut surface=Self::music_surface_spec(s);
         let saved_palette=self.paint_palette;if s.panel.is_some()||s.notification.is_some()||s.osd.is_some(){surface.cover_overlay=false;surface.card_opacity=0.;surface.cover_background=true;if let Some(r)=self.dynamic_resolved{self.paint_palette.background=r.roles.surface_container;}}
         self.material_surface(shape,radius,surface);self.paint_palette=saved_palette;
         let alpha=s.frame.content_opacity*blend(p,0.25,0.88)*music_alpha;if alpha>0.001{let part=self.collect(|a|{let w=s.layout.card.w;if s.drag_active{let mut neighbor=*s;neighbor.panel=s.drag_panel;let layer=a.collect(|a|a.expanded_view(&neighbor));a.canvas.append(&layer,Some(Affine::translate((s.swipe_offset-s.swipe_offset.signum()*w,s.frame.content_offset_y))));}if s.switching&&s.switch_outgoing{let mut old=*s;old.panel=s.previous_panel;let layer=a.collect(|a|a.expanded_view(&old));a.canvas.append(&layer,Some(Affine::translate((s.switch_offset-s.switch_direction*w,s.frame.content_offset_y))));}let layer=a.collect(|a|a.expanded_view(s));a.canvas.append(&layer,Some(Affine::translate((s.switch_offset+s.swipe_offset,s.frame.content_offset_y))));});let scale=(base.w/s.layout.card.w).min(base.h/s.layout.card.h);let tx=base.x+(base.w-s.layout.card.w*scale)/2.;let ty=base.y+(base.h-s.layout.card.h*scale)/2.;self.clip(shape,radius,alpha as f32);self.canvas.append(&part,Some(Affine::translate((tx,ty))*Affine::scale(scale)));self.canvas.pop_layer();}
@@ -231,7 +252,7 @@ impl MaterialTheme{
     pub fn new(material:Material,cover_background:bool)->Self{Self{glass_refraction:true,roles:None,material,cover_background,palette:Default::default(),pixels:None}}
 }
 #[derive(Clone,Copy)]
-pub struct Scene<'a>{pub motion_scheme:MotionScheme,pub motion_speed:f64,pub press:[f32;64],pub glass_refraction:bool,
+pub struct Scene<'a>{pub glass_refraction:bool,
     pub play_shape:f64,pub capsule_radius:f64,pub update_phase:&'a str,pub feedback:[f32;64],pub dynamic_source:&'a str,pub dynamic_system_seed:Option<u32>,pub dynamic_custom_seed:u32,pub dynamic_high_contrast:bool,pub font_family:&'a str,pub expressive_dark:bool,pub mini:bool,pub mini_glass:bool,pub classic_capsule:Material,pub mini_capsule:Material,pub mini_ink:u32,pub mini_outline:u32,
     /// Hides the expanded card's 译 button in painting and in hit testing together.
     pub translation_button:bool,pub translation_enabled:bool,pub translation_tooltip:bool,

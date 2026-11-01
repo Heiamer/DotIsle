@@ -30,12 +30,12 @@ impl RequestContext {
 }
 pub fn encode(s:&str)->String { s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {(b as char).to_string()}else{format!("%{b:02X}")}).collect() }
 pub fn request(url:&str,method:&str,body:&[u8],content_type:&str,refer:&str,ctx:&RequestContext,limit:usize)->Result<Vec<u8>,String>{
-    request_access(url,method,body,content_type,refer,ctx,limit,1)
+    request_access(url,method,body,content_type,refer,ctx,limit,1,&[])
 }
 /// Update requests follow system/user proxy settings; music providers retain direct requests.
-pub fn request_system(url:&str,ctx:&RequestContext,limit:usize)->Result<Vec<u8>,String>{request_access(url,"GET",&[],"application/json","",ctx,limit,4)}
+pub fn request_system(url:&str,ctx:&RequestContext,limit:usize)->Result<Vec<u8>,String>{request_access(url,"GET",&[],"application/json","",ctx,limit,4,&[])}
 pub fn get_system(url:&str,ctx:&RequestContext)->Result<serde_json::Value,String>{serde_json::from_slice(&request_system(url,ctx,8*1024*1024)?).map_err(|e|e.to_string())}
-fn request_access(url:&str,method:&str,body:&[u8],content_type:&str,refer:&str,ctx:&RequestContext,limit:usize,access:u32)->Result<Vec<u8>,String>{
+fn request_access(url:&str,method:&str,body:&[u8],content_type:&str,refer:&str,ctx:&RequestContext,limit:usize,access:u32,extra:&[(&str,&str)])->Result<Vec<u8>,String>{
     ctx.check()?;
     let (scheme,rest)=url.split_once("://").ok_or("invalid URL")?;
     if scheme!="https" && scheme!="http"{return Err("unsupported URL".into())}
@@ -51,7 +51,8 @@ fn request_access(url:&str,method:&str,body:&[u8],content_type:&str,refer:&str,c
         let host=wide(host);let connection=Owned::new(WinHttpConnect(session.0,host.as_ptr(),port,0))?;
         let path=wide(&path);let method=wide(method);let refer_w=wide(refer);
         let request=Owned::new(WinHttpOpenRequest(connection.0,method.as_ptr(),path.as_ptr(),null(),if refer.is_empty(){null()}else{refer_w.as_ptr()},null(),if scheme=="https"{0x800000}else{0}))?;
-        let headers=wide(&format!("Content-Type: {content_type}\r\nAccept: */*\r\n"));
+        let mut headers=format!("Content-Type: {content_type}\r\nAccept: */*\r\n");
+        for(name,value)in extra{if name.is_empty()||!name.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-')||value.contains(['\r','\n']){return Err("invalid HTTP header".into())}headers.push_str(&format!("{name}: {value}\r\n"));}let headers=wide(&headers);
         if WinHttpSendRequest(request.0,headers.as_ptr(),u32::MAX,if body.is_empty(){null_mut()}else{body.as_ptr() as _},body.len() as u32,body.len() as u32,0)==0{return Err(std::io::Error::last_os_error().to_string())}
         ctx.check()?;
         if WinHttpReceiveResponse(request.0,null_mut())==0{return Err(std::io::Error::last_os_error().to_string())}
@@ -71,3 +72,5 @@ pub fn get(url:&str,ctx:&RequestContext)->Result<serde_json::Value,String>{serde
 pub fn post(url:&str,body:&str,content_type:&str,refer:&str,ctx:&RequestContext)->Result<serde_json::Value,String>{serde_json::from_slice(&request(url,"POST",body.as_bytes(),content_type,refer,ctx,8*1024*1024)?).map_err(|e|e.to_string())}
 #[cfg(test)] mod tests{use super::*;#[test]fn url_encoding_is_utf8_and_never_injects_query(){assert_eq!(encode("a&中 "),"a%26%E4%B8%AD%20");}#[test]fn expired_and_cancelled_never_open_network(){let c=RequestContext::new(Duration::ZERO);assert!(request("https://invalid.test","GET",&[],"","",&c,10).is_err());}}
 
+
+pub fn get_headers(url:&str,headers:&[(&str,&str)],ctx:&RequestContext)->Result<serde_json::Value,String>{serde_json::from_slice(&request_access(url,"GET",&[],"application/json","",ctx,8*1024*1024,1,headers)?).map_err(|e|e.to_string())}

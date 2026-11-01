@@ -105,10 +105,18 @@ fn launch(args: &[String]) -> Result<i32> {
     // path is versioned and replaced on the next update.
     let launcher = std::env::current_exe()?;
     let _ = std::fs::write(root.join(&folder).join("launcher.txt"), launcher.to_string_lossy().as_bytes());
-    let mut command = std::process::Command::new(&executable);
-    if let Some(parent) = executable.parent() { command.current_dir(parent); }
+    let mut command = runtime_command(&executable,args);
     command.spawn().map_err(|error| Error(format!("无法启动点屿：{error}")))?;
     Ok(0)
+}
+
+fn runtime_command(executable:&Path,args:&[String])->std::process::Command{
+    let mut command=std::process::Command::new(executable);command.args(args);
+    if let Some(parent)=executable.parent(){command.current_dir(parent);}command
+}
+
+#[cfg(test)]mod startup_tests{use super::*;
+    #[test]fn launcher_preserves_login_mode_and_argument_boundaries(){let args=vec!["--startup".into(),"--data-dir".into(),"C:\\App Data\\DotIsle".into()];let command=runtime_command(Path::new("C:/Runtime/LyricIsland.exe"),&args);assert_eq!(command.get_args().map(|s|s.to_string_lossy().into_owned()).collect::<Vec<_>>(),args);}
 }
 
 pub fn run(args: Vec<String>) -> i32 {

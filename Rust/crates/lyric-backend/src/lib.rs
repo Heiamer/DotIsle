@@ -16,3 +16,5 @@ pub mod duration;
 pub mod shell;
 pub mod ipc;
 
+
+mod artwork;

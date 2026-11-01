@@ -171,9 +171,9 @@ impl LyricProviderTrustPolicy {
 pub struct LyricSourceRoutingPolicy;
 
 impl LyricSourceRoutingPolicy {
-    const ADAPTED_PROVIDERS: [&'static str; 3] = ["QQMusic", "Netease", "Kugou"];
+    const ADAPTED_PROVIDERS: [&'static str; 5] = ["QQMusic", "Netease", "Kugou", "Kuwo", "Migu"];
     const UNKNOWN_PRIMARY_FALLBACK: [&'static str; 3] = ["QQMusic", "Netease", "LRCLIB"];
-    const UNKNOWN_SECONDARY_FALLBACK: [&'static str; 1] = ["Kugou"];
+    const UNKNOWN_SECONDARY_FALLBACK: [&'static str; 3] = ["Kugou", "Kuwo", "Migu"];
 
     /// Maps a player identity onto its own lyric provider, when one exists.
     pub fn try_get_official_provider(source_app: Option<&str>) -> Option<LyricProviderId> {
@@ -192,6 +192,8 @@ impl LyricSourceRoutingPolicy {
         if source.contains("kugou") {
             return LyricProviderId::try_new(known_providers::KUGOU).ok();
         }
+        if source.contains("kuwo")||source.contains("kwmusic"){return LyricProviderId::try_new(known_providers::KUWO).ok()}
+        if source.contains("migu"){return LyricProviderId::try_new(known_providers::MIGU).ok()}
         None
     }
 
@@ -484,7 +486,7 @@ mod tests {
                 .iter()
                 .map(|provider| provider.value().to_string())
                 .collect::<Vec<_>>(),
-            vec!["Netease", "Kugou", "LRCLIB"]
+            vec!["Netease", "Kugou", "Kuwo", "Migu", "LRCLIB"]
         );
 
         let other = LyricSourceRoutingPolicy::build_fallback_batches(&create_track("Spotify"));
@@ -501,7 +503,7 @@ mod tests {
                 .iter()
                 .map(|provider| provider.value().to_string())
                 .collect::<Vec<_>>(),
-            vec!["Kugou"]
+            vec!["Kugou", "Kuwo", "Migu"]
         );
     }
 

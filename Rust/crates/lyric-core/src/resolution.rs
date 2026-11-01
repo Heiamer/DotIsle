@@ -211,6 +211,7 @@ struct SourceOutcome {
 struct CandidateResolution {
     lyrics: Option<ResolvedLyrics>,
     invalid_content: bool,
+    transient_failure: bool,
 }
 
 impl CandidateResolution {
@@ -218,6 +219,7 @@ impl CandidateResolution {
         Self {
             lyrics: None,
             invalid_content: false,
+            transient_failure: false,
         }
     }
 
@@ -225,6 +227,7 @@ impl CandidateResolution {
         Self {
             lyrics: None,
             invalid_content: true,
+            transient_failure: false,
         }
     }
 }
@@ -696,6 +699,7 @@ impl LyricResolutionCoordinator {
             }
 
             let mut saw_invalid_content = false;
+            let mut saw_transient_failure = false;
             for admission in admitted {
                 if started.elapsed() > self.source_timeout {
                     return SourceOutcome {
@@ -718,6 +722,7 @@ impl LyricResolutionCoordinator {
                     };
                 }
                 saw_invalid_content |= resolved.invalid_content;
+                saw_transient_failure |= resolved.transient_failure;
             }
 
             SourceOutcome {
@@ -733,7 +738,7 @@ impl LyricResolutionCoordinator {
                 } else {
                     "candidate-has-no-lyrics".to_string()
                 }),
-                is_transient_failure: false,
+                is_transient_failure: saw_transient_failure,
             }
         })();
 
@@ -763,7 +768,7 @@ impl LyricResolutionCoordinator {
                             "Lyric request '{request_id}' provider '{}' fetch failed: {failure:?}",
                             source.provider_id()
                         );
-                        return CandidateResolution::no_lyrics();
+                        return CandidateResolution {lyrics:None,invalid_content:false,transient_failure:crate::policy::LyricTransientFailurePolicy::is_transient(&failure)};
                     }
                 };
 
@@ -869,6 +874,7 @@ impl LyricResolutionCoordinator {
             Ok(lyrics) => CandidateResolution {
                 lyrics: Some(lyrics),
                 invalid_content: false,
+            transient_failure: false,
             },
             Err(_) => CandidateResolution::invalid(),
         }
@@ -1504,4 +1510,15 @@ mod tests {
         assert_eq!(mapping.preferred_provider.as_deref(), Some("Netease"));
         assert!(mapping.is_pure_music);
     }
+}
+
+#[cfg(test)]mod fetch_retry_regression{
+ use super::*;
+ struct FetchFailure{provider:LyricProviderId}
+ impl LyricSource for FetchFailure{
+  fn provider_id(&self)->&LyricProviderId{&self.provider}
+  fn search(&self,_:&LyricSearchPlan)->Result<Vec<SourceTrackCandidate>,SourceFailure>{Ok(vec![SourceTrackCandidate::try_new(self.provider.clone(),"id","song",vec!["artist".into()],"",Duration::from_secs(180),"exact",Default::default()).unwrap()])}
+  fn fetch(&self,_:&SourceTrackCandidate)->Result<Option<RawLyricPayload>,SourceFailure>{Err(SourceFailure::Timeout)}
+ }
+ #[test]fn lyric_download_timeout_remains_retryable(){let provider=crate::models::known_providers::kugou();let policy=LyricProviderTrustPolicy::new(vec![provider.clone()],vec![provider.clone()]).unwrap();let coordinator=LyricResolutionCoordinator::new(LyricResolutionCoordinatorBuilder{sources:vec![Box::new(FetchFailure{provider})],trust_policy:Some(policy),..Default::default()}).unwrap();let track=TrackInfo::new("id","song","artist","","Kugou",Duration::from_secs(180));assert_eq!(coordinator.resolve(&track).status,LyricResolutionStatus::TransientFailure);}
 }

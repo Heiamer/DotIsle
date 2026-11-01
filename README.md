@@ -8,20 +8,21 @@
 
 音乐歌词 · 通知与设备 · 待办清单 · 番茄钟 · 倒计时 · 秒表
 
-[下载安装版](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.6/DotIsle-3.1.6-Setup.exe) · [下载便携版](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.6/DotIsle-3.1.6-Portable.zip) · [本版更新说明](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.6/DotIsle-3.1.6-Notes.md) · [反馈问题](https://github.com/Heiamer/LyricIsland/issues)
+[下载安装版](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.8/DotIsle-3.1.8-Setup.exe) · [下载便携版](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.8/DotIsle-3.1.8-Portable.zip) · [本版更新说明](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.8/DotIsle-3.1.8-Notes.md) · [反馈问题](https://github.com/Heiamer/LyricIsland/issues)
 
 </div>
 
-## 3.1.6 正式版 · 物理弹簧与轻量玻璃
+## 3.1.8 正式版 · 启动、媒体适配与封面取色修复
 
-- 统一 Material 3 官方 Expressive / Standard 弹簧参数，支持连续反向、形状过渡与减少动态效果。
-- 胶囊、播放按钮、通知连续形变；清理切歌圆底、流程灰色悬停块和刻度。
-- 玻璃采用沿轮廓的细描边折射，中央文字与按钮保持清晰。
-- 移除经典材质与封面靠右布局，旧设置自动迁移，保留经典尺寸模式。
+- 修复开机自启动弹出控制中心，单文件启动器保留登录启动参数。
+- 动画恢复 3.1.5 的过渡逻辑与曲线编辑，保留减少动态效果设置。
+- 修复切歌后仍显示上一张封面、同曲后补封面不刷新，以及临时读取失败导致媒体信息丢失。
+- 优化酷狗歌词直搜与回退，恢复 QQ 逐字歌词解密，新增酷我、咪咕歌词源。
+- 修复亮黄绿、粉色等封面下上下曲图标回退纯黑；依据实际磨砂与玻璃背景调整同色系明度。
 
-**已知问题：网易云后台调节进度仍可能闪烁任务栏或弹出主界面，尚未彻底解决，后续继续处理。**
+**已知问题：网易云后台调节进度仍可能闪烁任务栏或弹出主界面，尚未彻底解决。酷狗歌词服务已验证，酷狗客户端实机全场景仍待补充。**
 
-[完整发布说明与下载](https://github.com/Heiamer/LyricIsland/releases/tag/v3.1.6) · [连续形变预览](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.6/DotIsle-3.1.6-IslandMorph.gif)
+[完整发布说明与下载](https://github.com/Heiamer/LyricIsland/releases/tag/v3.1.8) · [取色修复预览](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.8/DotIsle-3.1.8-Colors.png)
 
 ## 3.1.1 更新
 
@@ -48,11 +49,11 @@
 
 | 文件 | 用途 |
 | --- | --- |
-| [DotIsle-3.1.2-Setup.exe](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.6/DotIsle-3.1.6-Setup.exe) | 推荐下载。标准安装向导，支持开始菜单、应用卸载与数据保留。 |
-| [DotIsle-3.1.2-Portable.zip](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.6/DotIsle-3.1.6-Portable.zip) | 免安装。解压完整目录后运行 `LyricIsland.exe`。 |
-| [DotIsle-3.1.2-Source.zip](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.6/DotIsle-3.1.6-Source.zip) | 与本轮构建对应的完整源码、字体、许可证和构建文档。 |
-| [DotIsle-3.1.2-SHA256.txt](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.6/DotIsle-3.1.6-SHA256.txt) | 交付文件的 SHA256 校验值。 |
-| [DotIsle-3.1.2-Validation.zip](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.6/DotIsle-3.1.6-Validation.zip) | 测试报告、原生渲染截图和打包验收结果。 |
+| [DotIsle-3.1.8-Setup.exe](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.8/DotIsle-3.1.8-Setup.exe) | 推荐下载。标准安装向导，支持开始菜单、应用卸载与数据保留。 |
+| [DotIsle-3.1.8-Portable.zip](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.8/DotIsle-3.1.8-Portable.zip) | 免安装。解压完整目录后运行 `LyricIsland.exe`。 |
+| [DotIsle-3.1.8-Source.zip](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.8/DotIsle-3.1.8-Source.zip) | 与本轮构建对应的完整源码、字体、许可证和构建文档。 |
+| [DotIsle-3.1.8-SHA256.txt](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.8/DotIsle-3.1.8-SHA256.txt) | 交付文件的 SHA256 校验值。 |
+| [DotIsle-3.1.8-Validation.zip](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.8/DotIsle-3.1.8-Validation.zip) | 测试报告、原生渲染截图和打包验收结果。 |
 
 使用安装版时运行 Setup.exe，按向导选择目录；首次使用教程会按当前手势开关展示。
 
@@ -61,14 +62,14 @@
 1. 将便携 ZIP **完整解压到可写目录**，不要在压缩包中直接启动 EXE。
 2. 运行 `LyricIsland.exe`，通过系统托盘打开控制中心。
 3. 打开播放器并播放音乐，点屿会尝试连接 Windows 媒体会话并显示歌词。
-4. 在“灵动岛 → 音乐卡片 → 展开排版”选择沉浸歌词；其他布局继续保留。
+4. 在“灵动岛 → 尺寸与排版”选择并排、分离或歌词居中布局。
 5. 在“设置 → 外观”调整动态色彩、明暗主题和减少动态效果。
 
 请保留 EXE 旁的 `Assets`、字体、更新助手和许可证。需要迁移旧数据时，先退出旧程序，再把原运行目录的 `Data` 复制到新目录；请先备份，不要同时运行两个版本操作同一份数据。
 
 ### 从旧版更新
 
-发行页同时提供 `LyricIsland-3.1.2-Portable.zip` 与 `LyricIsland-3.1.2-SHA256.txt`，供旧版更新器识别。兼容包使用旧更新器要求的目录名，内部运行文件与推荐便携包相同。
+发行页同时提供 `LyricIsland-3.1.8-Portable.zip` 与 `LyricIsland-3.1.8-SHA256.txt`，供旧版更新器识别。兼容包使用旧更新器要求的目录名，内部运行文件与推荐便携包相同。
 
 可以从旧版的“关于与更新”检查更新；网络或旧更新器无法完成升级时，请手动下载推荐便携包，退出旧程序后再迁移 `Data`。本次只发布 GitHub，国内镜像不保证同步更新。
 
@@ -84,17 +85,17 @@
 
 ## 性能与验证
 
-本轮通过 **450 项 workspace 测试、11 组原生 IPC 集成检查、144 张设置场景截图与 65 张沉浸卡片截图**，并从最终 ZIP 解压验证程序、字体、更新助手和文件校验。
+本轮通过 **479 项工作区测试、16 组原生 IPC 集成检查、193 张控制中心截图和 147 张音乐卡片截图（含 73 组取色场景）**，并验证安装、重装、保留数据卸载和清理测试数据卸载。
 
 优化包括收紧 GPU 数据纹理与分配块、去掉常驻中间画布、字体按需映射、复用着色器缓存、设置延迟启动与隐藏后退出。内存会随页面、缩放、显卡和使用时间变化，**不承诺设置窗口已达到 100 MB**。本轮 UI 改动没有重新进行同口径的可见窗口内存测量，也没有把旧测量值当作新版实测。
 
-真实播放器、IME、桌面关闭/热重开的本轮人工交互验收仍待补充；离屏渲染和隔离状态检查不能替代这些验收。具体范围见[本版说明](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.6/DotIsle-3.1.6-Notes.md)。
+真实播放器、IME、桌面关闭/热重开的本轮人工交互验收仍待补充；离屏渲染和隔离状态检查不能替代这些验收。具体范围见[本版说明](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.8/DotIsle-3.1.8-Notes.md)。
 
 ## 源码与构建
 
 当前运行栈为 **Rust、Win32、Vello Hybrid、wgpu 和 Parley**，控制中心使用同一套原生绘图技术。
 
-完整可构建源码随 Release 附件交付；**请下载 `DotIsle-3.1.2-Source.zip`**，其中 `BUILD-3.1.2.md` 说明工具链和构建步骤。仓库主分支与 GitHub 自动生成的 “Source code” 归档不作为本轮二进制的对应源码；本轮没有全量同步主分支代码。
+完整可构建源码随 Release 附件交付，下载 `DotIsle-3.1.8-Source.zip`；构建方式见 `BUILD-3.1.8.md` 与 `BUILD-3.1.7.md`。本轮源码同步到主分支，版本标签指向对应的源码提交。
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 build --release --package lyric-native --package dotisle-app --package lyric-bootstrap

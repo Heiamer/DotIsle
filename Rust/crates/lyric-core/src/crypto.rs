@@ -97,8 +97,10 @@ pub fn decrypt_qrc(encrypted_hex: &str) -> Result<String, DecryptError> {
         .filter(|ch| !ch.is_whitespace())
         .collect();
     let bytes = hex_to_bytes(&cleaned).ok_or(DecryptError::InvalidHex)?;
-    let decrypted = triple_des_decrypt_ecb(QRC_KEY, &bytes)?;
-    let inflated = inflate(&decrypted)?;
+    // QQ uses little-endian 32-bit words and two nonstandard S-box entries.
+    // Keep the standards-compliant path as a reader for old locally generated caches.
+    let inflated = triple_des_ecb_variant(QRC_KEY,&bytes,false,true).and_then(|d|inflate(&d))
+        .or_else(|_|triple_des_decrypt_ecb(QRC_KEY,&bytes).and_then(|d|inflate(&d)))?;
 
     let without_bom = if inflated.starts_with(&UTF8_BOM) {
         &inflated[UTF8_BOM.len()..]
@@ -115,7 +117,7 @@ pub fn encrypt_qrc(plain: &str) -> Result<String, DecryptError> {
     data.extend_from_slice(plain.as_bytes());
 
     let deflated = deflate(&data)?;
-    let cipher = triple_des_encrypt_ecb(QRC_KEY, &pad_to_block(&deflated))?;
+    let cipher = triple_des_ecb_variant(QRC_KEY, &pad_to_block(&deflated),true,true)?;
     Ok(cipher
         .iter()
         .map(|byte| format!("{byte:02X}"))
@@ -183,7 +185,8 @@ pub fn triple_des_encrypt_ecb(key: &[u8], data: &[u8]) -> Result<Vec<u8>, Decryp
     triple_des_ecb(key, data, true)
 }
 
-fn triple_des_ecb(key: &[u8], data: &[u8], encrypt: bool) -> Result<Vec<u8>, DecryptError> {
+fn triple_des_ecb(key: &[u8], data: &[u8], encrypt: bool) -> Result<Vec<u8>, DecryptError> {triple_des_ecb_variant(key,data,encrypt,false)}
+fn triple_des_ecb_variant(key:&[u8],data:&[u8],encrypt:bool,qq:bool)->Result<Vec<u8>,DecryptError>{
     if key.len() < 24 {
         return Err(DecryptError::InvalidBlockLength);
     }
@@ -199,13 +202,13 @@ fn triple_des_ecb(key: &[u8], data: &[u8], encrypt: bool) -> Result<Vec<u8>, Dec
     for block in data.chunks(8) {
         let block: [u8; 8] = block.try_into().expect("8 byte block");
         let result = if encrypt {
-            let first = des_encrypt_block(&k1, &block);
-            let second = des_decrypt_block(&k2, &first);
-            des_encrypt_block(&k3, &second)
+            let first = des_process_block_variant(&k1, &block, true,qq);
+            let second = des_process_block_variant(&k2, &first, false,qq);
+            des_process_block_variant(&k3, &second, true,qq)
         } else {
-            let first = des_decrypt_block(&k3, &block);
-            let second = des_encrypt_block(&k2, &first);
-            des_decrypt_block(&k1, &second)
+            let first = des_process_block_variant(&k3, &block, false,qq);
+            let second = des_process_block_variant(&k2, &first, true,qq);
+            des_process_block_variant(&k1, &second, false,qq)
         };
         out.extend_from_slice(&result);
     }
@@ -222,9 +225,11 @@ pub fn des_decrypt_block(key: &[u8; 8], block: &[u8; 8]) -> [u8; 8] {
     des_process_block(key, block, false)
 }
 
-fn des_process_block(key: &[u8; 8], block: &[u8; 8], encrypt: bool) -> [u8; 8] {
-    let subkeys = des_subkeys(key);
-    let input = u64::from_be_bytes(*block);
+fn des_process_block(key: &[u8; 8], block: &[u8; 8], encrypt: bool) -> [u8; 8] {des_process_block_variant(key,block,encrypt,false)}
+fn des_process_block_variant(key:&[u8;8],block:&[u8;8],encrypt:bool,qq:bool)->[u8;8]{
+    let mut key=*key;let mut block=*block;if qq{for word in key.chunks_exact_mut(4){word.reverse()}for word in block.chunks_exact_mut(4){word.reverse()}}
+    let subkeys = des_subkeys(&key,qq);
+    let input = u64::from_be_bytes(block);
     let permuted = permute(input, &IP, 64);
     let mut left = (permuted >> 32) as u32;
     let mut right = (permuted & 0xFFFF_FFFF) as u32;
@@ -237,17 +242,17 @@ fn des_process_block(key: &[u8; 8], block: &[u8; 8], encrypt: bool) -> [u8; 8] {
 
     for index in order {
         let next_left = right;
-        let next_right = left ^ feistel(right, subkeys[index]);
+        let next_right = left ^ feistel(right, subkeys[index],qq);
         left = next_left;
         right = next_right;
     }
 
     let pre_output = ((right as u64) << 32) | (left as u64);
     let output = permute(pre_output, &FP, 64);
-    output.to_be_bytes()
+    let mut bytes=output.to_be_bytes();if qq{for word in bytes.chunks_exact_mut(4){word.reverse()}}bytes
 }
 
-fn des_subkeys(key: &[u8; 8]) -> [u64; 16] {
+fn des_subkeys(key: &[u8; 8],qq:bool) -> [u64; 16] {
     let key_bits = u64::from_be_bytes(*key);
     let permuted = permute(key_bits, &PC1, 64);
     let mut c = ((permuted >> 28) & 0x0FFF_FFFF) as u32;
@@ -258,12 +263,12 @@ fn des_subkeys(key: &[u8; 8]) -> [u64; 16] {
         c = ((c << shift) | (c >> (28 - shift))) & 0x0FFF_FFFF;
         d = ((d << shift) | (d >> (28 - shift))) & 0x0FFF_FFFF;
         let combined = ((c as u64) << 28) | d as u64;
-        subkeys[round] = permute(combined, &PC2, 56);
+        subkeys[round] = if qq{PC2.iter().enumerate().fold(0u64,|value,(index,position)|{let bit=if index<24{(c>>(28-*position))&1}else{let shift=55-*position as i32;if shift<0{0}else{(d>>shift)&1}};(value<<1)|bit as u64})}else{permute(combined, &PC2, 56)};
     }
     subkeys
 }
 
-fn feistel(right: u32, subkey: u64) -> u32 {
+fn feistel(right: u32, subkey: u64,qq:bool) -> u32 {
     let expanded = permute(right as u64, &E, 32);
     let mixed = expanded ^ subkey;
     let mut output: u32 = 0;
@@ -273,7 +278,7 @@ fn feistel(right: u32, subkey: u64) -> u32 {
         let six_bits = ((mixed >> shift) & 0x3F) as usize;
         let row = ((six_bits & 0x20) >> 4) | (six_bits & 1);
         let column = (six_bits >> 1) & 0x0F;
-        let value = S_BOXES[box_index][row * 16 + column] as u32;
+        let index=row*16+column;let value=if qq&&box_index==1&&index==23{15}else if qq&&box_index==3&&index==53{10}else{S_BOXES[box_index][index]as u32};
         output = (output << 4) | value;
     }
 
@@ -414,3 +419,5 @@ mod tests {
         assert!(matches!(decrypt_krc("!!!!"), Err(DecryptError::InvalidBase64)));
     }
 }
+
+#[cfg(test)]mod qq_wire_fixture{#[test]fn reads_an_independent_lyricify_cipher_vector(){assert_eq!(super::decrypt_qrc("D6A2BE95D644737240D299FC1D146B24ACCDAB8B48D2A4FE58061D77A8A3B104").unwrap(),"[1000,1200]fixture(1000,1200)");}}

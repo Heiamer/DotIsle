@@ -1,5 +1,5 @@
 //! Native SMTC sessions. Every WinRT operation has an explicit bounded wait.
-use std::{sync::{Arc,atomic::{AtomicU64,Ordering}},time::{Duration,Instant,SystemTime,UNIX_EPOCH}};
+use std::{sync::{Arc,atomic::{AtomicU64,Ordering}},time::{Duration,Instant,SystemTime,UNIX_EPOCH},sync::mpsc};
 use windows::{core::Result,Foundation::TypedEventHandler,Media::Control::*,Storage::Streams::{DataReader,InputStreamOptions}};
 use lyric_core::models::{TrackInfo,PlaybackSnapshot};
 
@@ -26,10 +26,17 @@ pub fn control_diagnostics()->Result<serde_json::Value>{
 }
 pub fn normalize_source(source:&str)->String{
     let s=source.to_lowercase();
-    for (needles,name) in [(&["qqmusic"][..],"QQMusic"),(&["cloudmusic","netease","163music","music.163","wyy"][..],"Netease"),(&["kugou"][..],"Kugou"),(&["kwmusic","kuwo"][..],"Kuwo"),(&["spotify"][..],"Spotify"),(&["sodamusic"][..],"SodaMusic"),(&["applemusic","apple music"][..],"AppleMusic"),(&["youtubemusic","youtube music"][..],"YouTubeMusic"),(&["potplayer"][..],"PotPlayer"),(&["saltplayer","salt player"][..],"SaltPlayer"),(&["lx-music","lxmusic"][..],"LXMusic"),(&["musicfree"][..],"MusicFree"),(&["yesplaymusic"][..],"YesPlayMusic"),(&["cider"][..],"Cider"),(&["foobar"][..],"Foobar2000"),(&["musicbee"][..],"MusicBee"),(&["aimp"][..],"AIMP"),(&["chrome","msedge","firefox","browser","opera","brave","vivaldi"][..],"Browser")]{
+    for (needles,name) in [(&["qqmusic","qq音乐"][..],"QQMusic"),(&["cloudmusic","netease","163music","music.163","wyy"][..],"Netease"),(&["kugou","kugoomusic","酷狗"][..],"Kugou"),(&["kwmusic","kuwo","酷我"][..],"Kuwo"),(&["spotify"][..],"Spotify"),(&["sodamusic","汽水音乐"][..],"SodaMusic"),(&["migu","咪咕"][..],"Migu"),(&["applemusic","apple music"][..],"AppleMusic"),(&["youtubemusic","youtube music"][..],"YouTubeMusic"),(&["potplayer"][..],"PotPlayer"),(&["saltplayer","salt player"][..],"SaltPlayer"),(&["lx-music","lxmusic"][..],"LXMusic"),(&["musicfree"][..],"MusicFree"),(&["yesplaymusic"][..],"YesPlayMusic"),(&["cider"][..],"Cider"),(&["foobar"][..],"Foobar2000"),(&["musicbee"][..],"MusicBee"),(&["aimp"][..],"AIMP"),(&["chrome","msedge","firefox","browser","opera","brave","vivaldi"][..],"Browser")]{
         if needles.iter().any(|n|s.contains(n)){return name.into()}
     }
     source.into()
+}
+pub fn normalize_metadata(source:&str,title:&str,artist:&str)->(String,String){
+    let title=title.trim();let artist=artist.trim();
+    if artist.is_empty()&&["Kugou","QQMusic","Kuwo","SodaMusic"].contains(&source){
+        for separator in [" - "," – "," — "]{if let Some((singer,song))=title.split_once(separator){if !singer.trim().is_empty()&&!song.trim().is_empty(){return(song.trim().into(),singer.trim().into())}}}
+    }
+    (title.into(),artist.into())
 }
 /// Which media sessions may drive the island.
 ///
@@ -80,8 +87,8 @@ pub struct Media {
     manager:GlobalSystemMediaTransportControlsSessionManager,
     pub active:Option<GlobalSystemMediaTransportControlsSession>,
     pub events:Arc<AtomicU64>,manager_tokens:(i64,i64),session_tokens:Option<(GlobalSystemMediaTransportControlsSession,i64,i64,i64)>,
-    cached_properties:Option<GlobalSystemMediaTransportControlsSessionMediaProperties>,properties_at:Instant,properties_events:u64,
-    cached_cover:Option<Vec<u8>>,cover_key:String,cover_retry:Instant,
+    cached_info:Option<GlobalSystemMediaTransportControlsSessionPlaybackInfo>,cached_timeline:Option<GlobalSystemMediaTransportControlsSessionTimelineProperties>,cached_properties:Option<GlobalSystemMediaTransportControlsSessionMediaProperties>,properties_at:Instant,properties_events:u64,blank_since:Option<Instant>,
+    artwork:crate::artwork::ArtworkCache,cover_rx:Option<mpsc::Receiver<(String,Option<Vec<u8>>)>>,cover_retry:Instant,property_events:Arc<AtomicU64>,cover_events:u64,
 }
 impl Media{
     pub fn new()->Result<Self>{
@@ -89,43 +96,54 @@ impl Media{
         let manager=wait!(GlobalSystemMediaTransportControlsSessionManager::RequestAsync());let events=Arc::new(AtomicU64::new(0));
         let count=events.clone();let a=manager.SessionsChanged(&TypedEventHandler::new(move|_,_|{count.fetch_add(1,Ordering::Relaxed);Ok(())}))?;
         let count=events.clone();let b=manager.CurrentSessionChanged(&TypedEventHandler::new(move|_,_|{count.fetch_add(1,Ordering::Relaxed);Ok(())}))?;
-        Ok(Self{manager,active:None,events,manager_tokens:(a,b),session_tokens:None,cached_properties:None,properties_at:Instant::now(),properties_events:u64::MAX,cached_cover:None,cover_key:String::new(),cover_retry:Instant::now()})
+        Ok(Self{manager,active:None,events,manager_tokens:(a,b),session_tokens:None,cached_info:None,cached_timeline:None,cached_properties:None,properties_at:Instant::now(),properties_events:u64::MAX,blank_since:None,artwork:Default::default(),cover_rx:None,cover_retry:Instant::now(),property_events:Arc::new(AtomicU64::new(0)),cover_events:u64::MAX})
     }
     pub fn read(&mut self,filter:&SourceFilter)->Result<MediaSample>{
         let sessions=self.manager.GetSessions()?;let current=self.manager.GetCurrentSession().ok();let mut best=None;let mut priority:Option<(bool,bool)>=None;
         for i in 0..sessions.Size()?{
-            let s=sessions.GetAt(i)?;let source=s.SourceAppUserModelId()?.to_string();if !filter.allows(&source){continue}
+            let Ok(s)=sessions.GetAt(i)else{continue};let Ok(id)=s.SourceAppUserModelId()else{continue};let source=id.to_string();if !filter.allows(&source){continue}
             let playing=s.GetPlaybackInfo().ok().and_then(|p|p.PlaybackStatus().ok())==Some(GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing);
-            let candidate=(!playing,current.as_ref()!=Some(&s));if better(priority,candidate){priority=Some(candidate);best=Some(s)}
+            let candidate=(!playing,current.as_ref()!=Some(&s));if better(priority,candidate)||priority==Some(candidate)&&self.active.as_ref()==Some(&s){priority=Some(candidate);best=Some(s)}
         }
         let Some(session)=best else{self.set_active(None);return Ok(MediaSample{playback:PlaybackSnapshot::idle(),updated_ms:0,raw:0.,status:"Closed".into(),rate:1.,cover_identity:String::new()})};
         self.set_active(Some(session.clone()));
         let source_id=session.SourceAppUserModelId()?.to_string();let source=normalize_source(&source_id);
-        let events=self.events.load(Ordering::Relaxed);
-        if self.cached_properties.is_none() || events!=self.properties_events || self.properties_at.elapsed()>=Duration::from_secs(5){
-            self.cached_properties=Some(wait!(session.TryGetMediaPropertiesAsync()));self.properties_at=Instant::now();self.properties_events=events;
+        let events=self.property_events.load(Ordering::Acquire);
+        if self.cached_properties.is_none() || events!=self.properties_events || self.properties_at.elapsed()>=Duration::from_millis(800){
+            // A transient provider error must not tear down a valid session.
+            match Self::properties(&session){Ok(p)=>{let blank=p.Title().map(|s|s.is_empty()).unwrap_or(true);let had_title=self.cached_properties.as_ref().and_then(|p|p.Title().ok()).is_some_and(|s|!s.is_empty());let now=Instant::now();if blank&&had_title{let since=*self.blank_since.get_or_insert(now);if now.duration_since(since)>=Duration::from_millis(1500){self.cached_properties=Some(p);}}else{self.blank_since=None;self.cached_properties=Some(p);}self.properties_events=events;},Err(e)if self.cached_properties.is_none()=>return Err(e),Err(_)=>{}}
+            self.properties_at=Instant::now();
         }
         let props=self.cached_properties.as_ref().unwrap();
-        let mut title=props.Title()?.to_string();let mut artist=props.Artist()?.to_string();
+        let mut title=props.Title().map(|s|s.to_string()).unwrap_or_default();let mut artist=props.Artist().map(|s|s.to_string()).unwrap_or_default();
         if artist.trim().is_empty(){artist=props.AlbumArtist().map(|s|s.to_string()).unwrap_or_default()}
         if source=="Netease"&&(title.trim().is_empty()||title.eq_ignore_ascii_case("Unknown Title")){if let Some((name,singer))=netease_window_metadata(filter){title=name;artist=singer;}}
-        let mut song_id=None;if let Ok(genres)=props.Genres(){for i in 0..genres.Size().unwrap_or(0){if let Ok(genre)=genres.GetAt(i){let genre=genre.to_string();let prefix=if source=="Netease"{"NCM-"}else if source=="QQMusic"{"QQ-"}else{""};if !prefix.is_empty(){if let Some(id)=genre.strip_prefix(prefix){song_id=Some(id.to_string());break}}}}}
-        let album=props.AlbumTitle()?.to_string();let info=session.GetPlaybackInfo()?;let status=info.PlaybackStatus()?;
+        let mut song_id=None;if let Ok(genres)=props.Genres(){for i in 0..genres.Size().unwrap_or(0){if let Ok(genre)=genres.GetAt(i){if let Some(id)=genre_song_id(&source,&genre.to_string()){song_id=Some(id);break}}}}
+
+        let (title,artist)=normalize_metadata(&source,&title,&artist);let album=props.AlbumTitle().map(|s|s.to_string()).unwrap_or_default();let info=session.GetPlaybackInfo().ok().or_else(||self.cached_info.clone());self.cached_info=info.clone();let status=info.as_ref().and_then(|i|i.PlaybackStatus().ok()).unwrap_or(GlobalSystemMediaTransportControlsSessionPlaybackStatus::Paused);
         let playing=status==GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
         let status_name=match status{GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing=>"Playing",GlobalSystemMediaTransportControlsSessionPlaybackStatus::Paused=>"Paused",GlobalSystemMediaTransportControlsSessionPlaybackStatus::Stopped=>"Stopped",GlobalSystemMediaTransportControlsSessionPlaybackStatus::Closed=>"Closed",_=>"Changing"};
-        let timeline=session.GetTimelineProperties()?;
-        let raw=timeline.Position()?.Duration as f64/10000000.;let end=timeline.EndTime()?.Duration;let duration=(if end>0{end}else{timeline.MaxSeekTime()?.Duration} as f64/10000000.).max(0.);
-        let updated_ms=timeline.LastUpdatedTime()?.UniversalTime/10000-11644473600000;
-        let cover_key=format!("{source}|{title}|{artist}|{album}");
-        if self.cover_key!=cover_key{self.cached_cover=None;self.cover_key=cover_key.clone();self.cover_retry=Instant::now()}
-        if self.cached_cover.is_none()&&Instant::now()>=self.cover_retry{
-            self.cover_retry=Instant::now()+Duration::from_secs(5);
-            self.cached_cover=Self::cover(&props).ok().flatten();
+        let timeline=session.GetTimelineProperties().ok().or_else(||self.cached_timeline.clone());self.cached_timeline=timeline.clone();
+        let raw=timeline.as_ref().and_then(|t|t.Position().ok()).map(|t|t.Duration as f64/10000000.).unwrap_or(0.);
+        let duration=timeline.as_ref().and_then(|t|t.EndTime().ok().filter(|d|d.Duration>0).or_else(||t.MaxSeekTime().ok())).map(|d|d.Duration as f64/10000000.).unwrap_or(0.).clamp(0.,86400.);
+        let updated_ms=timeline.as_ref().and_then(|t|t.LastUpdatedTime().ok()).map(|d|d.UniversalTime/10000-11644473600000).unwrap_or(0);
+        let cover_key=format!("{source_id}|{title}|{artist}|{album}|{}",song_id.as_deref().unwrap_or(""));let now=Instant::now();
+        if self.artwork.select(cover_key.clone(),now){self.cover_rx=None;self.cover_retry=now;}
+        if events!=self.cover_events{self.cover_retry=now;self.cover_events=events;}
+        if let Some((key,bytes))=self.cover_rx.as_ref().and_then(|r|r.try_recv().ok()){
+            self.cover_rx=None;self.artwork.accept(&key,bytes,now);
         }
-        let is_media=!title.trim().is_empty()&&status_name!="Closed"&&status_name!="Stopped";
+        // Thumbnail streams are independent of song metadata/timeline polling.
+        if self.cover_rx.is_none()&&now>=self.cover_retry{
+            self.cover_retry=now+Duration::from_millis(if self.artwork.bytes.is_none(){350}else{1500});
+            let props=props.clone();let key=cover_key.clone();let(tx,rx)=mpsc::channel();self.cover_rx=Some(rx);
+            std::thread::spawn(move||{unsafe{let _=windows::Win32::System::WinRT::RoInitialize(windows::Win32::System::WinRT::RO_INIT_MULTITHREADED);}let bytes=Self::cover(&props).ok().flatten();let _=tx.send((key,bytes));});
+        }
+        let is_media=!title.trim().is_empty()&&status_name!="Closed";
         let track=if is_media{Some(TrackInfo{id:format!("{source}|{title}|{artist}"),title,artist,album,source_app:source,duration:Duration::from_secs_f64(duration.min(86400.)),song_id})}else{None};
-        Ok(MediaSample{playback:PlaybackSnapshot{track,is_playing:playing,position:Duration::from_secs_f64(raw.clamp(0.,86400.)),raw_position:Some(Duration::from_secs_f64(raw.clamp(0.,86400.))),extrapolated_position:None,cover_image_bytes:self.cached_cover.clone(),is_cover_loading:self.cached_cover.is_none(),source_app_user_model_id:source_id,can_seek:info.Controls()?.IsPlaybackPositionEnabled()?},updated_ms,raw,status:status_name.into(),rate:info.PlaybackRate().ok().and_then(|r|r.Value().ok()).unwrap_or(1.),cover_identity:cover_key})
+        Ok(MediaSample{playback:PlaybackSnapshot{track,is_playing:playing,position:Duration::from_secs_f64(raw.clamp(0.,86400.)),raw_position:Some(Duration::from_secs_f64(raw.clamp(0.,86400.))),extrapolated_position:None,cover_image_bytes:self.artwork.bytes.clone(),is_cover_loading:self.artwork.bytes.is_none(),source_app_user_model_id:source_id,can_seek:info.as_ref().and_then(|i|i.Controls().ok()).and_then(|c|c.IsPlaybackPositionEnabled().ok()).unwrap_or(false)},updated_ms,raw,status:status_name.into(),rate:info.as_ref().and_then(|i|i.PlaybackRate().ok()).and_then(|r|r.Value().ok()).unwrap_or(1.),cover_identity:cover_key})
     }
+    fn properties(session:&GlobalSystemMediaTransportControlsSession)->Result<GlobalSystemMediaTransportControlsSessionMediaProperties>{Ok(wait!(session.TryGetMediaPropertiesAsync()))}
     fn cover(props:&GlobalSystemMediaTransportControlsSessionMediaProperties)->Result<Option<Vec<u8>>>{
         let Ok(thumbnail)=props.Thumbnail()else{return Ok(None)};
         let stream=wait!(thumbnail.OpenReadAsync());let size=stream.Size()?;
@@ -137,11 +155,11 @@ impl Media{
     fn set_active(&mut self,active:Option<GlobalSystemMediaTransportControlsSession>){
         if self.active==active{return}
         if let Some((s,p,m,t))=self.session_tokens.take(){let _=s.RemovePlaybackInfoChanged(p);let _=s.RemoveMediaPropertiesChanged(m);let _=s.RemoveTimelinePropertiesChanged(t);}
-        self.cached_properties=None;self.cached_cover=None;self.cover_key.clear();self.cover_retry=Instant::now();
+        self.cached_info=None;self.cached_timeline=None;self.cached_properties=None;self.blank_since=None;self.artwork.select(String::new(),Instant::now());self.cover_rx=None;self.cover_retry=Instant::now();
         self.active=active.clone();
         if let Some(s)=active{
             let c=self.events.clone();let p=s.PlaybackInfoChanged(&TypedEventHandler::new(move|_,_|{c.fetch_add(1,Ordering::Relaxed);Ok(())})).unwrap_or(0);
-            let c=self.events.clone();let m=s.MediaPropertiesChanged(&TypedEventHandler::new(move|_,_|{c.fetch_add(1,Ordering::Relaxed);Ok(())})).unwrap_or(0);
+            let c=self.events.clone();let properties=self.property_events.clone();let m=s.MediaPropertiesChanged(&TypedEventHandler::new(move|_,_|{c.fetch_add(1,Ordering::Relaxed);properties.fetch_add(1,Ordering::Release);Ok(())})).unwrap_or(0);
             let c=self.events.clone();let t=s.TimelinePropertiesChanged(&TypedEventHandler::new(move|_,_|{c.fetch_add(1,Ordering::Relaxed);Ok(())})).unwrap_or(0);
             self.session_tokens=Some((s,p,m,t));
         }
@@ -183,3 +201,9 @@ impl Drop for Media{fn drop(&mut self){self.set_active(None);let _=self.manager.
 }}
 
 
+
+fn genre_song_id(source:&str,genre:&str)->Option<String>{let prefixes:&[&str]=match source{"Netease"=>&["NCM-"],"QQMusic"=>&["QQ-"],"Kugou"=>&["KG-","KUGOU-","KGM-"],_=>&[]};for prefix in prefixes{if genre.get(..prefix.len()).is_some_and(|p|p.eq_ignore_ascii_case(prefix)){let id=&genre[prefix.len()..];if source=="Kugou"{if id.len()==32&&id.bytes().all(|b|b.is_ascii_hexdigit()){return Some(id.into())}}else if !id.is_empty()&&id.bytes().all(|b|b.is_ascii_alphanumeric()){return Some(id.into())}}}None}
+#[cfg(test)]mod domestic_tests{use super::*;
+ #[test]fn player_aliases_and_combined_titles_are_normalized(){for alias in ["KuGouMusic.exe","Kugou","酷狗音乐"]{assert_eq!(normalize_source(alias),"Kugou");}assert_eq!(normalize_metadata("Kugou","歌手 - 歌曲",""),("歌曲".into(),"歌手".into()));assert_eq!(normalize_metadata("Kugou","歌曲 - Live","歌手"),("歌曲 - Live".into(),"歌手".into()));assert_eq!(normalize_metadata("Spotify","A - B",""),("A - B".into(),"".into()));}
+ #[test]fn hash_namespaces_do_not_confuse_numeric_song_ids(){assert!(genre_song_id("Kugou","KG-12345").is_none());assert!(genre_song_id("QQMusic","NCM-12345").is_none());assert_eq!(genre_song_id("Kugou","kg-0123456789abcdef0123456789ABCDEF").as_deref(),Some("0123456789abcdef0123456789ABCDEF"));}
+}

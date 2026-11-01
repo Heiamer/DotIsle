@@ -85,6 +85,8 @@ pub mod known_providers {
     pub const KUGOU: &str = "Kugou";
     pub const NETEASE: &str = "Netease";
     pub const LRCLIB: &str = "LRCLIB";
+    pub const KUWO: &str = "Kuwo";
+    pub const MIGU: &str = "Migu";
 
     use super::LyricProviderId;
 
@@ -110,7 +112,7 @@ pub mod known_providers {
 
     /// `KnownLyricProviders.OnlineTrustOrder` — note Kugou precedes Netease here.
     pub fn online_trust_order() -> Vec<LyricProviderId> {
-        vec![qq_music(), kugou(), netease(), lrclib()]
+        vec![qq_music(), kugou(), netease(), LyricProviderId::try_new(KUWO).unwrap(), LyricProviderId::try_new(MIGU).unwrap(), lrclib()]
     }
 }
 
@@ -1163,7 +1165,7 @@ mod tests {
             .iter()
             .map(|provider| provider.value().to_string())
             .collect();
-        assert_eq!(order, vec!["QQMusic", "Kugou", "Netease", "LRCLIB"]);
+        assert_eq!(order, vec!["QQMusic", "Kugou", "Netease", "Kuwo", "Migu", "LRCLIB"]);
     }
 
     #[test]
