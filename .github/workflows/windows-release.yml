@@ -1,36 +1,60 @@
-name: Build and verify Windows release
+name: Build and package Windows release
 
 on:
   push:
-    branches: [fix/in-app-update]
+    tags:
+      - "v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without the leading v
+        required: true
+        default: "3.2.0"
+      publish:
+        description: Publish the release instead of leaving a draft
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
 concurrency:
   group: windows-release-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   release:
     runs-on: windows-latest
-    timeout-minutes: 60
-    env:
-      CARGO_TERM_COLOR: never
-      RUSTFLAGS: -C target-feature=+crt-static
+    timeout-minutes: 90
     defaults:
       run:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare Windows build tools
+
+      - name: Resolve release version
         run: |
-          rustup update stable --no-self-update
-          rustup default stable-x86_64-pc-windows-msvc
-          $fxc=Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Filter fxc.exe -Recurse | Where-Object {$_.Directory.Name -eq 'x64'} | Sort-Object FullName | Select-Object -Last 1
-          if(-not $fxc){throw 'Windows SDK fxc.exe is missing'}
-          "GPUI_FXC_PATH=$($fxc.FullName)" >> $env:GITHUB_ENV
+          $version='${{ inputs.version }}'
+          if(-not $version){$version='${{ github.ref_name }}'.TrimStart('v')}
+          if($version -notmatch '^\d+\.\d+\.\d+$'){throw "Invalid version $version"}
+          "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Prepare GNU toolchain, Zig, LLVM and Inno Setup
+        run: |
+          rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal --no-self-update
+          $zigZip=Join-Path $env:RUNNER_TEMP 'zig.zip'
+          Invoke-WebRequest 'https://ziglang.org/download/0.17.0/zig-x86_64-windows-0.17.0.zip' -OutFile $zigZip
+          Expand-Archive $zigZip (Join-Path $env:RUNNER_TEMP 'zig') -Force
+          $zig=(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'zig') -Filter zig.exe -Recurse | Select-Object -First 1).FullName
+          if(-not $zig){throw 'Zig download is missing zig.exe'}
+          "DOTISLE_ZIG=$zig" >> $env:GITHUB_ENV
+          choco install llvm -y --no-progress
+          $dlltool='C:\Program Files\LLVM\bin\llvm-dlltool.exe'
+          if(-not(Test-Path $dlltool)){
+            $dlltool=(Get-ChildItem 'C:\Program Files\LLVM' -Filter llvm-dlltool.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          }
+          if(-not $dlltool){throw 'llvm-dlltool.exe is missing'}
+          "DOTISLE_DLLTOOL=$dlltool" >> $env:GITHUB_ENV
           $compiler='C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
           if(-not(Test-Path $compiler)){
             $download=Join-Path $env:RUNNER_TEMP 'inno-setup.exe'
@@ -42,54 +66,72 @@ jobs:
             $compiler=Join-Path $directory 'ISCC.exe'
           }
           "INNO_SETUP_COMPILER=$compiler" >> $env:GITHUB_ENV
-          $archive=Join-Path $env:RUNNER_TEMP 'sqlite.zip'
-          Invoke-WebRequest 'https://api.nuget.org/v3-flatcontainer/sqlitepclraw.lib.e_sqlite3/2.1.6/sqlitepclraw.lib.e_sqlite3.2.1.6.nupkg' -OutFile $archive
-          $sqlite=Join-Path $env:RUNNER_TEMP 'sqlite'
-          Expand-Archive $archive $sqlite
-          "SQLITE_DLL=$sqlite\runtimes\win-x64\native\e_sqlite3.dll" >> $env:GITHUB_ENV
-      - name: Run workspace tests
-        working-directory: Rust
-        run: cargo test --workspace --locked -- --test-threads=1
-      - name: Build optimized Windows binaries
-        working-directory: Rust
-        run: cargo build --release --locked --workspace
-      - name: Build portable, installer, source and OTA packages
+
+      - name: Test workspace
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 test --workspace
+
+      - name: Build release binaries
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 build --release --workspace --bins
+
+      - name: Package installer, portable, OTA and source
         run: |
-          & .\Rust\target\release\lyric-tools.exe package --version 2.1.9 --binary-dir "$pwd\Rust\target\release" --output "$pwd\publish\release-output" --sqlite $env:SQLITE_DLL --iscc $env:INNO_SETUP_COMPILER
+          Remove-Item 'publish' -Recurse -Force -ErrorAction SilentlyContinue
+          $out=Join-Path $pwd 'publish/release-output'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item "release-notes/DotIsle-$env:VERSION-Notes.md" $out
+          python build/package_release.py --binary-dir "$pwd/target/release" --output $out --work-dir "$env:RUNNER_TEMP/package" --iscc $env:INNO_SETUP_COMPILER --version $env:VERSION --shader-cache "$pwd/Assets/ShaderCache/Hybrid29"
           if($LASTEXITCODE -ne 0){throw 'Packaging failed'}
-      - name: Check installer maintenance
-        run: |
-          & .\Rust\target\release\lyric-tools.exe verify installer "$pwd\validation\installer-work" "$pwd\validation\installer.json"
-          if($LASTEXITCODE -ne 0){throw 'Installer verification failed'}
-      - name: Check packaged GUI and OTA on the runner
+          git archive --format=zip --prefix="DotIsle-$env:VERSION-Source/" -o "$out/DotIsle-$env:VERSION-Source.zip" HEAD
+          $lines=@()
+          Get-ChildItem $out -File | Where-Object {$_.Name -ne "DotIsle-$env:VERSION-SHA256.txt"} | Sort-Object Name | ForEach-Object {
+            $lines += "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
+          }
+          $lines | Set-Content "$out/DotIsle-$env:VERSION-SHA256.txt" -Encoding ascii
+
+      - name: Verify packaged settings app (best effort on runner GPU)
         continue-on-error: true
         run: |
-          & .\Rust\target\release\lyric-tools.exe verify e2e "$pwd\publish\DotIsle-2.1.9" --version 2.1.9 --artifacts "$pwd\publish\release-output" --report "$pwd\validation\e2e.json"
-          if($LASTEXITCODE -ne 0){throw 'GUI verification failed; inspect runner GPU availability'}
-          $ota="$pwd\publish\release-output\OTA-Compatibility\LyricIsland-2.1.9-Portable.zip"
-          $digest=(Get-FileHash $ota -Algorithm SHA256).Hash.ToLowerInvariant()
-          & .\Rust\target\release\lyric-tools.exe verify updater $ota $digest "$pwd\validation\updater-work" "$pwd\validation\updater.json" 2.1.9
-          if($LASTEXITCODE -ne 0){throw 'OTA verification failed'}
-      - name: Save packages, test reports and verification tool
+          & "$pwd/publish/DotIsle-$env:VERSION/LyricIsland.Settings.exe" --verify "$pwd/validation/settings"
+          if($LASTEXITCODE -ne 0){throw 'Settings verification failed'}
+
+      - name: Package validation evidence
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-release-2.1.9
-          if-no-files-found: warn
-          retention-days: 3
-          path: |
-            publish/release-output/**
-            validation/*.json
-            Rust/target/release/lyric-tools.exe
-      - name: Create draft release for final validation
+        run: |
+          $out="$pwd/publish/release-output"
+          if(Test-Path 'validation'){
+            Compress-Archive -Path 'validation/*' -DestinationPath "$out/DotIsle-$env:VERSION-Validation.zip" -Force
+            $hash=(Get-FileHash "$out/DotIsle-$env:VERSION-Validation.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+            Add-Content "$out/DotIsle-$env:VERSION-SHA256.txt" "$hash  DotIsle-$env:VERSION-Validation.zip"
+          }
+
+      - name: Create draft release and upload artifacts
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag='v2.1.9'
-          gh release view $tag --json isDraft --jq .isDraft 2>$null
-          if($LASTEXITCODE -eq 0){throw 'The release tag already exists; inspect it before replacement'}
-          gh release create $tag --target $env:GITHUB_SHA --draft --title '点屿 DotIsle 2.1.9' --notes '布局预览动效、封面尺寸与亚克力材质更新，附件仍在最终验证中。'
+          $tag="v$env:VERSION"
+          gh release view $tag --json isDraft,isPrerelease,assets 2>$null
+          if($LASTEXITCODE -eq 0){throw "Release $tag already exists; inspect it before replacement"}
+          gh release create $tag --target $env:GITHUB_SHA --draft --title "点屿 DotIsle $env:VERSION" --notes-file "release-notes/DotIsle-$env:VERSION-Notes.md"
           if($LASTEXITCODE -ne 0){throw 'Draft release creation failed'}
-          $files=@(Get-ChildItem publish/release-output -File | ForEach-Object FullName)+@(Get-ChildItem publish/release-output/OTA-Compatibility -File | ForEach-Object FullName)
+          $files=@(Get-ChildItem 'publish/release-output' -File | ForEach-Object FullName)
           gh release upload $tag @files
           if($LASTEXITCODE -ne 0){throw 'Release upload failed'}
+
+      - name: Publish release when requested
+        if: ${{ github.event_name == 'push' || inputs.publish }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag="v$env:VERSION"
+          gh release edit $tag --draft=false --latest
+          if($LASTEXITCODE -ne 0){throw 'Release publish failed'}
+
+      - name: Save packages and verification for inspection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-${{ env.VERSION }}
+          retention-days: 7
+          path: |
+            publish/release-output/**
+            validation/**

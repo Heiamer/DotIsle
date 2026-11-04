@@ -2,6 +2,7 @@
 use vello::{Scene,kurbo::{Rect,Affine},peniko::{Fill}};
 use dotisle_domain::monet::Scheme;
 use crate::{draw::{self,Text,Icon},model::Action};
+use dotisle_render::progress::{self,BarStyle,Look,ThumbStyle};
 #[derive(Clone,Debug)]pub struct Hit{pub rect:Rect,pub action:Action,pub label:String,pub enabled:bool}
 pub struct Ui<'a>{pub selection_values:std::collections::HashMap<String,f64>,pub motion_targets:Vec<(String,f64)>,pub press_layers:Vec<f64>,pub switches:std::collections::HashMap<String,f64>,pub state_layers:Vec<f32>,pub scene:&'a mut Scene,pub text:&'a mut Text,pub s:Scheme,pub hits:Vec<Hit>,pub pointer:(f64,f64),pub focus:Option<usize>,pub pressed:Option<usize>,pub clip:Rect}
 impl<'a> Ui<'a>{
@@ -25,11 +26,9 @@ impl<'a> Ui<'a>{
         let t=self.selection(&action,on);let i=self.hit(r,title,action,true);let p=self.press(i);let switch=draw::rect(r.x1-56.,r.center().y-16.,52.,32.);let track=Self::mix(self.s.high,self.s.primary,t);draw::fill(self.scene,switch,16.,track);if t<0.999{draw::outline(self.scene,switch,16.,Self::mix(self.s.on_surface_variant,self.s.primary,t),1.5);}
         let center=switch.x0+16.+20.*t;let radius=8.+4.*t+1.5*p;draw::circle(self.scene,center,switch.center().y,radius,Self::mix(self.s.on_surface_variant,self.s.on_primary,t));if t>0.5{self.scene.push_layer(vello::peniko::Mix::Normal,((t-0.5)*2.)as f32,Affine::IDENTITY,&switch);draw::icon(self.scene,Icon::Check,center-8.,switch.y0+8.,16.,self.s.primary);self.scene.pop_layer();}self.state(switch,16.,i,self.s.on_surface);
     }
-    pub fn slider(&mut self,r:Rect,fraction:f64,enabled:bool,phase:f64){
-        let middle=r.center().y;let position=r.x0+r.width()*fraction.clamp(0.,1.);let fg=self.s.primary;
-        if position+8.<r.x1{draw::fill(self.scene,Rect::new((position+8.).min(r.x1),middle-4.,r.x1,middle+4.),4.,self.s.outline);}
-        if position>r.x0+4.{let mut wave=vello::kurbo::BezPath::new();let length=(position-r.x0-6.).max(0.);let count=length.ceil()as usize;for i in 0..=count{let x=r.x0+i as f64;let y=middle+((i as f64/26.)*std::f64::consts::TAU-phase).sin()*2.5;if i==0{wave.move_to((x,y))}else{wave.line_to((x,y))}}self.scene.stroke(&vello::kurbo::Stroke::new(4.).with_caps(vello::kurbo::Cap::Round),Affine::IDENTITY,draw::color(fg),None,&wave);}
-        draw::fill(self.scene,draw::rect(position-2.,middle-12.,4.,24.),2.,fg);draw::circle(self.scene,r.x1-4.,middle,2.,self.s.on_surface_variant);
+    pub fn slider(&mut self,r:Rect,fraction:f64,enabled:bool,phase:f64,spin:f64,bar:BarStyle,thumb:ThumbStyle){
+        let look=Look{fg:0xff000000|self.s.primary,track:0xff000000|self.s.outline,dot:0xff000000|self.s.on_surface_variant};
+        progress::draw(self.scene,r,fraction,if enabled{phase}else{0.},1.,22.,1.,if enabled{spin}else{0.},look,bar,thumb);
         let i=self.hit(r,"播放进度",Action::Seek,enabled);if self.focus==i&&i.is_some(){draw::outline(self.scene,r.inflate(2.,2.),12.,self.s.primary,2.);}
     }
     pub fn clip(&mut self,r:Rect){self.clip=r;self.scene.push_clip_layer(Affine::IDENTITY,&r);}

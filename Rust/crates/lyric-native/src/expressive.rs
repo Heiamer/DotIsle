@@ -13,11 +13,12 @@ impl Renderer{
     }
     fn expressive_tools(&mut self,s:&Scene<'_>,p:&crate::activities::Panel){
     let w=s.layout.card.w;let h=s.layout.card.h;let c=self.m3(s);let ink=0xff000000|c.on_surface;let muted=0xff000000|c.on_surface_variant;let accent=0xff000000|c.primary;
-    if p.kind==3{let style=dotisle_render::update_card::Style{primary:c.primary,on_primary:c.on_primary,on_surface:c.on_surface,muted:c.on_surface_variant,outline:c.outline};let view=dotisle_render::update_card::Presentation{title:&p.title,value:&p.value,subtitle:&p.subtitle,progress:p.progress,time_ms:s.time_ms,animate:s.animate,close:!matches!(s.update_phase,"applying"|"restarting"),action:p.tasks.first().map(|t|t.title.as_str()),feedback:s.feedback[50]};dotisle_render::update_card::paint(&mut self.canvas,&mut self.text,w,h,style,&view);return}
+    if p.kind==3{let style=dotisle_render::update_card::Style{primary:c.primary,on_primary:c.on_primary,on_surface:c.on_surface,muted:c.on_surface_variant,outline:c.outline};let view=dotisle_render::update_card::Presentation{title:&p.title,value:&p.value,subtitle:&p.subtitle,progress:p.progress,time_ms:s.time_ms,animate:s.animate,close:!matches!(s.update_phase,"applying"|"restarting"),action:p.tasks.first().map(|t|t.title.as_str()),feedback:s.feedback[50],skip:s.update_phase=="available",skip_feedback:s.feedback.get(52).copied().unwrap_or(0.)};dotisle_render::update_card::paint(&mut self.canvas,&mut self.text,w,h,style,&view);return}
     let inset=20.;let header=if p.kind==2{Icon::Todo}else{Icon::Focus};
     let title_width=self.text.measure_weighted(&p.title,14.,600).min(w-120.);let group=18.+8.+title_width;let hx=(w-group)/2.;
     self.icon(header,Rect::new(hx,18.,18.,18.),accent);
     self.text_at(&p.title,Rect::new(hx+26.,17.,title_width+2.,24.),14.,600,ink,0.);
+    let close=crate::layout::timer_close(w);let pressed=s.pressed==53;if pressed||s.hover==53{let alpha=if pressed{0.12}else{0.08};self.fill(Rect::new(close.x-3.,close.y-3.,close.w+6.,close.h+6.),(close.w+6.)/2.,((alpha*255.)as u32)<<24|(c.on_surface&0xffffff));}self.icon(Icon::Close,Rect::new(close.x+4.,close.y+4.,16.,16.),muted);
     if p.kind==2{
         let rows=crate::layout::todo_rows(w,p.tasks.len()).collect::<Vec<_>>();
         if p.tasks.is_empty(){self.text_at("现在没有待办",Rect::new(inset,80.,w-40.,24.),13.,500,muted,0.5);}

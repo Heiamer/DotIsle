@@ -6,4 +6,5 @@ pub mod monet;
 pub mod dynamic_color;
 
 pub mod music_controls;
+pub mod players;
 pub mod sound_catalog;

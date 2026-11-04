@@ -105,3 +105,19 @@ Settings and device-status icons use official Material Symbols Rounded by Google
 本版弹簧参数使用 AndroidX Material 3 的 ExpressiveMotionTokens / StandardMotionTokens v0_14_0。Copyright 2024 The Android Open Source Project，Apache License 2.0。求解器为本项目原生 Rust 实现。原始参数表及许可见 licenses/AndroidX-Motion/。
 
 https://github.com/androidx/androidx/tree/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/tokens
+
+## 播放主题图标库
+
+播放主题的运输控制图标来自以下开源图标库；礁石主题继续使用项目内置的 Material Symbols Rounded。各库许可如下：
+
+- Material Symbols Rounded（Apache-2.0，Google）https://github.com/google/material-design-icons
+- Tabler Icons（MIT）https://github.com/tabler/tabler-icons
+- Phosphor Icons（MIT）https://github.com/phosphor-icons/core
+- Lucide（ISC）https://github.com/lucide-icons/lucide
+- Bootstrap Icons（MIT）https://github.com/twbs/icons
+- Remix Icon（Apache-2.0）https://github.com/Remix-Design/RemixIcon
+- Feather（MIT）https://github.com/feathericons/feather
+- Heroicons（MIT）https://github.com/tailwindlabs/heroicons
+
+逐主题对照与版本见 `Assets/TransportIcons/NOTICE.md`。SVG 保留原始许可注释。
+

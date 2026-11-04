@@ -83,7 +83,43 @@ impl Text{
         scene.pop_layer();
     }
     fn enable_system_fonts(&mut self){if !self.system_fonts{self.system_fonts=true;let mut fonts=FontContext::new();for blob in &self.registered{fonts.collection.register_fonts(blob.clone(),None);}self.fonts=fonts;self.cache.clear();self.ink_cache.clear();}}
-    pub fn set_family(&mut self,family:&str){let family=match family{"Microsoft YaHei UI"=>"Microsoft YaHei UI","Noto Serif SC"=>"Noto Serif SC",_=>"Google Sans Flex"};if self.family!=family{self.family=family.into();if family!="Google Sans Flex"{self.enable_system_fonts();}self.cache.clear();self.ink_cache.clear();}}
+    /// `Noto Sans SC` and empty both mean the bundled Google Sans Flex + Noto fallback.
+    pub fn set_family(&mut self,family:&str){let family=if family.trim().is_empty()||family=="Noto Sans SC"||family=="Google Sans Flex"{"Google Sans Flex"}else{family};if self.family!=family{self.family=family.into();if family!="Google Sans Flex"{self.enable_system_fonts();}self.cache.clear();self.ink_cache.clear();}}
+    /// Canonical installed family name, case-insensitively matched; `None` for unknown fonts.
+    pub fn system_family(name:&str)->Option<String>{static NAMES:std::sync::OnceLock<Vec<String>>=std::sync::OnceLock::new();let names=NAMES.get_or_init(||{let mut fonts=FontContext::new();let mut list=fonts.collection.family_names().map(str::to_owned).collect::<Vec<_>>();list.sort_by_key(|n|n.to_lowercase());list.dedup_by(|a,b|a.eq_ignore_ascii_case(b));list});let name=name.trim();names.iter().find(|n|n.eq_ignore_ascii_case(name)).cloned()}
+    /// Installed families for the settings picker. Bundled-only families are not listed.
+    pub fn system_families()->Vec<String>{let mut fonts=FontContext::new();let mut list=fonts.collection.family_names().map(str::to_owned).collect::<Vec<_>>();list.sort_by_key(|n|n.to_lowercase());list.dedup_by(|a,b|a.eq_ignore_ascii_case(b));list}
+    /// Single-line drawing anchored by the baseline, so a taller or shorter system font
+    /// cannot move the text inside the same rectangle. Used where the layout is fixed.
+    pub fn line_fixed(&mut self,scene:&mut Scene,text:&str,r:Rect,size:f32,argb:u32,weight:u16,align:f64){
+        if text.is_empty()||r.width()<=0.||r.height()<=0.{return}
+        let width=self.measure_weighted(text,size,weight).min(r.width());let key=self.layout_key(text,size,weight,false);
+        let baseline=self.cache[&key].lines().next().map(|l|l.metrics().baseline as f64).unwrap_or(size as f64*0.8);
+        let y=r.center().y+size as f64*0.34-baseline;
+        scene.push_clip_layer(Affine::IDENTITY,&r);self.draw_style(scene,text,r.x0+(r.width()-width)*align,y,size,argb,weight,r.width(),false);scene.pop_layer();
+    }
+    /// Shapes one sample with an arbitrary installed family without touching the UI cache.
+    pub fn preview_line(&mut self,scene:&mut Scene,family:&str,text:&str,r:Rect,size:f32,argb:u32,weight:u16){
+        if text.is_empty()||r.width()<=0.||r.height()<=0.{return}
+        self.enable_system_fonts();
+        let safe=family.replace("'", " ").replace(",", " ");
+        let stack=format!("'{}', 'Noto Sans SC', 'Noto Sans JP', sans-serif",safe);
+        let mut builder=self.context.ranged_builder(&mut self.fonts,text,1.,true);
+        builder.push_default(StyleProperty::FontSize(size));
+        builder.push_default(StyleProperty::FontStack(FontStack::Source(stack.into())));
+        builder.push_default(StyleProperty::FontWeight(FontWeight::new(weight as f32)));
+        let mut layout=builder.build(text);layout.break_all_lines(None);layout.align(None,Alignment::Start,AlignmentOptions::default());
+        let width=(layout.width()as f64).min(r.width());let baseline=layout.lines().next().map(|l|l.metrics().baseline as f64).unwrap_or(size as f64*0.8);let y=r.center().y+size as f64*0.34-baseline;
+        scene.push_clip_layer(Affine::IDENTITY,&r);self.paint_layout(scene,&layout,r.x0+((r.width()-width)/2.).max(0.),y,r.width(),argb);scene.pop_layer();
+    }
+    fn paint_layout(&mut self,scene:&mut Scene,layout:&Layout<()>,x:f64,y:f64,_max:f64,argb:u32){
+        for line in layout.lines(){for item in line.items(){if let PositionedLayoutItem::GlyphRun(g)=item{
+            let run=g.run();let font=run.font();let id=(font.data.id(),font.index);
+            let font=self.resources.entry(id).or_insert_with(||FontData::new(font.data.clone(),font.index));
+            let mut gx=g.offset();let gy=g.baseline();
+            scene.draw_glyphs(font).font_size(run.font_size()).normalized_coords(run.normalized_coords()).transform(Affine::translate((x,y))).brush(alpha(argb,(argb>>24)as f32/255.)).draw(Fill::NonZero,g.glyphs().map(|glyph|{let out=Glyph{id:glyph.id as u32,x:gx+glyph.x,y:gy-glyph.y};gx+=glyph.advance;out}));
+        }}}
+    }
     pub fn register(&mut self,path:&std::path::Path)->Result<(),String>{
         // Prefer a file mapping so the bytes are shareable and evictable; a plain
         // read is only the fallback for filesystems that cannot be mapped.
@@ -111,13 +147,6 @@ impl Text{
         if text.is_empty()||r.width()<=0.||r.height()<=0.{return}
         let width=self.measure_weighted(text,size,weight).min(r.width());let key=self.layout_key(text,size,weight,false);let h=self.cache[&key].height()as f64;
         scene.push_clip_layer(Affine::IDENTITY,&r);self.draw_style(scene,text,r.x0+(r.width()-width)*align,r.y0+(r.height()-h)/2.,size,argb,weight,r.width(),false);scene.pop_layer();
-    }
-    /// Optical centre uses the same shaped glyph bounds and baseline as line().
-    pub fn ink_center_y(&mut self,text:&str,r:Rect,size:f32,bold:bool)->f64{
-        use skrifa::{FontRef,MetadataProvider,instance::{Size,LocationRef},GlyphId};
-        if text.is_empty(){return r.center().y}let key=self.layout_key(text,size,if bold{600}else{400},false);let layout=&self.cache[&key];let y=r.y0+(r.height()-layout.height()as f64)/2.;if let Some((top,bottom))=self.ink_cache.get(&key){return y+(top+bottom)/2.}let(mut top,mut bottom)=(f64::INFINITY,f64::NEG_INFINITY);
-        for line in layout.lines(){for item in line.items(){if let PositionedLayoutItem::GlyphRun(g)=item{let run=g.run();let font=run.font();if let Ok(f)=FontRef::from_index(font.data.as_ref(),font.index){let coords=run.normalized_coords().iter().map(|v|skrifa::instance::NormalizedCoord::from_bits(*v)).collect::<Vec<_>>();let metrics=f.glyph_metrics(Size::new(run.font_size()),LocationRef::new(&coords));for glyph in g.glyphs(){if let Some(b)=metrics.bounds(GlyphId::new(glyph.id as u32)){if b.y_max>b.y_min{let baseline=g.baseline()as f64-glyph.y as f64;top=top.min(baseline-b.y_max as f64);bottom=bottom.max(baseline-b.y_min as f64);}}}}}}}
-        if top.is_finite()&&bottom.is_finite(){self.ink_cache.insert(key,(top,bottom));y+(top+bottom)/2.}else{r.center().y}
     }
     pub fn centered(&mut self,scene:&mut Scene,text:&str,r:Rect,size:f32,rgb:u32,bold:bool){
         // The same shaping cache determines centering, including Chinese fallback runs.

@@ -10,10 +10,10 @@ fn image(r:Raster)->ImageData{ImageData{data:Blob::new(Arc::new(r.pixels)),forma
 fn sdf(x:f64,y:f64,w:f64,h:f64,r:f64)->f64{let r=r.max(0.).min(w.min(h)/2.);let qx=(x-w/2.).abs()-(w/2.-r);let qy=(y-h/2.).abs()-(h/2.-r);qx.max(0.).hypot(qy.max(0.))+qx.max(qy).min(0.)-r}
 /// Returns an exterior source point and opacity for an interior edge pixel.
 fn lens(x:f64,y:f64,w:f64,h:f64,r:f64,scale:f64)->Option<(f64,f64,f64,f64,f64)>{
- let distance=sdf(x,y,w,h,r);let rim=(1.2*scale).max(1.).min(w.min(h)*0.10);if distance>0.||distance < -rim{return None}
+ let distance=sdf(x,y,w,h,r);let rim=(3.0*scale).max(2.5).min(w.min(h)*0.12);if distance>0.||distance < -rim{return None}
  let nx=sdf(x+0.5,y,w,h,r)-sdf(x-0.5,y,w,h,r);let ny=sdf(x,y+0.5,w,h,r)-sdf(x,y-0.5,w,h,r);let length=nx.hypot(ny).max(1e-8);let(nx,ny)=(nx/length,ny/length);
  let u=(-distance/rim).clamp(0.,1.);let bend=(1.2+1.8*(1.-u).powi(2))*scale;let travel=-distance+bend;
- let opacity=(std::f64::consts::PI*u).sin().max(0.).powf(0.65)*0.32;
+ let opacity=(std::f64::consts::PI*u).sin().max(0.).powf(0.65)*0.26;
  Some((x+nx*travel,y+ny*travel,opacity,nx,ny))
 }
 fn refract(req:Request,source:&[u8])->Raster{

@@ -256,10 +256,12 @@ fn compose(scene: &mut Scene, text: &mut Text, look: &Look, state: &OverlayState
         close: false,
         action: None,
         feedback: 0.,
+        skip: false,
+        skip_feedback: 0.,
     };
     update_card::paint(&mut content, text, card_w, card_h, look.style, &presentation);
     if phase == "completed" {
-        let (centre, radius) = update_card::ring_center(card_h);
+        let (centre, radius) = if card_h < 180. { update_card::ring_center(card_h) } else { ((card_w / 2., 72.), 24.) };
         draw::icon(&mut content, Icon::Check, centre.0 - radius * 0.42, centre.1 - radius * 0.42, radius * 0.84, 0x9bd5ae);
     }
     let shape = RoundedRect::from_rect(vello::kurbo::Rect::new(card_x, card_y, card_x + card_w, card_y + card_h), look.radius);

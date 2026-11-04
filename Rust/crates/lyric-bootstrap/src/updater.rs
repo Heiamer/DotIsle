@@ -151,7 +151,7 @@ pub fn domestic_pair(target: &Path, version: &str) -> Result<(String, String)> {
 
 pub fn download_bundle(target: &Path, version: &str, scratch: &Path, preferred: Option<(String, String)>, reporter: &mut Reporter) -> Result<()> {
     let name = format!("LyricIsland-{version}");
-    let github = format!("https://github.com/Heiamer/LyricIsland/releases/download/v{version}/");
+    let github = format!("https://github.com/Heiamer/DotIsle/releases/download/v{version}/");
     let mut errors = Vec::new();
     let mut tried = HashSet::new();
     let mut pinned: Option<String> = None;

@@ -30,7 +30,7 @@ impl Hub{
  pub fn check(&mut self,manual:bool){if self.rx.is_some()||self.active()||matches!(self.phase(),"ready"){return}self.manual=manual;self.last=Instant::now();self.meta["lastAttempt"]=json!(epoch());let _=lyric_backend::io::save_settings(&self.path,&self.meta);if manual{self.state=json!({"phase":"checking","message":"正在检查双源更新…"});}let(tx,rx)=mpsc::channel();self.rx=Some(rx);std::thread::spawn(move||{let _=tx.send(lyric_backend::updates::check());});}
  pub fn tick(&mut self,enabled:bool,demo:bool)->bool{
   let result=self.rx.as_ref().and_then(|rx|rx.try_recv().ok());let mut changed=false;
-  if let Some(result)=result{self.rx=None;changed=true;match result{Ok(release)=>{self.release=release.clone();let newer=release["newer"]==true;self.state=json!({"phase":if newer{"available"}else{"idle"},"version":release["version"],"message":release["message"]});if newer{let version=release["version"].as_str().unwrap_or("");if self.manual||(self.meta["lastNotifiedVersion"].as_str()!=Some(version)||epoch().saturating_sub(self.meta["lastNotifiedAt"].as_u64().unwrap_or(0))>=86400){self.reminder=true;self.meta["lastNotifiedVersion"]=json!(version);self.meta["lastNotifiedAt"]=json!(epoch());}}self.meta["lastSuccess"]=json!(epoch());let _=lyric_backend::io::save_settings(&self.path,&self.meta);},Err(e)=>{self.error=Some(e.clone());lyric_backend::io::log(&self.path.parent().unwrap().join("Logs"),"UPDATE_ERROR",&e);if self.manual{self.state=json!({"phase":"failed","message":e});self.reminder=true;}}}}
+  if let Some(result)=result{self.rx=None;changed=true;match result{Ok(release)=>{self.release=release.clone();let newer=release["newer"]==true;let version=release["version"].as_str().unwrap_or("").to_owned();let skipped=newer&&self.meta["skippedVersion"].as_str()==Some(version.as_str());let deliver=newer&&!skipped;self.state=json!({"phase":if deliver{"available"}else if skipped{"skipped"}else{"idle"},"version":release["version"],"message":if skipped{json!("已跳过这个版本；发布下一个版本后会再次提醒。")}else{release["message"].clone()}});if deliver{if self.manual||(self.meta["lastNotifiedVersion"].as_str()!=Some(version.as_str())||epoch().saturating_sub(self.meta["lastNotifiedAt"].as_u64().unwrap_or(0))>=86400){self.reminder=true;self.meta["lastNotifiedVersion"]=json!(version);self.meta["lastNotifiedAt"]=json!(epoch());}}self.meta["lastSuccess"]=json!(epoch());let _=lyric_backend::io::save_settings(&self.path,&self.meta);},Err(e)=>{self.error=Some(e.clone());lyric_backend::io::log(&self.path.parent().unwrap().join("Logs"),"UPDATE_ERROR",&e);if self.manual{self.state=json!({"phase":"failed","message":e});self.reminder=true;}}}}
   // A background check stays silent: only a prepared task or a manual check may run while idle.
   if enabled&&!demo&&self.rx.is_none()&&!self.active()&&self.phase()!="ready"&&self.last.elapsed()>Duration::from_secs(30)&&epoch().saturating_sub(self.meta["lastAttempt"].as_u64().unwrap_or(0))>=43200{self.check(false);}
   // Installing cannot be cancelled and the helper owns the surface after exit, so it must not
@@ -53,6 +53,16 @@ impl Hub{
  pub fn cancel(&mut self)->Result<(),String>{if !matches!(self.phase(),"downloading"|"switching"|"verifying"|"ready"){return Err("当前阶段不能取消更新".into())}self.action="cancel".into();self.last_progress=Instant::now();Ok(())}
  /// Closing a finished reminder returns the hub to idle so the update activity leaves the cycle.
  /// A prepared (`ready`) update is user work and survives closing unless it was cancelled.
+ /// Suppress reminders for exactly the version currently offered; the next tag reminds again.
+ pub fn skip(&mut self)->bool{
+  let version=self.release["version"].as_str().or_else(||self.state["version"].as_str()).map(str::to_owned);let Some(version)=version else{return false};
+  self.meta["skippedVersion"]=json!(version.clone());self.persist();self.state=json!({"phase":"skipped","version":version,"message":"已跳过这个版本；发布下一个版本后会再次提醒。"});self.reminder=false;true
+ }
+ /// Undo the skip after a manual review, so the currently offered version can be installed.
+ pub fn unskip(&mut self){
+  if let Some(fields)=self.meta.as_object_mut(){fields.remove("skippedVersion");}self.persist();
+  if self.release["newer"]==true{self.state=json!({"phase":"available","version":self.release["version"],"message":self.release["message"]});self.reminder=true;}else{self.check(true);}
+ }
  pub fn dismiss(&mut self)->bool{
   // An apply request is already with the helper; closing the card must not cancel it.
   if self.action=="apply"{return false}

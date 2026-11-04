@@ -1,8 +1,8 @@
 //! GitHub Releases is the update source; installation is performed in place.
 use serde_json::{json,Value};
 use std::time::Duration;
-pub const RELEASES:&str="https://github.com/Heiamer/LyricIsland/releases/latest";
-const RELEASE_MANIFEST:&str="https://raw.githubusercontent.com/Heiamer/LyricIsland/main/Assets/UpdateManifest.json";
+pub const RELEASES:&str="https://github.com/Heiamer/DotIsle/releases/latest";
+const RELEASE_MANIFEST:&str="https://raw.githubusercontent.com/Heiamer/DotIsle/main/Assets/UpdateManifest.json";
 fn version(input:&str)->Option<[u32;4]>{
     let input=input.strip_prefix('v').unwrap_or(input);let mini=input.ends_with("mini");let input=if mini{input.strip_suffix("mini").unwrap().trim_end_matches('-')}else{input};
     let parts=input.split('.').collect::<Vec<_>>();
@@ -26,7 +26,7 @@ fn manifest_release(value:Value)->Result<Value,String>{
 }
 fn check_github()->Result<Value,String>{
     let ctx=crate::http::RequestContext::new(Duration::from_secs(10));
-    let release=match crate::http::get_system("https://api.github.com/repos/Heiamer/LyricIsland/releases/latest",&ctx){
+    let release=match crate::http::get_system("https://api.github.com/repos/Heiamer/DotIsle/releases/latest",&ctx){
         Ok(value)=>value,
         Err(api_error)=>{
             // The raw manifest has a separate rate limit and does not depend on GitHub HTML.
@@ -44,7 +44,7 @@ fn check_github()->Result<Value,String>{
     };
     let mut result=describe(&release,env!("CARGO_PKG_VERSION"))?;
     let v=release["tag_name"].as_str().ok_or("版本号缺失")?.trim_start_matches('v');
-    let base=format!("https://github.com/Heiamer/LyricIsland/releases/download/v{v}/LyricIsland-{v}");
+    let base=format!("https://github.com/Heiamer/DotIsle/releases/download/v{v}/LyricIsland-{v}");
     result["source"]=json!("GitHub");result["manifestUrl"]=json!(format!("{base}-SHA256.txt"));result["zipUrl"]=json!(format!("{base}-Portable.zip"));Ok(result)
 }
 /// Request both official sources concurrently. A reachable source with an update may win
@@ -60,7 +60,7 @@ fn page_release(html:&str)->Result<Value,String>{
             else{content=attribute.get(2).map(|m|m.as_str());}
         }
         if property!=Some("og:url"){continue}
-        if let Some(tag)=content.and_then(|url|url.strip_prefix("https://github.com").unwrap_or(url).strip_prefix("/Heiamer/LyricIsland/releases/tag/")){
+        if let Some(tag)=content.and_then(|url|url.strip_prefix("https://github.com").unwrap_or(url).strip_prefix("/Heiamer/DotIsle/releases/tag/")){
             if version(tag).is_some(){return Ok(json!({"tag_name":tag}))}
         }
     }
@@ -90,15 +90,15 @@ pub fn install()->Result<Value,String>{
         assert_eq!(describe(&json!({"tag_name":"v1.2"}),"1.2.0").unwrap()["newer"],false);
     }
     #[test]fn rejects_untrusted_tags_and_preview_releases(){for tag in ["latest","v1.3-beta","v1.3/evil"]{assert!(describe(&json!({"tag_name":tag}),"1.2.0").is_err());}assert!(describe(&json!({"tag_name":"v2.0","prerelease":true}),"1.2.0").is_err());}
-    #[test]fn fallback_reads_only_canonical_repository_metadata(){assert_eq!(page_release(r#"<meta property="og:url" content="/Heiamer/LyricIsland/releases/tag/v1.2" />"#).unwrap()["tag_name"],"v1.2");assert!(page_release(r#"<meta property="og:url" content="/other/project/releases/tag/v9.0" />"#).is_err());}
+    #[test]fn fallback_reads_only_canonical_repository_metadata(){assert_eq!(page_release(r#"<meta property="og:url" content="/Heiamer/DotIsle/releases/tag/v1.2" />"#).unwrap()["tag_name"],"v1.2");assert!(page_release(r#"<meta property="og:url" content="/other/project/releases/tag/v9.0" />"#).is_err());}
     #[test]fn html_fallback_accepts_attribute_order_quotes_and_spacing(){
-        for html in [r#"<META content = 'https://github.com/Heiamer/LyricIsland/releases/tag/v2.1.6' data-test='release' property = 'og:url'>"#,
-                     "<meta\ncontent=\"/Heiamer/LyricIsland/releases/tag/v2.1.6\"\nproperty=\"og:url\">"]{
+        for html in [r#"<META content = 'https://github.com/Heiamer/DotIsle/releases/tag/v2.1.6' data-test='release' property = 'og:url'>"#,
+                     "<meta\ncontent=\"/Heiamer/DotIsle/releases/tag/v2.1.6\"\nproperty=\"og:url\">"]{
             assert_eq!(page_release(html).unwrap()["tag_name"],"v2.1.6");
         }
-        for html in [r#"<meta data-property='og:url' content='/Heiamer/LyricIsland/releases/tag/v9.0'>"#,
-                     r#"<meta property='og:url' content='https://evil.test/Heiamer/LyricIsland/releases/tag/v9.0'>"#,
-                     r#"<meta property='og:url' content='/Heiamer/LyricIsland/releases/tag/v2.1.6/evil'>"#]{assert!(page_release(html).is_err());}
+        for html in [r#"<meta data-property='og:url' content='/Heiamer/DotIsle/releases/tag/v9.0'>"#,
+                     r#"<meta property='og:url' content='https://evil.test/Heiamer/DotIsle/releases/tag/v9.0'>"#,
+                     r#"<meta property='og:url' content='/Heiamer/DotIsle/releases/tag/v2.1.6/evil'>"#]{assert!(page_release(html).is_err());}
     }
     #[test]fn raw_manifest_requires_a_published_stable_release(){
         let valid=json!({"published":true,"tag_name":"v2.1.6","prerelease":false,"draft":false});

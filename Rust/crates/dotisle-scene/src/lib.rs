@@ -32,6 +32,7 @@ impl Scene {
     pub fn new() -> Self { Self::default() }
     fn push(&mut self, c:Command) { Arc::make_mut(&mut self.commands).push(c); }
     pub fn reset(&mut self) { Arc::make_mut(&mut self.commands).clear(); }
+    pub fn is_empty(&self) -> bool { self.commands.is_empty() }
     pub fn fill<'a>(&mut self,fill:Fill,transform:Affine,brush:impl Into<BrushRef<'a>>,brush_transform:Option<Affine>,shape:&impl Shape) {
         self.push(Command::Fill(fill,transform,brush.into().to_owned(),brush_transform,Geometry::new(shape)));
     }

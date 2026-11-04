@@ -61,6 +61,8 @@ pub fn mini_hit(w:f64,h:f64,panel:Option<&crate::activities::Panel>,x:f64,y:f64)
 }
 
 pub fn update_close(w:f64)->Rect{let r=dotisle_render::update_card::close(w);Rect::new(r.x0,r.y0,r.width(),r.height())}
+pub fn update_skip(w:f64)->Rect{let r=dotisle_render::update_card::skip(w);Rect::new(r.x0,r.y0,r.width(),r.height())}
+pub fn timer_close(w:f64)->Rect{Rect::new(w-44.,14.,24.,24.)}
 pub fn update_primary(w:f64,h:f64)->Rect{let r=dotisle_render::update_card::primary(w,h);Rect::new(r.x0,r.y0,r.width(),r.height())}
 
 #[cfg(test)]mod expressive_tests{use super::*;

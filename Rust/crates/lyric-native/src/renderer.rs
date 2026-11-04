@@ -45,7 +45,8 @@ impl Renderer{
     }
     fn clip(&mut self,r:Rect,radius:f64,alpha:f32){self.canvas.push_layer(Mix::Normal,alpha.clamp(0.,1.),Affine::IDENTITY,&RoundedRect::from_rect(vr(r),radius));}
     fn text_at(&mut self,text:&str,r:Rect,size:f64,weight:i32,c:u32,align:f64){
-        self.text.line(&mut self.canvas,text,vr(r),size as f32,c,weight>=550,align);
+        // Baseline anchoring keeps every installed family at the same optical centre.
+        self.text.line_fixed(&mut self.canvas,text,vr(r),size as f32,c,weight.clamp(0,1000)as u16,align);
     }
     fn text_line(&mut self,text:&str,r:Rect,size:f64,weight:i32,c:u32){self.text_at(text,r,size,weight,c,0.);}
     fn image(&mut self,image:&ImageData,r:Rect,radius:f64,opacity:f32){self.clip(r,radius,opacity);dotisle_render::draw::image(&mut self.canvas,image,vr(r),radius);self.canvas.pop_layer();}
@@ -53,7 +54,7 @@ impl Renderer{
     fn collect(&mut self,draw:impl FnOnce(&mut Self))->VScene{let outer=std::mem::take(&mut self.canvas);draw(self);std::mem::replace(&mut self.canvas,outer)}
     pub fn set_font_family(&mut self,family:&str){self.text.set_family(family);}
     pub unsafe fn measure_line(&mut self,text:&str,size:f64)->Result<f64>{Ok(self.text.measure(text,size as f32,false))}
-    pub fn status_indicator(&mut self,label:&str,dot:Rect,text:Rect)->Rect{let center=self.text.ink_center_y(label,vr(text),9.,false);Rect::new(dot.x,center-dot.h/2.,dot.w,dot.h)}
+    pub fn status_indicator(&mut self,_label:&str,dot:Rect,text:Rect)->Rect{let center=text.y+text.h/2.;Rect::new(dot.x,center-dot.h/2.,dot.w,dot.h)}
     pub fn compact_metrics(&self,font:f64,double:bool,scale:f64)->(f64,f64,f64){crate::compact::group_metrics(font,self.body_line_spacing,scale,double)}
     pub fn compact_height(&self,font:f64,double:bool,scale:f64)->f64{crate::compact::capsule_height(font,self.body_line_spacing,scale,double)}
     fn decode(bytes:&[u8])->std::result::Result<(ImageData,Vec<u8>,u32,u32),Box<dyn std::error::Error>>{
@@ -105,7 +106,7 @@ impl Renderer{
         let edge=Rect::new(r.x+0.5,r.y+0.5,r.w-1.,r.h-1.);self.outline(edge,(radius-0.5).max(0.),((18.+30.*p.reflection)as u32)<<24|0xffffff,0.8);
     }
     fn music_lyric(&mut self,text:&str,r:Rect,size:f64,align:f64,ink:u32,s:&Scene<'_>){let weight=if s.music_mix>3.5&&size>=20.{500}else{400};let width=self.text.measure_weighted(text,size as f32,weight).min(r.w);let x=r.x+(r.w-width)*align;let phase=if s.animate{(s.lyric_age_ms/180.).clamp(0.,1.)}else{1.};let y=r.y+4.*(1.-phase).powi(3);let boundary=x+width*s.highlight.clamp(0.,1.);
-        for (clip,c) in [(Rect::new(r.x,r.y,(boundary-r.x).max(0.),r.h+5.),s.progress_color),(Rect::new(boundary,r.y,(r.x+r.w-boundary).max(0.),r.h+5.),ink)]{if clip.w>0.{self.clip(clip,0.,phase as f32);self.text.line_weighted(&mut self.canvas,text,vr(Rect::new(x,y,width,r.h)),size as f32,c,weight,0.);self.canvas.pop_layer();}}
+        for (clip,c) in [(Rect::new(r.x,r.y,(boundary-r.x).max(0.),r.h+5.),s.progress_color),(Rect::new(boundary,r.y,(r.x+r.w-boundary).max(0.),r.h+5.),ink)]{if clip.w>0.{self.clip(clip,0.,phase as f32);self.text.line_fixed(&mut self.canvas,text,vr(Rect::new(x,y,width,r.h)),size as f32,c,weight as u16,0.);self.canvas.pop_layer();}}
     }
     fn compact_music(&mut self,s:&Scene<'_>){let tones=self.m3(s);let c=s.layout.capsule;let cover=s.layout.compact_cover(s.layout_scale);self.cover(cover,6.,s.cover_opacity as f32);let double=!s.compact_secondary.is_empty();let(h,line,second)=self.compact_metrics(s.font_size,double,s.layout_scale);let y=c.y+(c.h-h)/2.;let viewport=Rect::new(c.x+42.,y,c.w-76.,line);let phase=if s.animate{(s.lyric_age_ms/180.).clamp(0.,1.)}else{1.};
         if phase<1.&&!s.previous_lyric.is_empty(){self.clip(Rect::new(viewport.x,c.y,viewport.w,c.h),0.,(1.-phase)as f32);self.text_at(s.previous_lyric,Rect::new(viewport.x,y-5.*phase,viewport.w,line),s.font_size,500,0xff000000|tones.on_surface,if double{0.5}else{0.});self.canvas.pop_layer();}
@@ -133,19 +134,28 @@ impl Renderer{
     }
     fn music_control_ink(&mut self,s:&Scene<'_>)->u32{let preferred=s.component_color&0xffffff;let samples=self.music_surface_samples(s);if let Some((old,bg,ink))=&self.transport_ink{if *old==preferred&&*bg==samples{return *ink}}let ink=dotisle_domain::music_controls::tinted_on_surfaces(&samples,preferred);self.transport_ink=Some((preferred,samples,ink));ink}
     pub fn transport_diagnostics(&self)->serde_json::Value{self.transport_ink.as_ref().map(|(preferred,samples,ink)|serde_json::json!({"preferred":format!("#{preferred:06X}"),"foreground":format!("#{ink:06X}"),"backgrounds":samples,"minimumContrast":samples.iter().map(|bg|crate::cover_color::contrast(*ink,*bg)).fold(f64::INFINITY,f64::min),"minimumStateContrast":samples.iter().flat_map(|bg|[0.,0.08,0.12].map(move|alpha|crate::cover_color::contrast(*ink,crate::cover_color::mix(*bg,*ink,alpha)))).fold(f64::INFINITY,f64::min)})).unwrap_or(serde_json::Value::Null)}
-    fn button(&mut self,id:i32,r:Rect,s:&Scene<'_>){let disabled=([3,4,5].contains(&id)&&!s.has_track)||(id==2&&!s.floating)||(id==9&&!s.favorite_enabled)||(id==6&&!s.translation_button);let mut c=s.component_color;if disabled{c=0x4d000000|(c&0xffffff);}if id==6&&s.translation_enabled&&!disabled{self.fill(r,12.,0x30000000|(c&0xffffff));}let feedback=s.feedback.get(id as usize).copied().unwrap_or(0.);if feedback>0.001&&!disabled&&![3,5].contains(&id){self.fill(r,12.,((feedback*255.)as u32)<<24|0xffffff);}let press=if s.pressed==id{0.96}else{1.};
-        // Skip controls are unfilled; only interaction feedback paints a subtle state layer.
-        if [3,5].contains(&id)&&!disabled{c=0xff000000|self.music_control_ink(s);if feedback>0.001{self.fill(r,12.,((feedback.min(0.12)*255.)as u32)<<24|(c&0xffffff));}}let size=if id==4{24.}else{if [3,5].contains(&id){22.}else{20.}}*press;let icon=Rect::new(r.x+(r.w-size)/2.,r.y+(r.h-size)/2.,size,size);
+    fn button(&mut self,id:i32,r:Rect,s:&Scene<'_>){
+        let disabled=([3,4,5].contains(&id)&&!s.has_track)||(id==2&&!s.floating)||(id==9&&!s.favorite_enabled)||(id==6&&!s.translation_button);let mut c=s.component_color;if disabled{c=0x4d000000|(c&0xffffff);}
+        let feedback=s.feedback.get(id as usize).copied().unwrap_or(0.);let press=if s.pressed==id{0.96}else{1.};
+        let control=if [3,4,5].contains(&id)||id==6{0xff000000|self.music_control_ink(s)}else{c};
+        let on_accent=if crate::cover_color::contrast(c,0x17201d)>crate::cover_color::contrast(c,0xffffff){0xff17201d}else{0xffffffff};
+        let tonal=0xff000000|self.m3(s).secondary_container;
+        let mix=if s.animate{s.play_shape.clamp(0.,1.)}else{if s.playing{1.}else{0.}};
+        let inset=if s.transport_theme==dotisle_render::transport::TransportTheme::Reef{(feedback as f64*9.).min(1.5)}else{0.};let bg=Rect::new(r.x+inset,r.y+inset,r.w-inset*2.,r.h-inset*2.);
+        let ink_fill=0xff000000|self.m3(s).on_surface;let play_ink=dotisle_render::transport::background(&mut self.canvas,id,vr(bg),s.transport_theme,dotisle_render::transport::Colors{accent:c,on_accent,control,tonal,ink_fill},mix);
+        if feedback>0.001&&!disabled&&![3,5].contains(&id){self.fill(r,12.,((feedback*255.)as u32)<<24|0xffffff);}
+        if [3,5].contains(&id)&&!disabled&&feedback>0.001{self.fill(r,12.,((feedback.min(0.12)*255.)as u32)<<24|(control&0xffffff));}
+        let size=if id==4{24.}else{if [3,5].contains(&id){22.}else{20.}}*press;let icon=Rect::new(r.x+(r.w-size)/2.,r.y+(r.h-size)/2.,size,size);
+        use dotisle_render::transport_icons::{paint_icon,Glyph};
         if id==4{
-            let mix=if s.animate{s.play_shape.clamp(0.,1.)}else{if s.playing{1.}else{0.}};
-            let inset=(feedback as f64*9.).min(1.5);let body=Rect::new(r.x+inset,r.y+inset,r.w-inset*2.,r.h-inset*2.);
-            self.fill(body,body.h*(0.5-0.22*mix),c);
-            let ink=if crate::cover_color::contrast(c,0x17201d)>crate::cover_color::contrast(c,0xffffff){0xff17201d}else{0xffffffff};
-            if mix<0.999{self.icon(Icon::Play,icon,(((1.-mix)*255.)as u32)<<24|(ink&0xffffff));}
-            if mix>0.001{self.icon(Icon::Pause,icon,((mix*255.)as u32)<<24|(ink&0xffffff));}
+            let ink=play_ink;
+            if mix<0.999{self.clip(icon,0.,(1.-mix)as f32);paint_icon(&mut self.canvas,Glyph::Play,s.transport_theme,vr(icon),(((1.-mix)*255.)as u32)<<24|(ink&0xffffff));self.canvas.pop_layer();}
+            if mix>0.001{self.clip(icon,0.,mix as f32);paint_icon(&mut self.canvas,Glyph::Pause,s.transport_theme,vr(icon),((mix*255.)as u32)<<24|(ink&0xffffff));self.canvas.pop_layer();}
             return
         }
-        match id{3=>self.icon(Icon::Prev,icon,c),4=>self.icon(if s.playing{Icon::Pause}else{Icon::Play},icon,c),5=>self.icon(Icon::Next,icon,c),7=>self.icon(Icon::Settings,icon,c),2=>self.icon(Icon::Move,icon,c),6=>{if !disabled{self.icon(Icon::Translate,icon,c);}},9=>self.icon(Icon::Heart,icon,c),_=>{}}
+        let(glyph,ink)=match id{3=>(Glyph::Prev,control),5=>(Glyph::Next,control),7=>(Glyph::Settings,c),2=>(Glyph::Shuffle,c),6=>(Glyph::Translate,control),9=>(Glyph::Heart,c),_=>return};
+        if id==6&&disabled{return}
+        paint_icon(&mut self.canvas,glyph,s.transport_theme,vr(icon),ink);
     }
     fn music_expanded(&mut self,s:&Scene<'_>){let w=s.layout.card.w;let g=crate::layout::music_geometry(w,s.music_layout,s.music_mix,s.layout_scale,s.font_size);let secondary=0xb8000000|(s.text_color&0xffffff);let immersion=(s.music_mix-3.).clamp(0.,1.);if g.cover.w>0.&&immersion<0.999{self.clip(g.cover,0.,(1.-immersion)as f32);self.flipping_cover(g.cover,s);self.canvas.pop_layer();}
         self.text_at(s.title,g.title,16.-2.*immersion,600,0xff000000|(s.text_color&0xffffff),g.align);if !s.mini{self.text_at(s.artist,g.artist,10.,400,secondary,g.align);}
@@ -160,15 +170,11 @@ impl Renderer{
             self.text_at(s.secondary,Rect::new(g.secondary.x,text.secondary_y,g.secondary.w,18.),10.5,400,secondary,0.);
         }else{self.music_lyric(s.lyric,g.lyric,s.font_size+2.,g.align,s.text_color,s);}
         if !s.mini{if immersion<=0.5{self.text_at(s.secondary,g.secondary,10.5,400,secondary,g.align);}let status=if !s.has_track{"等待播放"}else if s.playing{"正在播放"}else{"已暂停"};if g.align>=0.5{let tw=self.text.measure_weighted(status,9.,400).min(g.status_text.w);let total=4.+6.+tw;let x=g.status_text.x+(g.status_text.w-total)*0.5;let dot=self.status_indicator(status,Rect::new(x,g.status_dot.y,4.,4.),Rect::new(x+10.,g.status_text.y,tw+2.,g.status_text.h));self.fill(dot,dot.w/2.,s.progress_color);self.text_line(status,Rect::new(x+10.,g.status_text.y,tw+2.,g.status_text.h),9.,400,secondary);}else{let dot=self.status_indicator(status,g.status_dot,g.status_text);self.fill(dot,dot.w/2.,s.progress_color);self.text_line(status,g.status_text,9.,400,secondary);}}
-        if s.controls_opacity<=0.001{return}self.clip(Rect::new(0.,0.,w,g.height),0.,s.controls_opacity as f32);let rail=if s.seek_offer{0x2e000000|(s.component_color&0xffffff)}else{0x48000000|(s.component_color&0xffffff)};let mid=g.track.y+g.track.h/2.;let end=g.track.x+g.track.w*s.progress.clamp(0.,1.);
-        let thumb=if s.pressed==10{14.}else{12.};
-        self.line(((end+5.).min(g.track.x+g.track.w),mid),(g.track.x+g.track.w,mid),rail,3.);
-        if end>g.track.x{
-            let amount=if s.animate{s.play_shape.clamp(0.,1.)}else{0.};let mut path=BezPath::new();let length=end-g.track.x;let count=(length/3.).ceil().max(1.)as usize;
-            for i in 0..=count{let x=g.track.x+length*i as f64/count as f64;let edge=((x-g.track.x)/10.).min((end-x)/10.).clamp(0.,1.);let y=mid+1.6*amount*edge*((x-g.track.x)/24.*std::f64::consts::TAU-s.time_ms/1000.*2.).sin();if i==0{path.move_to((x,y));}else{path.line_to((x,y));}}
-            self.canvas.stroke(&Stroke::new(3.).with_caps(Cap::Round),Affine::IDENTITY,color(s.component_color),None,&path);
-        }
-        self.fill(Rect::new(end-1.5,mid-thumb/2.,3.,thumb),1.5,s.component_color);
+        if s.controls_opacity<=0.001{return}self.clip(Rect::new(0.,0.,w,g.height),0.,s.controls_opacity as f32);let rail=if s.seek_offer{0x2e000000|(s.component_color&0xffffff)}else{0x48000000|(s.component_color&0xffffff)};
+        // The same shared painter keeps the island and the control centre previews identical.
+        let look=dotisle_render::progress::Look{fg:s.component_color,track:rail,dot:0x8a000000|(s.component_color&0xffffff)};
+        let wave=if s.animate{s.play_shape.clamp(0.,1.)}else{0.};let phase=if s.animate{s.time_ms/1000.*2.}else{0.};let spin=if s.progress_thumb_spin&&s.animate{s.time_ms/1000.*0.25}else{0.};let thumb=if s.pressed==10{16.}else{14.};
+        dotisle_render::progress::draw(&mut self.canvas,vr(g.track),s.progress.clamp(0.,1.),phase,0.7,thumb,wave,spin,look,s.progress_bar,s.progress_thumb);
         self.text_line(&time(s.elapsed),g.elapsed,9.,400,secondary);self.text_at(&if s.duration>0.{format!("−{}",time((s.duration-s.elapsed).max(0.)))}else{"--:--".into()},g.total,9.,400,secondary,1.);if s.seek_offer{let tones=self.m3(s);let r=g.seek_chip;if s.seek_confirm{let(cancel,confirm)=lyric_core::music_layout::seek_confirm_pair(r);let fb_cancel=s.feedback.get(14).copied().unwrap_or(0.);let fb_confirm=s.feedback.get(15).copied().unwrap_or(0.);self.fill(cancel,cancel.h/2.,0xff000000|tones.secondary_container);if fb_cancel>0.001{self.fill(cancel,cancel.h/2.,((fb_cancel*255.)as u32)<<24|(tones.on_secondary_container&0xffffff));}self.text_at("取消",cancel,10.5,600,0xff000000|tones.on_secondary_container,0.5);self.fill(confirm,confirm.h/2.,0xff000000|tones.primary);if fb_confirm>0.001{self.fill(confirm,confirm.h/2.,((fb_confirm*255.)as u32)<<24|(tones.on_primary&0xffffff));}self.text_at("重新连接",confirm,10.5,600,0xff000000|tones.on_primary,0.5);}else{let fb=s.feedback.get(14).copied().unwrap_or(0.);self.fill(r,r.h/2.,0xff000000|tones.secondary_container);if fb>0.001{self.fill(r,r.h/2.,((fb*255.)as u32)<<24|(tones.on_secondary_container&0xffffff));}self.text_at("重新连接进度",Rect::new(r.x,r.y,r.w,r.h),11.,600,0xff000000|tones.on_secondary_container,0.5);}}for(id,r)in g.buttons{if r.w>0.{self.button(id,r,s);}}if s.translation_tooltip&&s.hover==6&&s.translation_button{if let Some((_,r))=g.buttons.iter().find(|(id,_)|*id==6){let tw=128.;let x=(r.x+r.w/2.-tw/2.).clamp(12.,w-tw-12.);let tip=Rect::new(x,r.y-38.,tw,30.);self.fill(tip,10.,0xffe4ece7);self.text_at(if s.translation_enabled{"隐藏翻译 · 已开启"}else{"显示翻译 · 已关闭"},Rect::new(tip.x,tip.y+6.,tip.w,18.),11.,500,0xff19261e,0.5);}}self.canvas.pop_layer();
     }
     fn tool_button(&mut self,id:i32,r:Rect,label:&str,s:&Scene<'_>){self.m3_button(id,r,label,s,id==30)}
@@ -274,6 +280,9 @@ pub struct Scene<'a>{pub glass_refraction:bool,
     pub progress:f64,pub elapsed:f64,pub duration:f64,pub font_size:f64,
     pub music_layout:crate::layout::MusicLayout,pub music_mix:f64,
     pub text_color:u32,pub component_color:u32,pub progress_color:u32,
+    /// Seekable playback bars share these with the control centre; passive bars ignore them.
+    pub progress_bar:dotisle_render::progress::BarStyle,pub progress_thumb:dotisle_render::progress::ThumbStyle,pub progress_thumb_spin:bool,
+    pub transport_theme:dotisle_render::transport::TransportTheme,
     pub hover:i32,pub pressed:i32,pub opacity:f32,
     pub transparent:bool,pub floating:bool,pub favorite_enabled:bool,pub has_track:bool,pub layout_scale:f64,
     pub activity_scales:[f64;3],pub activity_opacity:f64,pub cover_opacity:f64,pub cover_age_ms:f64,

@@ -4,6 +4,10 @@ use serde_json::json;
 use crate::{App,renderer::Renderer,layout::{self,Rect},motion::Frame,activities::{Panel,Task}};
 pub unsafe fn run(a:&mut App,dir:&Path)->Result<(),Box<dyn std::error::Error>>{
  std::fs::create_dir_all(dir)?;a.renderer=None;a.opacity=1.;a.frame=Frame::expanded();a.lyric="晚风轻轻，音乐刚好 · 君に届け".into();
+ if let Ok(v)=std::env::var("DOTISLE_FONT_FAMILY"){a.settings["IslandFontFamily"]=json!(v);}
+ if let Ok(v)=std::env::var("DOTISLE_TRANSPORT_THEME"){a.settings["TransportTheme"]=json!(v);}
+ if let Ok(v)=std::env::var("DOTISLE_PROGRESS_STYLE"){a.settings["ProgressBarStyle"]=json!(v);}
+ if let Ok(v)=std::env::var("DOTISLE_PROGRESS_THUMB"){a.settings["ProgressBarThumb"]=json!(v);a.settings["ProgressBarThumbEnabled"]=json!(true);}
  let font=a.base.join("Assets/Fonts/NotoSansSC.ttf");let mut captures=vec![];
  for dpi in if std::env::var_os("DOTISLE_MUSIC_ONLY").is_some(){vec![]}else{vec![96.,144.,192.]}{for dark in [false,true]{for mini in [false,true]{for w in [400.,592.]{
   a.settings["SettingsTheme"]=json!(if dark{"Dark"}else{"Light"});a.settings["IslandSizeMode"]=json!(if mini{"Mini"}else{"Classic"});a.settings["Animation"]=json!(false);

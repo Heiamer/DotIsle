@@ -49,6 +49,7 @@ pub fn render(model:&Model,text:&mut Text,width:f64,height:f64,state:&ViewState)
     if model.palette{palette(&mut ui,model,width,height);}
     if model.dialog.is_some(){dialog(&mut ui,model,width,height);}
     if model.picker.is_some(){crate::picker::panel(&mut ui,model,width,height);}
+    if model.font_picker.is_some(){crate::font_picker::panel(&mut ui,model,width,height);}
     if model.tutorial.is_some(){crate::tutorial::overlay(&mut ui,model,width,height,state);}
     let max_scroll=if model.tutorial.is_some(){0.}else{max_scroll};let motion_targets=ui.motion_targets;let hits=ui.hits;View{motion_targets,scene,hits,max_scroll}
 }
@@ -59,7 +60,7 @@ fn player_controls(ui:&mut Ui,m:&Model,x:f64,y:f64,large:bool){
     ui.icon_button(rect(x+56.,y,size,size),if m.playing(){Icon::Pause}else{Icon::Play},if m.playing(){"暂停播放"}else{"开始播放"},Action::Media("toggle"),true,m.track());
     ui.s.on_surface_variant=ink;ui.icon_button(rect(x+size+68.,y+pad,44.,44.),Icon::Next,"下一首",Action::Media("next"),false,m.track());ui.s=s;
 }
-fn progress(ui:&mut Ui,m:&Model,r:Rect,state:&ViewState){let duration=m.snapshot["track"]["durationSeconds"].as_f64().unwrap_or(0.);let pos=state.media_position.unwrap_or_else(||m.snapshot["positionSeconds"].as_f64().unwrap_or(0.));ui.slider(r,if duration>0.{pos/duration}else{0.},m.track()&&m.snapshot["canSeek"].as_bool().unwrap_or(false),if m.playing()&&!m.prefs.reduced_motion{state.time*2.}else{0.});ui.label(&dotisle_domain::timers::format_time(pos.max(0.)as u64),r.x0,r.y1+2.,11.,ui.s.on_surface_variant,false,80.);let total=dotisle_domain::timers::format_time(duration.max(0.)as u64);ui.label(&total,r.x1-42.,r.y1+2.,11.,ui.s.on_surface_variant,false,60.);}
+fn progress(ui:&mut Ui,m:&Model,r:Rect,state:&ViewState){let duration=m.snapshot["track"]["durationSeconds"].as_f64().unwrap_or(0.);let pos=state.media_position.unwrap_or_else(||m.snapshot["positionSeconds"].as_f64().unwrap_or(0.));let bar=dotisle_render::progress::BarStyle::from_setting(m.setting("ProgressBarStyle").as_str().unwrap_or("Wavy"));let thumb=if m.setting("ProgressBarThumbEnabled").as_bool().unwrap_or(false){dotisle_render::progress::ThumbStyle::from_setting(m.setting("ProgressBarThumb").as_str().unwrap_or("Pill"))}else{dotisle_render::progress::ThumbStyle::None};let spin=if m.setting("ProgressBarThumbSpin").as_bool().unwrap_or(false)&&!m.prefs.reduced_motion{state.time*0.25}else{0.};ui.slider(r,if duration>0.{pos/duration}else{0.},m.track()&&m.snapshot["canSeek"].as_bool().unwrap_or(false),if m.playing()&&!m.prefs.reduced_motion{state.time*2.}else{0.},spin,bar,thumb);ui.label(&dotisle_domain::timers::format_time(pos.max(0.)as u64),r.x0,r.y1+2.,11.,ui.s.on_surface_variant,false,80.);let total=dotisle_domain::timers::format_time(duration.max(0.)as u64);ui.label(&total,r.x1-42.,r.y1+2.,11.,ui.s.on_surface_variant,false,60.);}
 fn home(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64,state:&ViewState)->f64{
     let s=ui.s;let gap=20.;let left=(w-gap)*0.63;let right=w-left-gap;let rx=x+left+gap;
     ui.panel(rect(x,y,left,300.),s.primary_container);ui.label(if m.track(){"此刻的旋律"}else{"音乐，随时相伴"},x+26.,y+24.,13.,s.on_primary_container,true,left-52.);
