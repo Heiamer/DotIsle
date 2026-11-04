@@ -91,7 +91,7 @@ jobs:
       - name: Verify packaged settings app (best effort on runner GPU)
         continue-on-error: true
         run: |
-          & "$pwd/publish/DotIsle-$env:VERSION/LyricIsland.Settings.exe" --verify "$pwd/validation/settings"
+          & "$pwd/publish/release-output/DotIsle-$env:VERSION/LyricIsland.Settings.exe" --verify "$pwd/validation/settings"
           if($LASTEXITCODE -ne 0){throw 'Settings verification failed'}
 
       - name: Package validation evidence
