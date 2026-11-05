@@ -1,109 +1,98 @@
 <div align="center">
 
-<img src="Assets/LyricIsland-v3.png" width="96" alt="点屿 DotIsle">
+<img src="Assets/LyricIsland-v3.png" width="88" alt="点屿 DotIsle">
 
 # 点屿 · DotIsle
 
-**Windows 桌面的灵动岛，把音乐、歌词、专注与提醒放在一眼可见的地方。**
+**把音乐、歌词、专注与提醒，放进 Windows 桌面的一座小岛。**
 
-音乐歌词 · 通知与设备 · 待办清单 · 番茄钟 · 倒计时 · 秒表
+音乐控制与实时歌词 · 番茄钟与计时 · 待办提醒 · 通知与设备
 
-[下载安装版](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.8/DotIsle-3.1.8-Setup.exe) · [下载便携版](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.8/DotIsle-3.1.8-Portable.zip) · [本版更新说明](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.8/DotIsle-3.1.8-Notes.md) · [反馈问题](https://github.com/Heiamer/LyricIsland/issues)
+[下载安装版](https://github.com/Heiamer/DotIsle/releases/download/v3.2.1/DotIsle-3.2.1-Setup.exe) · [下载便携版](https://github.com/Heiamer/DotIsle/releases/download/v3.2.1/DotIsle-3.2.1-Portable.zip) · [3.2.1 更新说明](https://github.com/Heiamer/DotIsle/releases/tag/v3.2.1) · [反馈问题](https://github.com/Heiamer/DotIsle/issues)
+
+Windows 10 / 11 · x64 · Rust 原生应用
 
 </div>
 
-## 3.1.8 正式版 · 启动、媒体适配与封面取色修复
+## 五套主题，同一套功能
 
-- 修复开机自启动弹出控制中心，单文件启动器保留登录启动参数。
-- 动画恢复 3.1.5 的过渡逻辑与曲线编辑，保留减少动态效果设置。
-- 修复切歌后仍显示上一张封面、同曲后补封面不刷新，以及临时读取失败导致媒体信息丢失。
-- 优化酷狗歌词直搜与回退，恢复 QQ 逐字歌词解密，新增酷我、咪咕歌词源。
-- 修复亮黄绿、粉色等封面下上下曲图标回退纯黑；依据实际磨砂与玻璃背景调整同色系明度。
+![点屿 3.2.1 五套主题：默认、Nothing、云瓷、终端 TTY 与像素 Pixel](docs/images/themes-3.2.1.png)
 
-**已知问题：网易云后台调节进度仍可能闪烁任务栏或弹出主界面，尚未彻底解决。酷狗歌词服务已验证，酷狗客户端实机全场景仍待补充。**
+截图来自应用原生渲染；歌曲、歌词与待办为演示数据。点击图片可查看大图。
 
-[完整发布说明与下载](https://github.com/Heiamer/LyricIsland/releases/tag/v3.1.8) · [取色修复预览](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.8/DotIsle-3.1.8-Colors.png)
+| 主题 | 风格 |
+| --- | --- |
+| **默认** | 保留原有配色、布局、图标和窗口行为。 |
+| **Nothing** | 黑白工业风、简洁线条图标与点阵计时数字。 |
+| **云瓷 · Porcelain** | 暖灰、瓷白、亮蓝，圆润卡片与白色滑钮。 |
+| **终端 · TTY** | 等宽字符、方正面板、色块唱片和离散进度。 |
+| **像素 · Pixel** | 中英像素字体、16 位机卡带、方块图标与阶梯边框。 |
 
-## 3.1.1 更新
+在 **控制中心 → 设置 → 外观** 选择主题。五个选项块支持点击、拖动和键盘切换，重启后保留选择；四套非默认主题使用固定窗口尺寸。
 
-- **混合渲染**：主岛、控制中心和更新窗口采用 Vello Hybrid；CPU 处理路径，GPU 完成绘制与合成。
-- **更轻的资源管理**：设置按需启动，关闭一分钟后退出；字体使用文件映射，图片与 GPU 资源按需分配和复用。
-- **更紧凑的沉浸歌词**：移除歌名旁的小封面，保留磨砂取色背景；当前歌词采用中等字重，翻译和前后句按内容紧凑排列。
-- **悬停才显示操作**：鼠标进入音乐卡片后显示进度和播放按钮，离开后回归歌词；拖动进度时保留操作，外框不跳动。
-- **有形变的交互反馈**：侧栏指示跟随、选项圆角与勾选过渡、开关拇指和颜色切换、按钮按压及播放按钮形变；支持快速反向和减少动态效果。
-- **细节修正**：播放状态点按文字字形中心对齐，动态色板的色点与标签共用列中心；概览音乐卡片显示当前歌词。
+### 用自己的图片做背景
 
-## 界面预览
+在同一页面的 **自定义图片背景** 中选择本机 PNG、JPEG 或 BMP，可分别调整图片透明度、明暗、磨砂度，以及填满 / 适应方式。
 
-以下为历史版本的原生渲染示例，歌曲与歌词为演示数据；当前版本预览见上方发布页。
+每套主题单独保存图片和参数。导入图片会复制到本机数据目录，不上传服务器；关闭背景时仍保留配置，也可恢复默认。背景功能默认关闭。
 
-![沉浸歌词：默认与悬停状态](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.1/DotIsle-3.1.1-Music.png)
+### 更柔和的展开与收起
 
-![控制中心：概览与实时歌词](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.1/DotIsle-3.1.1-Overview.png)
+<p align="center"><img src="docs/images/motion-3.2.1.webp" width="640" alt="灵动岛展开、收起与中途反向的原生动画预览"></p>
 
-![控制中心交互反馈逐帧预览](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.1/DotIsle-3.1.1-Motion.gif)
+展开、收起时加入轻微高斯模糊，静止后恢复清晰；中途反向也能连续过渡。开启“减少动态效果”后关闭过渡模糊。
 
 ## 下载与开始使用
 
-适用于 **Windows 10 / 11 x64**。运行时不需要安装 Rust、Python 或 .NET。
+最新正式版：**[3.2.1](https://github.com/Heiamer/DotIsle/releases/tag/v3.2.1)**。发行包由 [GitHub Actions](https://github.com/Heiamer/DotIsle/actions/runs/42060627924) 编译，运行时不需要安装 Rust、Python 或 .NET。
 
 | 文件 | 用途 |
 | --- | --- |
-| [DotIsle-3.1.8-Setup.exe](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.8/DotIsle-3.1.8-Setup.exe) | 推荐下载。标准安装向导，支持开始菜单、应用卸载与数据保留。 |
-| [DotIsle-3.1.8-Portable.zip](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.8/DotIsle-3.1.8-Portable.zip) | 免安装。解压完整目录后运行 `LyricIsland.exe`。 |
-| [DotIsle-3.1.8-Source.zip](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.8/DotIsle-3.1.8-Source.zip) | 与本轮构建对应的完整源码、字体、许可证和构建文档。 |
-| [DotIsle-3.1.8-SHA256.txt](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.8/DotIsle-3.1.8-SHA256.txt) | 交付文件的 SHA256 校验值。 |
-| [DotIsle-3.1.8-Validation.zip](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.8/DotIsle-3.1.8-Validation.zip) | 测试报告、原生渲染截图和打包验收结果。 |
+| [安装版 · Setup.exe](https://github.com/Heiamer/DotIsle/releases/download/v3.2.1/DotIsle-3.2.1-Setup.exe) | 推荐使用。标准安装向导，支持开始菜单与卸载。 |
+| [便携版 · Portable.zip](https://github.com/Heiamer/DotIsle/releases/download/v3.2.1/DotIsle-3.2.1-Portable.zip) | 免安装，完整解压后运行 `LyricIsland.exe`。 |
+| [完整源码 · Source.zip](https://github.com/Heiamer/DotIsle/releases/download/v3.2.1/DotIsle-3.2.1-Source.zip) | 对应发行构建的源码、资源与第三方许可。 |
+| [SHA256 校验清单](https://github.com/Heiamer/DotIsle/releases/download/v3.2.1/DotIsle-3.2.1-SHA256.txt) | 校验下载文件是否完整。 |
+| [验证记录 · Validation.zip](https://github.com/Heiamer/DotIsle/releases/download/v3.2.1/DotIsle-3.2.1-Validation.zip) | Actions 中的控制中心与主题渲染验收记录。 |
 
-使用安装版时运行 Setup.exe，按向导选择目录；首次使用教程会按当前手势开关展示。
+1. 安装，或把便携包**完整解压到可写目录**；不要在压缩包内直接启动 EXE。
+2. 运行点屿，从系统托盘打开控制中心。
+3. 打开播放器并播放音乐，点屿会尝试连接媒体会话、读取歌曲并匹配歌词。
+4. 在控制中心调整灵动岛排版、主题、图片背景与动画；也可直接使用计时和待办。
 
-使用便携版：
-
-1. 将便携 ZIP **完整解压到可写目录**，不要在压缩包中直接启动 EXE。
-2. 运行 `LyricIsland.exe`，通过系统托盘打开控制中心。
-3. 打开播放器并播放音乐，点屿会尝试连接 Windows 媒体会话并显示歌词。
-4. 在“灵动岛 → 尺寸与排版”选择并排、分离或歌词居中布局。
-5. 在“设置 → 外观”调整动态色彩、明暗主题和减少动态效果。
-
-请保留 EXE 旁的 `Assets`、字体、更新助手和许可证。需要迁移旧数据时，先退出旧程序，再把原运行目录的 `Data` 复制到新目录；请先备份，不要同时运行两个版本操作同一份数据。
+请保留程序旁的资源、字体、更新助手和许可证。关闭控制中心后，灵动岛继续运行；完全退出主程序后，不再提供计时和待办提醒。
 
 ### 从旧版更新
 
-发行页同时提供 `LyricIsland-3.1.8-Portable.zip` 与 `LyricIsland-3.1.8-SHA256.txt`，供旧版更新器识别。兼容包使用旧更新器要求的目录名，内部运行文件与推荐便携包相同。
+在“关于与更新”检查更新，或手动下载新包。手动迁移时先退出旧版，备份并复制原运行目录的 `Data` 到新目录；不要同时运行两个版本操作同一份数据。
 
-可以从旧版的“关于与更新”检查更新；网络或旧更新器无法完成升级时，请手动下载推荐便携包，退出旧程序后再迁移 `Data`。本次只发布 GitHub，国内镜像不保证同步更新。
+发行页中的 `LyricIsland-3.2.1-Portable.zip` 与对应 SHA256 文件供旧更新器识别，日常下载请使用上表的 DotIsle 包。国内镜像可能晚于 GitHub 更新。
 
-## 日常功能
+## 能做什么
 
-- **音乐与歌词**：播放/暂停、上一首/下一首、播放进度、原文与翻译、多种展开排版及封面动态色彩。实际控制能力取决于播放器的媒体会话接口。
-- **专注与计时**：番茄钟、倒计时、秒表和工作流计时；支持多计时项目和暂停恢复。
-- **待办**：记录事项、编辑、完成、撤销及日期时间提醒。
-- **通知与设备**：在岛体中展示通知与连接状态；能力受 Windows 版本、权限及设备接口影响。
-- **外观与交互**：控制中心与灵动岛分别保存配色和材质，胶囊与展开卡片圆角可独立设置。
+- **音乐与歌词**：播放 / 暂停、切歌、进度调节、原文与翻译、多种展开排版、封面动态配色。实际控制能力取决于播放器接口。
+- **专注与计时**：番茄钟、倒计时、秒表和流程计时，支持多项目与暂停恢复。
+- **待办与提醒**：记录、编辑、完成、撤销，以及日期和时间提醒。
+- **通知与设备**：在岛体中展示通知与设备连接状态，具体能力受系统、权限及设备接口影响。
+- **外观与交互**：五套主题、独立图片背景、明暗模式、灵动岛布局与动画设置。
 
-关闭控制中心后，主岛继续运行。完全退出主程序后，不再提供计时和待办提醒。
+## 3.2.1 修了什么
 
-## 性能与验证
+- 修复 Nothing 等非默认主题仍能拖边改变窗口大小的问题。
+- 主题切换改为五个选项块；修正同色滑轨、空待办实心球、歌词拥挤与计时字体不一致。
+- 移除 Nothing 品牌图标旁的装饰红点，并为新主题绘制匹配图标。
+- 优化网易云连接探测和连续拖动的请求合并，优先处理最新目标。
+- 修复图片图集扩容时的上传顺序，避免封面等图片出现黑块。
 
-本轮通过 **479 项工作区测试、16 组原生 IPC 集成检查、193 张控制中心截图和 147 张音乐卡片截图（含 73 组取色场景）**，并验证安装、重装、保留数据卸载和清理测试数据卸载。
-
-优化包括收紧 GPU 数据纹理与分配块、去掉常驻中间画布、字体按需映射、复用着色器缓存、设置延迟启动与隐藏后退出。内存会随页面、缩放、显卡和使用时间变化，**不承诺设置窗口已达到 100 MB**。本轮 UI 改动没有重新进行同口径的可见窗口内存测量，也没有把旧测量值当作新版实测。
-
-真实播放器、IME、桌面关闭/热重开的本轮人工交互验收仍待补充；离屏渲染和隔离状态检查不能替代这些验收。具体范围见[本版说明](https://github.com/Heiamer/LyricIsland/releases/download/v3.1.8/DotIsle-3.1.8-Notes.md)。
+**网易云兼容范围：** 本机当前客户端已验证连接、十次进度跳转及快速连续跳转，验收中未记录到任务栏注意力请求；暂停态尚未通过验收，不同客户端版本、最小化和托盘场景仍需分别验证。详见[本版发布说明](https://github.com/Heiamer/DotIsle/releases/tag/v3.2.1)，反馈时请带上客户端版本和复现步骤。
 
 ## 源码与构建
 
-当前运行栈为 **Rust、Win32、Vello Hybrid、wgpu 和 Parley**，控制中心使用同一套原生绘图技术。
+使用 **Rust、Win32、Vello Hybrid、wgpu 与 Parley**。源码包含发行所需字体、资源和第三方补丁，不包含用户数据或编译缓存。
 
-完整可构建源码随 Release 附件交付，下载 `DotIsle-3.1.8-Source.zip`；构建方式见 `BUILD-3.1.8.md` 与 `BUILD-3.1.7.md`。本轮源码同步到主分支，版本标签指向对应的源码提交。
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 build --release --package lyric-native --package dotisle-app --package lyric-bootstrap
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 test --workspace --release
-```
-
-构建所需工具仅用于开发，不需要随程序安装。源码包保留当前使用的第三方补丁和许可证，不包含用户 `Data` 或编译 `target`。
+推荐使用仓库的 [Windows Release 工作流](.github/workflows/windows-release.yml) 构建；本地环境与命令见 **[3.2.1 构建说明](BUILD-3.2.1.md)**。本版通过 490 项工作区测试，以及主题、背景和控制中心渲染检查；自动检查不能替代所有播放器与桌面交互场景的实机验证。
 
 ## 许可与反馈
 
-许可见 [LICENSE](LICENSE)，第三方与字体说明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)、[FONT-NOTICE.md](FONT-NOTICE.md)。反馈时请附 Windows 版本、应用版本、复现步骤和相关日志，并先移除个人信息。
+项目许可见 [LICENSE](LICENSE)。第三方与字体许可见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)、[FONT-NOTICE.md](FONT-NOTICE.md) 和 [licenses](licenses/)。像素字体使用 Fusion Pixel，随包保留其许可。
+
+欢迎在 [Issues](https://github.com/Heiamer/DotIsle/issues) 提交问题或建议。请附 Windows 版本、点屿版本、播放器版本、复现步骤和相关截图；分享日志前请移除个人信息。
