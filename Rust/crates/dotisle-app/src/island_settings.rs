@@ -20,16 +20,16 @@ fn music_layout_choices(ui:&mut Ui,m:&Model,x:f64,y:&mut f64,w:f64){
   let scale=((cw-40.)/400.).min(78./g.height);let ox=r.center().x-400.*scale/2.;let oy=r.y0+10.;let rr=|v:lyric_core::music_layout::Rect|rect(ox+v.x*scale,oy+v.y*scale,v.w*scale,v.h*scale);
   draw::fill(ui.scene,rect(ox,oy,400.*scale,g.height*scale),10.,s.high);
   if *mix==4.{draw::fill(ui.scene,rect(ox,oy,400.*scale,g.height*scale),10.,s.primary_container);}
-  if g.cover.w>0.{draw::fill(ui.scene,rr(g.cover),4.,s.primary);let c=rr(g.cover);draw::icon(ui.scene,Icon::Music,c.center().x-4.,c.center().y-4.,8.,s.on_primary);}
+  if g.cover.w>0.{draw::fill(ui.scene,rr(g.cover),4.,s.primary);let c=rr(g.cover);ui.icon(Icon::Music,c.center().x-4.,c.center().y-4.,8.,s.on_primary);}
   // Header alignment is independent of the lyric anchor in the live renderer.
   for(v,amount,align)in [(g.title,0.6,0.),(g.artist,0.35,0.),(g.lyric,0.85,g.align),(g.secondary,0.55,g.align)]{let area=rr(v);let length=area.width()*amount;let px=area.x0+(area.width()-length)*align;if v==g.lyric&&immersive{for row in 0..2{draw::fill(ui.scene,rect(px,area.y0+(10.+row as f64*32.)*scale,length*(1.-row as f64*0.2),3.),1.5,s.on_surface);}}else{draw::fill(ui.scene,rect(px,area.center().y-1.,length,2.),1.,s.on_surface_variant);}}
   if immersive&&reveal<0.5{for(y,amount)in [(text.previous_y,0.6),(text.next_y,0.7)]{draw::fill(ui.scene,rect(ox+24.*scale,oy+(y+9.)*scale,352.*scale*amount,1.5),0.75,s.outline);}}
   let status=rr(g.status_text);let dot=rr(g.status_dot);draw::circle(ui.scene,dot.center().x,status.center().y,1.,s.primary);draw::fill(ui.scene,rect(status.x0,status.center().y-0.6,status.width()*0.7,1.2),0.6,s.on_surface_variant);
   if !immersive||reveal>0.5{let track=rr(g.track);draw::fill(ui.scene,rect(track.x0,track.y0,track.width(),1.),0.5,s.outline);draw::fill(ui.scene,rect(track.x0,track.y0,track.width()*0.4,1.),0.5,s.primary);draw::fill(ui.scene,rect(track.x0+track.width()*0.4-0.5,track.y0-2.,1.,5.),0.5,s.primary);
   for(v,align)in [(g.elapsed,0.),(g.total,1.)]{let area=rr(v);draw::fill(ui.scene,rect(area.x0+area.width()*0.65*align,area.center().y-0.5,area.width()*0.35,1.),0.5,s.on_surface_variant);}
-  for(id,v)in g.buttons{let v=rr(v);let size=if id==4{8.}else{5.};if id==4{draw::fill(ui.scene,v,3.,s.primary);}let icon=match id{2=>Icon::Move,9=>Icon::Heart,3=>Icon::Prev,4=>Icon::Pause,5=>Icon::Next,6=>Icon::Translate,_=>Icon::Settings};draw::icon(ui.scene,icon,v.center().x-size/2.,v.center().y-size/2.,size,if id==4{s.on_primary}else{s.on_surface_variant});}
+  for(id,v)in g.buttons{let v=rr(v);let size=if id==4{8.}else{5.};if id==4{draw::fill(ui.scene,v,3.,s.primary);}let icon=match id{2=>Icon::Move,9=>Icon::Heart,3=>Icon::Prev,4=>Icon::Pause,5=>Icon::Next,6=>Icon::Translate,_=>Icon::Settings};ui.icon(icon,v.center().x-size/2.,v.center().y-size/2.,size,if id==4{s.on_primary}else{s.on_surface_variant});}
   }ui.center(label,rect(r.x0+12.,r.y0+92.,cw-24.,22.),14.,if chosen{s.on_secondary_container}else{s.on_surface},true);ui.center(detail,rect(r.x0+12.,r.y0+118.,cw-24.,16.),11.,s.on_surface_variant,false);
-  if chosen{draw::icon(ui.scene,Icon::Check,r.x1-28.,r.y0+12.,16.,s.primary);}
+  if chosen{ui.icon(Icon::Check,r.x1-28.,r.y0+12.,16.,s.primary);}
  }*y+=options.len().div_ceil(cols)as f64*158.+20.;
 }
 const MATERIALS:[(&str,&str);2]=[("亚克力","Acrylic"),("玻璃","Glass")];
@@ -67,7 +67,7 @@ fn progress_gallery(ui:&mut Ui,m:&Model,x:f64,y:&mut f64,w:f64,state:&ViewState)
   let sample=rect(r.x0+18.,r.y0+20.,cw-36.,26.);let phase=if m.prefs.reduced_motion{0.}else{state.time*2.};
   dotisle_render::progress::draw(ui.scene,sample,0.46,phase,1.,22.,1.,spin,Look{fg:0xff000000|s.primary,track:0xff000000|s.outline,dot:0xff000000|s.on_surface_variant},*style,shown);
   ui.label(style.key(),r.x0+18.,r.y0+64.,15.,if chosen{s.on_secondary_container}else{s.on_surface},true,cw-70.);ui.label(style.detail(),r.x0+18.,r.y0+90.,11.,s.on_surface_variant,false,cw-36.);
-  if chosen{draw::icon(ui.scene,Icon::Check,r.x1-30.,r.y0+14.,16.,s.primary);}}
+  if chosen{ui.icon(Icon::Check,r.x1-30.,r.y0+14.,16.,s.primary);}}
  *y+=BarStyle::ALL.len().div_ceil(cols)as f64*132.+8.;
  let rows=if thumb_on{vec![("显示滑块","开启后在播放进度条上显示可拖动的滑块，并可选择下方样式。","ProgressBarThumbEnabled",false),("滑块缓慢旋转","让滑块缓慢自转；关闭后保持静止。","ProgressBarThumbSpin",false)]}else{vec![("显示滑块","开启后在播放进度条上显示可拖动的滑块，并可选择下方样式。","ProgressBarThumbEnabled",false)]};toggles(ui,m,x,y,w,&rows);
  if !thumb_on{return}
@@ -78,7 +78,7 @@ fn progress_gallery(ui:&mut Ui,m:&Model,x:f64,y:&mut f64,w:f64,state:&ViewState)
   let sample=rect(r.x0+18.,r.y0+14.,cw-36.,32.);let phase=if m.prefs.reduced_motion{0.}else{state.time*2.};
   dotisle_render::progress::draw(ui.scene,sample,0.42,phase,1.,26.,1.,spin,Look{fg:0xff000000|s.primary,track:0xff000000|s.outline,dot:0xff000000|s.on_surface_variant},bar,*style);
   ui.label(style.label(),r.x0+18.,r.y0+58.,13.,if chosen{s.on_secondary_container}else{s.on_surface},true,cw-36.);
-  if chosen{draw::icon(ui.scene,Icon::Check,r.x1-30.,r.y0+12.,16.,s.primary);}}
+  if chosen{ui.icon(Icon::Check,r.x1-30.,r.y0+12.,16.,s.primary);}}
  *y+=ThumbStyle::ALL.len().div_ceil(cols)as f64*96.+24.;
 }
 fn transport_gallery(ui:&mut Ui,m:&Model,x:f64,y:&mut f64,w:f64){
@@ -92,7 +92,7 @@ fn transport_gallery(ui:&mut Ui,m:&Model,x:f64,y:&mut f64,w:f64){
   let scale=((r.width()-40.)/400.).min(1.35);let ox=r.x0+(r.width()-400.*scale)/2.;let cy=r.y0+34.;let colors=dotisle_render::transport::Colors{accent:0xff000000|s.primary,on_accent:0xff000000|s.on_primary,control:0xff000000|s.on_surface_variant,tonal:0xff000000|s.secondary_container,ink_fill:0xff000000|s.on_surface};
   for(id,br)in geo.buttons{let sr=rect(ox+br.x*scale,cy-br.h*scale/2.,br.w*scale,br.h*scale);let ink=dotisle_render::transport::background(ui.scene,id,sr,*theme,colors,1.);let size=if id==4{24.}else if [3,5].contains(&id){22.}else{20.};let size=size*scale;let icon=rect(sr.center().x-size/2.,sr.center().y-size/2.,size,size);let glyph=match id{2=>dotisle_render::transport_icons::Glyph::Shuffle,9=>dotisle_render::transport_icons::Glyph::Heart,3=>dotisle_render::transport_icons::Glyph::Prev,4=>dotisle_render::transport_icons::Glyph::Pause,5=>dotisle_render::transport_icons::Glyph::Next,6=>dotisle_render::transport_icons::Glyph::Translate,_=>dotisle_render::transport_icons::Glyph::Settings};dotisle_render::transport_icons::paint_icon(ui.scene,glyph,*theme,icon,0xff000000|(ink&0xffffff));}
   ui.label(theme.label(),r.x0+20.,r.y0+58.,15.,if chosen{s.on_secondary_container}else{s.on_surface},true,120.);ui.label(theme.key(),r.x0+100.,r.y0+60.,11.,s.on_surface_variant,false,w-140.);
-  if chosen{draw::icon(ui.scene,Icon::Check,r.x1-34.,r.y0+58.,16.,s.primary);}
+  if chosen{ui.icon(Icon::Check,r.x1-34.,r.y0+58.,16.,s.primary);}
  }
  *y+=dotisle_render::transport::TransportTheme::ALL.len()as f64*104.+16.;
 }
@@ -113,7 +113,7 @@ fn motion_editor(ui:&mut Ui,m:&Model,x:f64,y:&mut f64,w:f64,state:&ViewState){le
  let ghost=rect(ox+layout.card.x*preview_scale,oy+layout.card.y*preview_scale,layout.card.w*preview_scale,layout.card.h*preview_scale);draw::outline(ui.scene,ghost,(radius*preview_scale).min(ghost.height()/2.),s.outline,1.);
  let closed=rect(ox+layout.capsule.x*preview_scale,oy+layout.capsule.y*preview_scale,layout.capsule.w*preview_scale,layout.capsule.h*preview_scale);draw::fill(ui.scene,closed,layout.capsule.h*preview_scale/2.,s.secondary_container);
  let p=progress(m,phase);let closed_radius=if m.radius_target==0{radius}else{value(m,"CapsuleCornerRadius",20.)};let card_radius=if m.radius_target==1{radius}else{value(m,"MotionRadius",30.)};let(shape,r)=layout.morph_shape_with_radii(p,closed_radius,card_radius);let shape=rect(ox+shape.x*preview_scale,oy+shape.y*preview_scale,shape.w*preview_scale,shape.h*preview_scale);draw::fill(ui.scene,shape,(r*preview_scale).min(shape.height()/2.),s.primary);
- let icon_size=(shape.height()*0.42).clamp(10.,26.);draw::icon(ui.scene,Icon::Music,shape.x0+12.,shape.center().y-icon_size/2.,icon_size,s.on_primary);
+ let icon_size=(shape.height()*0.42).clamp(10.,26.);ui.icon(Icon::Music,shape.x0+12.,shape.center().y-icon_size/2.,icon_size,s.on_primary);
  if shape.width()>100.{ui.text.line(ui.scene,if p<0.5{"海边来信"}else{"音乐刚好"},rect(shape.x0+icon_size+20.,shape.center().y-10.,shape.width()-icon_size-32.,20.),if p<0.5{9.}else{11.},0xff000000|s.on_primary,false,0.5);}
  ui.scene.pop_layer();*y+=584.;crate::preferences_ui::range(ui,m,x,y,w,if m.radius_target==0{"胶囊圆角"}else{"展开卡片圆角"},if m.radius_target==0{"CapsuleCornerRadius"}else{"MotionRadius"},if m.radius_target==0{20.}else{30.},if m.radius_target==0{0.}else{8.},48.,"px");
  let presets=[("原版弹簧",Value::Null),("轻快",json!(motion_curve::EMPHASIZED)),("柔和",json!([0.4,0.,0.2,1.])),("线性",json!([0.,0.,1.,1.]))];let pw=(w-24.)/4.;for(i,(title,v))in presets.iter().enumerate(){let selected=if v.is_null(){m.curve().is_none()}else{serde_json::from_value::<[f64;4]>(v.clone()).ok()==m.curve()};ui.chip(rect(x+i as f64*(pw+8.),*y,pw,40.),title,selected,Action::NativeEdit("MotionCurve",v.clone()));}*y+=60.;range(ui,m,x,y,w,"展开时长","MotionDuration",480.,250.,1200.,"ms");range(ui,m,x,y,w,"收起时长","MotionCollapseDuration",440.,150.,700.,"ms");range(ui,m,x,y,w,"展开间距","MotionGap",8.,0.,24.,"px");ui.button(rect(x,*y,w,44.),if m.details[7]{"收起高级弹簧参数"}else{"高级弹簧参数"},Some(Icon::Settings),Action::Details(7),true,true);*y+=60.;if m.details[7]{for(title,key,value,min,max)in [("弹簧刚度","SpringStiffness",420.,100.,1000.),("弹簧阻尼","SpringDamping",30.,10.,80.),("弹簧质量","SpringMass",0.8,0.3,2.)]{crate::preferences_ui::range(ui,m,x,y,w,title,key,value,min,max,"");}}toggles(ui,m,x,y,w,&[("启用动态效果","关闭后保留清晰的静态切换与状态。","Animation",true)]);ui.button(rect(x,*y,160.,44.),"在灵动岛预览",Some(Icon::Play),Action::NativeCommand("expand",Value::Null),false,true);ui.button(rect(x+176.,*y,160.,44.),"恢复默认动效",Some(Icon::Reset),Action::NativeCommand("resetMotion",Value::Null),true,true);*y+=66.;

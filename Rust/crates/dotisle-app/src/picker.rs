@@ -105,7 +105,7 @@ pub fn panel(ui:&mut Ui,m:&Model,width:f64,height:f64){
     ui.label("常用色",x+28.,y+422.,12.,s.on_surface_variant,false,100.);
     for(i,rgb)in PRESETS.iter().enumerate(){
         let r=rect(x+28.+i as f64*44.,y+446.,34.,34.);draw::fill(ui.scene,r,10.,*rgb);draw::outline(ui.scene,r,10.,s.outline,1.);
-        if *rgb==p.hsv.rgb(){draw::icon(ui.scene,Icon::Check,r.x0+7.,r.y0+7.,20.,ink(*rgb));}
+        if *rgb==p.hsv.rgb(){ui.icon(Icon::Check,r.x0+7.,r.y0+7.,20.,ink(*rgb));}
         let index=ui.hit(r,"常用色",Action::ColorPreset(*rgb),true);ui.state(r,10.,index,s.on_surface);
     }
     let rx=x+420.;let rw=w-448.;let half=(rw-8.)/2.;

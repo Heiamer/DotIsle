@@ -113,6 +113,14 @@ fn step(p:f64,a:f64,b:f64)->(f64,f64){
     let span=(b-a).abs().max(1e-6);let t=((p-a)/span).clamp(0.,1.);
     (t*t*(3.-2.*t),6.*t*(1.-t)/span)
 }
+/// Spatially coupled softness stays continuous on reversal and costs nothing at rest.
+/// The quartic envelope has zero slope at both endpoints; it never blurs settled text.
+pub fn content_softness(reveal:f64,animate:bool)->(f64,f64){
+    if !animate||!reveal.is_finite(){return (0.,0.)}
+    let p=reveal.clamp(0.,1.);let envelope=16.*p*p*(1.-p)*(1.-p);
+    let visible=|sigma:f64|if sigma<0.015{0.}else{sigma};
+    (visible(1.35*envelope),visible(0.9*envelope))
+}
 pub fn blend(p:f64,start:f64,end:f64)->f64 {let t=((p-start)/(end-start)).clamp(0.,1.);t*t*(3.-2.*t)}
 pub fn sine(t:f64)->f64{(1.-(std::f64::consts::PI*t.clamp(0.,1.)).cos())/2.}
 pub fn cubic_out(t:f64)->f64{1.-(1.-t.clamp(0.,1.)).powi(3)}
@@ -208,4 +216,16 @@ impl Activity {
 
 #[cfg(test)]mod curve_tests{use super::*;
  #[test]fn custom_curve_drives_the_real_master_channel_and_preserves_reversal(){let mut o=Options::default();o.curve=Some([0.,0.,1.,1.]);let t=Transition::new(true,Frame::hidden(o),o,Frame::default(),false);assert!((t.sample(o.duration/2.).card_reveal-0.5).abs()<1e-6);let f=t.sample(180.);let v=t.velocity(180.);let r=Transition::new(false,f,o,v,false);assert_eq!(r.sample(0.).values(),f.values());assert_eq!(r.velocity(0.).values(),v.values());let near=(r.sample(0.001).card_reveal-f.card_reveal)/0.000001;assert!((near-v.card_reveal).abs()<0.01);assert_eq!(r.sample(r.duration_ms).card_reveal,0.);}
+}
+
+#[cfg(test)]mod softness_tests{
+ use super::*;
+ #[test]fn motion_softness_is_bounded_symmetric_and_crisp_at_rest(){
+  for p in [0.,1.,-1.,2.,f64::NAN]{assert_eq!(content_softness(p,true),(0.,0.));}
+  for i in 0..=100{let p=i as f64/100.;let(a,b)=content_softness(p,true);let(c,d)=content_softness(1.-p,true);assert!((0.0..=1.35).contains(&a));assert!((0.0..=0.9).contains(&b));assert!((a-c).abs()<1e-9&&(b-d).abs()<1e-9);assert_eq!(content_softness(p,false),(0.,0.));}
+ }
+ #[test]fn interrupted_shape_uses_the_same_softness_in_both_directions(){
+  let o=Options::default();let opening=Transition::new(true,Frame::hidden(o),o,Frame::default(),false);
+  for at in [40.,120.,240.]{let from=opening.sample(at);let v=opening.velocity(at);let closing=Transition::new(false,from,o,v,false);let p=closing.sample(0.);assert_eq!(content_softness(from.card_reveal,true),content_softness(p.card_reveal,true));}
+ }
 }

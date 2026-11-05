@@ -9,7 +9,7 @@ on:
       version:
         description: Release version without the leading v
         required: true
-        default: "3.2.0"
+        default: "3.2.1"
       publish:
         description: Publish the release instead of leaving a draft
         type: boolean
@@ -43,7 +43,8 @@ jobs:
         run: |
           rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal --no-self-update
           $zigZip=Join-Path $env:RUNNER_TEMP 'zig.zip'
-          Invoke-WebRequest 'https://ziglang.org/download/0.17.0/zig-x86_64-windows-0.17.0.zip' -OutFile $zigZip
+          Invoke-WebRequest 'https://ziglang.org/download/0.13.0/zig-windows-x86_64-0.13.0.zip' -OutFile $zigZip
+          if((Get-FileHash $zigZip -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'd859994725ef9402381e557c60bb57497215682e355204d754ee3df75ee3c158'){throw 'Zig checksum mismatch'}
           Expand-Archive $zigZip (Join-Path $env:RUNNER_TEMP 'zig') -Force
           $zig=(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'zig') -Filter zig.exe -Recurse | Select-Object -First 1).FullName
           if(-not $zig){throw 'Zig download is missing zig.exe'}
@@ -75,7 +76,6 @@ jobs:
 
       - name: Package installer, portable, OTA and source
         run: |
-          Remove-Item 'publish' -Recurse -Force -ErrorAction SilentlyContinue
           $out=Join-Path $pwd 'publish/release-output'
           New-Item -ItemType Directory -Force $out | Out-Null
           Copy-Item "release-notes/DotIsle-$env:VERSION-Notes.md" $out
@@ -91,8 +91,11 @@ jobs:
       - name: Verify packaged settings app (best effort on runner GPU)
         continue-on-error: true
         run: |
-          & "$pwd/publish/release-output/DotIsle-$env:VERSION/LyricIsland.Settings.exe" --verify "$pwd/validation/settings"
-          if($LASTEXITCODE -ne 0){throw 'Settings verification failed'}
+          $app="$pwd/publish/release-output/DotIsle-$env:VERSION/LyricIsland.Settings.exe"
+          $verification=Start-Process $app -ArgumentList @('--verify',"$pwd/validation/settings") -WindowStyle Hidden -Wait -PassThru
+          if($verification.ExitCode -ne 0){throw 'Settings verification failed'}
+          $themes=Start-Process $app -ArgumentList @('--theme-capture',"$pwd/validation/themes") -WindowStyle Hidden -Wait -PassThru
+          if($themes.ExitCode -ne 0){throw 'Theme verification failed'}
 
       - name: Package validation evidence
         if: always()

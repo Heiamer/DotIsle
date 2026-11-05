@@ -118,7 +118,7 @@ impl NeteaseTimeline{
     pub fn new(local:PathBuf)->Self{Self{reader:None,latest:None,status:"等待网易云".into(),error:None,retry:Instant::now(),local}}
     pub fn read(&mut self,online:bool){
         if Instant::now()<self.retry{return}let result=(||{if self.reader.is_none(){self.reader=Some(Reader::attach()?)}self.reader.as_mut().unwrap().read(&self.local,online)})();
-        match result{Ok(sample)=>{self.latest=sample;self.error=None;self.status=if self.latest.is_some(){"网易云实时进度"}else{"等待网易云有效进度"}.into()},Err(error)=>{self.latest=None;self.reader=None;self.error=Some(error);self.status="网易云读取不可用，使用系统媒体会话".into();self.retry=Instant::now()+Duration::from_secs(5)}}
+        match result{Ok(sample)=>{self.latest=sample;self.error=None;self.status=if self.latest.is_some(){"网易云实时进度"}else{"等待网易云有效进度"}.into()},Err(error)=>{self.latest=None;self.reader=None;self.error=Some(error);self.status="网易云读取不可用，使用系统媒体会话".into();self.retry=Instant::now()+Duration::from_millis(500)}}
     }
     pub fn control_target(&self,track:&lyric_core::models::TrackInfo)->Option<crate::netease_control::Target>{self.matching(track)?;self.reader.as_ref()?.target.clone()}
     pub fn matching(&self,track:&lyric_core::models::TrackInfo)->Option<TimingSample>{

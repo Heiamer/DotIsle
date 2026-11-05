@@ -20,6 +20,8 @@ impl Target{
     pub fn background_available(&self)->bool{crate::netease_window::available(self)}
     pub fn seek(&self,port:u16,seconds:f64,duration:f64,song_id:&str,valid:&dyn Fn()->bool)->Result<(&'static str,f64),String>{
         if !self.available(){return Err("网易云已退出或重启，请等待重新连接".into())}
+        if !valid(){return Err("有更新的进度请求，已取消旧操作".into())}
+        if crate::netease_cdp::available(self.pid,port){crate::netease_cdp::seek(self.pid,port,song_id,seconds)?;return Ok(("NeteaseCDP",seconds))}
         if self.background_available(){return crate::netease_window::seek(self,seconds,duration,valid).map(|actual|("NeteaseBackground",actual))}
         if !valid(){return Err("歌曲已变化，已取消进度操作".into())}
         crate::netease_cdp::seek(self.pid,port,song_id,seconds)?;Ok(("NeteaseCDP",seconds))

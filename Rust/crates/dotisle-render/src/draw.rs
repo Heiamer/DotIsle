@@ -30,20 +30,32 @@ impl FontFile{
 pub fn color(rgb:u32)->Color{Color::from_rgb8((rgb>>16)as u8,(rgb>>8)as u8,rgb as u8)}
 pub fn alpha(rgb:u32,a:f32)->Color{Color::from_rgba8((rgb>>16)as u8,(rgb>>8)as u8,rgb as u8,(a.clamp(0.,1.)*255.)as u8)}
 pub fn rect(x:f64,y:f64,w:f64,h:f64)->Rect{Rect::new(x,y,x+w,y+h)}
+static FACE_OVERFLOW:std::sync::OnceLock<std::sync::Mutex<Vec<(String,f32,f64)>>>=std::sync::OnceLock::new();
+fn record_face_overflow(text:&str,size:f32,excess:f64){
+    if excess<=0.{return}
+    let log=FACE_OVERFLOW.get_or_init(||std::sync::Mutex::new(Vec::new()));
+    if let Ok(mut log)=log.lock(){
+        if let Some(row)=log.iter_mut().find(|(t,s,_)|t==text&&*s==size){row.2=row.2.max(excess);}
+        else{log.push((text.to_string(),size,excess));}
+    }
+}
 /// Google Sans Flex (SIL OFL) covers Latin and digits; CJK falls through to Noto.
 pub const LATIN_FONTS:[&str;4]=["GoogleSansFlex-Regular.ttf","GoogleSansFlex-Medium.ttf","GoogleSansFlex-SemiBold.ttf","GoogleSansFlex-Bold.ttf"];
 pub struct Text{
     system_fonts:bool,registered:Vec<fontique::Blob<u8>>,family:String,fonts:FontContext,context:LayoutContext<()>,cache:HashMap<(String,u32,u16,bool),Layout<()>>,
+    /// Layouts shaped with an explicit face. Kept apart from the UI cache so the
+    /// pinned default metrics in `cache` are never disturbed by a face swap.
+    face_cache:HashMap<(String,String,u32,u16),Layout<()>>,
     resources:HashMap<(u64,u32),FontData>,ink_cache:HashMap<(String,u32,u16,bool),(f64,f64)>,
     /// Japanese fallback is registered only when text contains Japanese kana.
     japanese:Option<std::path::PathBuf>,
 }
 impl Text{
     /// No bundled fonts: callers that must not depend on the executable's folder register their own.
-    pub fn empty()->Self{Self{system_fonts:false,registered:vec![],family:"Google Sans Flex".into(),fonts:FontContext{collection:fontique::Collection::new(fontique::CollectionOptions{system_fonts:false,..Default::default()}),source_cache:Default::default()},context:LayoutContext::new(),cache:HashMap::new(),resources:HashMap::new(),ink_cache:HashMap::new(),japanese:None}}
-    pub fn new()->Self{let mut text=Self::empty();let dir=Self::font_dir().join("Assets/Fonts");for name in LATIN_FONTS.iter().chain(["NotoSansSC.ttf","NotoSansJP.ttf"].iter()){let _=text.register(&dir.join(name));}text}
+    pub fn empty()->Self{Self{system_fonts:false,registered:vec![],family:"Google Sans Flex".into(),fonts:FontContext{collection:fontique::Collection::new(fontique::CollectionOptions{system_fonts:false,..Default::default()}),source_cache:Default::default()},context:LayoutContext::new(),cache:HashMap::new(),face_cache:HashMap::new(),resources:HashMap::new(),ink_cache:HashMap::new(),japanese:None}}
+    pub fn new()->Self{let mut text=Self::empty();let dir=Self::font_dir().join("Assets/Fonts");for name in LATIN_FONTS.iter().chain(["NotoSansSC.ttf","NotoSansJP.ttf","SpaceGrotesk.ttf","SpaceMono-Regular.ttf","Doto.ttf","FusionPixel12.ttf"].iter()){let _=text.register(&dir.join(name));}text}
     /// Register the primary fonts now; layout registers Japanese on first use.
-    pub fn new_lazy_japanese()->Self{let mut text=Self::empty();let base=Self::font_dir();for name in LATIN_FONTS.iter().chain(["NotoSansSC.ttf"].iter()){let _=text.register(&base.join("Assets/Fonts").join(name));}text.japanese=Some(base.join("Assets/Fonts/NotoSansJP.ttf"));text}
+    pub fn new_lazy_japanese()->Self{let mut text=Self::empty();let base=Self::font_dir();for name in LATIN_FONTS.iter().chain(["NotoSansSC.ttf","SpaceGrotesk.ttf","SpaceMono-Regular.ttf","Doto.ttf","FusionPixel12.ttf"].iter()){let _=text.register(&base.join("Assets/Fonts").join(name));}text.japanese=Some(base.join("Assets/Fonts/NotoSansJP.ttf"));text}
     fn font_dir()->std::path::PathBuf{std::env::current_exe().ok().and_then(|p|p.parent().map(std::path::Path::to_path_buf)).filter(|p|p.join("Assets/Fonts").is_dir()).unwrap_or_else(||std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."))}
     /// Load the deferred Japanese fallback. Safe to call repeatedly; a missing file
     /// only leaves the system-font fallback in place.
@@ -82,9 +94,9 @@ impl Text{
         self.draw_argb(scene,text,r.x0+(r.width()-width)*align,y,size,argb,bold,r.width());
         scene.pop_layer();
     }
-    fn enable_system_fonts(&mut self){if !self.system_fonts{self.system_fonts=true;let mut fonts=FontContext::new();for blob in &self.registered{fonts.collection.register_fonts(blob.clone(),None);}self.fonts=fonts;self.cache.clear();self.ink_cache.clear();}}
+    fn enable_system_fonts(&mut self){if !self.system_fonts{self.system_fonts=true;let mut fonts=FontContext::new();for blob in &self.registered{fonts.collection.register_fonts(blob.clone(),None);}self.fonts=fonts;self.cache.clear();self.face_cache.clear();self.ink_cache.clear();}}
     /// `Noto Sans SC` and empty both mean the bundled Google Sans Flex + Noto fallback.
-    pub fn set_family(&mut self,family:&str){let family=if family.trim().is_empty()||family=="Noto Sans SC"||family=="Google Sans Flex"{"Google Sans Flex"}else{family};if self.family!=family{self.family=family.into();if family!="Google Sans Flex"{self.enable_system_fonts();}self.cache.clear();self.ink_cache.clear();}}
+    pub fn set_family(&mut self,family:&str){let family=if family.trim().is_empty()||family=="Noto Sans SC"||family=="Google Sans Flex"{"Google Sans Flex"}else{family};if self.family!=family{self.family=family.into();if family!="Google Sans Flex"{self.enable_system_fonts();}self.cache.clear();self.face_cache.clear();self.ink_cache.clear();}}
     /// Canonical installed family name, case-insensitively matched; `None` for unknown fonts.
     pub fn system_family(name:&str)->Option<String>{static NAMES:std::sync::OnceLock<Vec<String>>=std::sync::OnceLock::new();let names=NAMES.get_or_init(||{let mut fonts=FontContext::new();let mut list=fonts.collection.family_names().map(str::to_owned).collect::<Vec<_>>();list.sort_by_key(|n|n.to_lowercase());list.dedup_by(|a,b|a.eq_ignore_ascii_case(b));list});let name=name.trim();names.iter().find(|n|n.eq_ignore_ascii_case(name)).cloned()}
     /// Installed families for the settings picker. Bundled-only families are not listed.
@@ -98,6 +110,48 @@ impl Text{
         let y=r.center().y+size as f64*0.34-baseline;
         scene.push_clip_layer(Affine::IDENTITY,&r);self.draw_style(scene,text,r.x0+(r.width()-width)*align,y,size,argb,weight,r.width(),false);scene.pop_layer();
     }
+    /// Shaped layout for an explicit face. It lives in its own cache so the pinned
+    /// default metrics used by every other text node are never invalidated.
+    fn face_key(&mut self,family:&str,text:&str,size:f32,weight:u16)->(String,String,u32,u16){
+        let key=(family.to_string(),text.to_string(),size.to_bits(),weight);
+        if !self.face_cache.contains_key(&key){
+            if self.face_cache.len()>256{self.face_cache.clear();}
+            let safe=family.replace('\''," ");
+            let mut builder=self.context.ranged_builder(&mut self.fonts,text,1.,true);
+            builder.push_default(StyleProperty::FontSize(size));
+            builder.push_default(StyleProperty::FontStack(FontStack::Source(format!("'{safe}', 'Noto Sans SC', 'Noto Sans JP', sans-serif").into())));
+            builder.push_default(StyleProperty::FontWeight(FontWeight::new(weight as f32)));
+            let mut layout=builder.build(text);layout.break_all_lines(None);layout.align(None,Alignment::Start,AlignmentOptions::default());
+            self.face_cache.insert(key.clone(),layout);
+        }
+        key
+    }
+    pub fn face_width(&mut self,family:&str,text:&str,size:f32,weight:u16)->f64{if text.is_empty(){return 0.}let key=self.face_key(family,text,size,weight);self.face_cache[&key].width()as f64}
+    /// Face swap with pinned metrics: baseline, width budget and clip rectangle all
+    /// come from the original face. The replacement face only supplies glyph outlines,
+    /// so no control rect can move; overflow is clipped and logged, never silent.
+    pub fn draw_face_fixed(&mut self,scene:&mut Scene,family:&str,text:&str,x:f64,y:f64,size:f32,argb:u32,weight:u16,max:f64){
+        if text.is_empty()||max<=0.{return}
+        let key=self.layout_key(text,size,weight,false);
+        let baseline=self.cache[&key].lines().next().map(|l|l.metrics().baseline as f64).unwrap_or(size as f64*0.8);
+        let mut shown=text.to_string();let full=self.face_width(family,&shown,size,weight);let mut width=full;
+        if width>max{
+            let chars=text.chars().collect::<Vec<_>>();let(mut low,mut high)=(0,chars.len());
+            while low<high{let mid=(low+high).div_ceil(2);let candidate=format!("{}…",chars[..mid].iter().collect::<String>());if self.face_width(family,&candidate,size,weight)<=max{low=mid}else{high=mid-1}}
+            shown=format!("{}…",chars[..low].iter().collect::<String>());width=self.face_width(family,&shown,size,weight);
+            record_face_overflow(text,size,(full-max).max(0.));
+            if width>max{return}
+        }
+        let shaped=self.face_key(family,&shown,size,weight);
+        let face_baseline=self.face_cache[&shaped].lines().next().map(|l|l.metrics().baseline as f64).unwrap_or(size as f64*0.8);
+        scene.push_clip_layer(Affine::IDENTITY,&rect(x,y-2.,max,size as f64*1.7));
+        let layout=self.face_cache.remove(&shaped).unwrap();self.paint_layout(scene,&layout,x,y+baseline-face_baseline,max,argb);self.face_cache.insert(shaped,layout);
+        if width>max{scene.fill(Fill::NonZero,Affine::IDENTITY,alpha(argb,(argb>>24)as f32/255.),None,&Circle::new((x+max-3.,y+size as f64),1.));}
+        scene.pop_layer();
+    }
+    /// Overflow audit: every (line, size) pair whose replacement face was wider
+    /// than the pinned budget, with the excess in dp.
+    pub fn face_overflow_log()->Vec<(String,f32,f64)>{FACE_OVERFLOW.get_or_init(||std::sync::Mutex::new(Vec::new())).lock().map(|v|v.clone()).unwrap_or_default()}
     /// Shapes one sample with an arbitrary installed family without touching the UI cache.
     pub fn preview_line(&mut self,scene:&mut Scene,family:&str,text:&str,r:Rect,size:f32,argb:u32,weight:u16){
         if text.is_empty()||r.width()<=0.||r.height()<=0.{return}

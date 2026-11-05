@@ -4,7 +4,7 @@ use serde_json::json;
 use crate::{App,renderer::Renderer,layout::{self,Rect},motion::Frame,activities::{Panel,Task}};
 pub unsafe fn run(a:&mut App,dir:&Path)->Result<(),Box<dyn std::error::Error>>{
  std::fs::create_dir_all(dir)?;a.renderer=None;a.opacity=1.;a.frame=Frame::expanded();a.lyric="晚风轻轻，音乐刚好 · 君に届け".into();
- if let Ok(v)=std::env::var("DOTISLE_FONT_FAMILY"){a.settings["IslandFontFamily"]=json!(v);}
+ if let Ok(v)=std::env::var("DOTISLE_FONT_FAMILY"){a.settings["IslandFontFamily"]=json!(v.clone());a.settings["IslandFontFamilyRender"]=json!(v);}
  if let Ok(v)=std::env::var("DOTISLE_TRANSPORT_THEME"){a.settings["TransportTheme"]=json!(v);}
  if let Ok(v)=std::env::var("DOTISLE_PROGRESS_STYLE"){a.settings["ProgressBarStyle"]=json!(v);}
  if let Ok(v)=std::env::var("DOTISLE_PROGRESS_THUMB"){a.settings["ProgressBarThumb"]=json!(v);a.settings["ProgressBarThumbEnabled"]=json!(true);}
@@ -28,7 +28,8 @@ pub unsafe fn run(a:&mut App,dir:&Path)->Result<(),Box<dyn std::error::Error>>{
  // The music card remains the same composition, with explicit font and translation states.
  let mut measured=HashMap::new();a.settings["IslandSizeMode"]=json!("Classic");a.settings["SettingsTheme"]=json!("Dark");a.layout=layout::Layout::new(260.);
  let mut r=Renderer::new(a.visual_hwnd,a.layout.host.w as u32,a.layout.host.h as u32,96.,&font)?;r.set_cover(Some(&std::fs::read(a.base.join("Assets/DemoCover.png"))?))?;
- for family in ["Noto Sans SC"]{a.settings["IslandFontFamily"]=json!(family);r.set_font_family(family);measured.insert(family,r.measure_line("晚风轻轻，音乐刚好 012345",17.)?);
+ let family=a.settings["IslandFontFamilyRender"].as_str().unwrap_or("Noto Sans SC").to_string();
+ for family in [family]{a.settings["IslandFontFamily"]=json!(family.as_str());a.settings["IslandFontFamilyRender"]=json!(family.as_str());r.set_font_family(&family);measured.insert(family.clone(),r.measure_line("晚风轻轻，音乐刚好 012345",17.)?);
   for(mix,label)in [(0.,"side"),(1.,"separated"),(2.,"focus"),(3.,"right"),(4.,"immersive")]{a.music_mix=mix;a.layout.card.h=layout::music_height(mix,17.);a.settings["FontSize"]=json!(17.);let mut s=a.scene();s.panel=None;s.lyric_age_ms=1000.;s.title="海边来信";s.artist="点屿 · 音乐与歌词";s.lyric="风把远方的故事轻轻送来，落在此刻的旋律里";s.secondary="A quiet moment with your music";s.play_shape=1.;s.playing=true;s.hover=if mix<4.{6}else{-1};s.translation_enabled=true;s.translation_tooltip=mix<4.;s.progress=0.38;s.component_count=1;r.render(&s,false)?;let name=format!("music-{family}-{label}.png");r.snapshot(&dir.join(&name))?;captures.push(name);}
  }
  a.music_mix=0.;a.settings["FontSize"]=json!(12.5);a.layout.card.h=layout::music_height(0.,12.5);

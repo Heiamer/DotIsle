@@ -3356,38 +3356,21 @@ impl AtlasWriter for Pixmap {
     }
 
     fn write_to_atlas_layer(
-        &self,
-        _device: &Device,
-        queue: &Queue,
-        _encoder: &mut CommandEncoder,
-        atlas_texture: &Texture,
-        layer: u32,
-        offset: [u32; 2],
-        width: u32,
-        height: u32,
+        &self,device:&Device,_queue:&Queue,encoder:&mut CommandEncoder,
+        atlas_texture:&Texture,layer:u32,offset:[u32;2],width:u32,height:u32,
     ) {
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: atlas_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: offset[0],
-                    y: offset[1],
-                    z: layer,
-                },
-                aspect: wgpu::TextureAspect::All,
-            },
-            self.data_as_u8_slice(),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * width),
-                rows_per_image: Some(height),
-            },
-            Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
+        // Keep uploads in the same command stream as atlas growth copies. Queue
+        // writes run before those copies and can otherwise be overwritten by them.
+        let row=(width*4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)*wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let mut pixels=vec![0u8;(row*height)as usize];
+        for (source,destination) in self.data_as_u8_slice().chunks_exact((width*4)as usize).zip(pixels.chunks_exact_mut(row as usize)){
+            destination[..source.len()].copy_from_slice(source);
+        }
+        let staging=device.create_buffer_init(&wgpu::util::BufferInitDescriptor{label:Some("ordered atlas image upload"),contents:&pixels,usage:wgpu::BufferUsages::COPY_SRC});
+        encoder.copy_buffer_to_texture(
+            wgpu::TexelCopyBufferInfo{buffer:&staging,layout:wgpu::TexelCopyBufferLayout{offset:0,bytes_per_row:Some(row),rows_per_image:Some(height)}},
+            wgpu::TexelCopyTextureInfo{texture:atlas_texture,mip_level:0,origin:wgpu::Origin3d{x:offset[0],y:offset[1],z:layer},aspect:wgpu::TextureAspect::All},
+            Extent3d{width,height,depth_or_array_layers:1},
         );
     }
 }

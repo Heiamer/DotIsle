@@ -1,0 +1,45 @@
+//! Hand-drawn, unfilled icon families on a shared 24dp optical grid.
+use vello::{Scene,kurbo::{Affine,BezPath,Stroke,Cap,Join}};
+use crate::draw::{self,Icon};
+pub fn icon(scene:&mut Scene,kind:Icon,x:f64,y:f64,size:f64,rgb:u32,soft:bool){
+ let path=match (soft,kind){
+  (false,Icon::Home)=>"M4 10L12 4L20 10V20H15V14H9V20H4Z",
+  (true,Icon::Home)=>"M4 11Q3 10 5 8L10 4Q12 2 14 4L20 9Q21 10 20 12V18Q20 21 17 21H15V15H9V21H7Q4 21 4 18Z",
+  (false,Icon::Music)=>"M10 17V5L20 3V15M10 8L20 6M10 17C10 21 3 22 3 18C3 14 10 14 10 17M20 15C20 19 13 20 13 16C13 12 20 12 20 15",
+  (true,Icon::Music)=>"M9 17V7Q9 5 11 5L19 3V15M9 17C9 22 2 22 2 18C2 14 9 13 9 17M19 15C19 20 12 20 12 16C12 12 19 11 19 15",
+  (false,Icon::Focus)=>"M9 2H15M12 2V5M18 5L20 7M12 7A7 7 0 1 0 12 21A7 7 0 1 0 12 7M12 10V14L15 16",
+  (true,Icon::Focus)=>"M9 2H15M12 2V5M12 6A8 8 0 1 0 12 22A8 8 0 1 0 12 6M12 10V14L16 14",
+  (false,Icon::Todo)=>"M4 5H8V9H4ZM12 7H20M4 15L6 17L9 13M12 16H20M12 20H18",
+  (true,Icon::Todo)=>"M7 3H17Q20 3 20 6V18Q20 21 17 21H7Q4 21 4 18V6Q4 3 7 3ZM8 9L10 11L14 7M8 16H16",
+  (false,Icon::Settings)=>"M4 6H20M4 12H20M4 18H20M8 3V9M16 9V15M10 15V21",
+  (true,Icon::Settings)=>"M12 3L15 5L18 5L19 8L21 11L19 14L18 18L15 19L12 21L9 19L5 18L5 15L3 12L5 9L6 5L9 5ZM12 8A4 4 0 1 0 12 16A4 4 0 1 0 12 8",
+  (false,Icon::Island)=>"M8 6H16A6 6 0 0 1 16 18H8A6 6 0 0 1 8 6ZM8 10V14M12 9V15M16 10V14",
+  (true,Icon::Island)=>"M8 6H16C24 6 24 18 16 18H8C0 18 0 6 8 6ZM8 12H16",
+  (_,Icon::Play)=>"M8 5L20 12L8 19Z",
+  (_,Icon::Pause)=>"M7 5H9V19H7ZM15 5H17V19H15Z",
+  (_,Icon::Next)=>"M5 5L15 12L5 19ZM19 5V19",
+  (_,Icon::Prev)=>"M19 5L9 12L19 19ZM5 5V19",
+  (_,Icon::Plus)=>"M12 4V20M4 12H20",
+  (_,Icon::Check)=>"M4 12L9 17L20 6",
+  (_,Icon::Close)=>"M5 5L19 19M19 5L5 19",
+  (_,Icon::Arrow)=>"M4 12H20M14 6L20 12L14 18",
+  (_,Icon::Back)=>"M20 12H4M10 6L4 12L10 18",
+  (_,Icon::Sun)=>"M12 8A4 4 0 1 0 12 16A4 4 0 1 0 12 8M12 2V4M12 20V22M2 12H4M20 12H22M5 5L6 6M18 18L19 19M5 19L6 18M18 6L19 5",
+  (_,Icon::Moon)=>"M20 15A9 9 0 0 1 9 4A9 9 0 1 0 20 15Z",
+  (_,Icon::Trash)=>"M4 6H20M9 6V3H15V6M6 6L7 21H17L18 6M10 10V17M14 10V17",
+  (_,Icon::Reset)=>"M4 4V10H10M4 10A8 8 0 1 1 5 18",
+  (_,Icon::Search)=>"M10 3A7 7 0 1 0 10 17A7 7 0 1 0 10 3M15 15L21 21",
+  (_,Icon::Volume)=>"M3 9H7L12 5V19L7 15H3ZM16 8Q21 12 16 16M19 5Q27 12 19 19",
+  (_,Icon::Folder)=>"M3 7Q3 5 5 5H9L12 8H19Q21 8 21 10V18Q21 20 19 20H5Q3 20 3 18Z",
+  (_,Icon::Import)=>"M12 3V15M7 10L12 15L17 10M4 16V21H20V16",
+  (_,Icon::Leaf)=>"M4 20C0 8 11 3 21 3C21 15 16 23 4 20ZM4 21L15 10",
+  (_,Icon::Stop)=>"M6 6H18V18H6Z",
+  (_,Icon::Minimize)=>"M5 12H19",
+  (_,Icon::Maximize)=>"M5 5H19V19H5Z",
+  (_,Icon::Restore)=>"M8 8V3H21V16H16M3 8H16V21H3Z",
+  (_,Icon::Translate)=>"M3 5H15M9 2V5M12 5Q11 13 3 16M5 8Q7 13 13 16M14 21L18 10L22 21M16 17H20",
+  (_,Icon::Heart)=>"M12 20C8 17 3 13 3 8C3 2 10 2 12 7C14 2 21 2 21 8C21 13 16 17 12 20Z",
+  (_,Icon::Move)=>"M12 3V21M3 12H21M8 7L12 3L16 7M8 17L12 21L16 17M7 8L3 12L7 16M17 8L21 12L17 16",
+ };
+ if let Ok(p)=BezPath::from_svg(path){scene.stroke(&Stroke::new(if soft{1.8}else{1.5}).with_caps(Cap::Round).with_join(Join::Round),Affine::translate((x,y))*Affine::scale(size/24.),draw::color(rgb),None,&p);}
+}

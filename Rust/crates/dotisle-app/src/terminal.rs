@@ -1,0 +1,15 @@
+//! TTY: monospace commands, square cells and printable transport symbols.
+use crate::{model::{Model,Page},draw::{self,Icon,Text}};
+use dotisle_domain::monet::Scheme;
+use vello::{Scene,kurbo::Rect};
+pub fn active(m:&Model)->bool{m.prefs.control_center_theme=="Terminal"}
+pub fn scheme(dark:bool)->Scheme{if dark{Scheme{
+ primary:0xB6E3AA,on_primary:0x102013,primary_container:0x111A14,on_primary_container:0xDDE9DD,secondary_container:0x263E2B,on_secondary_container:0xC9E8C8,tertiary_container:0x111A14,on_tertiary_container:0xDDE9DD,surface:0x0B100D,container:0x111A14,high:0x1B281F,on_surface:0xDDE9DD,on_surface_variant:0x9AB49E,outline:0x344E3C,outline_variant:0x294332,error:0xF3A299,
+}}else{Scheme{
+ primary:0x315C37,on_primary:0xFAFFF5,primary_container:0xFBFDF7,on_primary_container:0x1E3022,secondary_container:0xD9E5D1,on_secondary_container:0x234A2A,tertiary_container:0xFBFDF7,on_tertiary_container:0x1E3022,surface:0xEEF2E7,container:0xFBFDF7,high:0xE2EADA,on_surface:0x1E3022,on_surface_variant:0x526858,outline:0x9BB299,outline_variant:0xC6D4BD,error:0xAC3D30,
+}}}
+pub fn page(p:Page)->&'static str{match p{Page::Home=>"> OVERVIEW",Page::Music=>"> NOW PLAYING",Page::Focus=>"> TIMER",Page::Todos=>"> TODO",Page::Island=>"> ISLAND",Page::Settings=>"> CONFIG"}}
+pub fn glyph(i:Icon)->&'static str{match i{Icon::Home=>"~/",Icon::Music=>"~>",Icon::Focus=>"[t]",Icon::Todo=>"[v]",Icon::Settings=>"[=]",Icon::Play=>">",Icon::Pause=>"||",Icon::Next=>">|",Icon::Prev=>"|<",Icon::Plus=>"+",Icon::Check=>"v",Icon::Close=>"x",Icon::Arrow=>"->",Icon::Island=>">_",Icon::Sun=>"*",Icon::Moon=>")",Icon::Back=>"<-",Icon::Trash=>"[x]",Icon::Reset=>"@",Icon::Search=>"/?",Icon::Volume=>"))",Icon::Folder=>"./",Icon::Import=>"v_",Icon::Leaf=>"{*}",Icon::Stop=>"[]",Icon::Minimize=>"_",Icon::Maximize=>"[ ]",Icon::Restore=>"[]",Icon::Translate=>"Aa",Icon::Heart=>"<3",Icon::Move=>"<+>"}}
+pub fn icon(scene:&mut Scene,text:&mut Text,i:Icon,x:f64,y:f64,size:f64,rgb:u32){let face="Space Mono";let label=glyph(i);let font=(size*0.68).min(size/(label.len()as f64*0.65)).clamp(8.,24.)as f32;let width=text.face_width(face,label,font,400);text.draw_face_fixed(scene,face,label,x+(size-width)/2.,y+(size-font as f64*1.35)/2.,font,0xff000000|rgb,400,size+5.);}
+pub fn meter(scene:&mut Scene,r:Rect,value:f64,fg:u32,track:u32){let n=(r.width()/9.).floor().max(1.)as usize;let cell=(r.width()-(n-1)as f64*3.)/n as f64;for i in 0..n{draw::fill(scene,draw::rect(r.x0+i as f64*(cell+3.),r.center().y-4.,cell,8.),0.,if (i as f64)<value.clamp(0.,1.)*n as f64{fg}else{track});}}
+pub fn record(scene:&mut Scene,r:Rect,fg:u32,bg:u32){draw::fill(scene,r,0.,bg);let n=14;let cell=(r.width().min(r.height())-24.)/n as f64;let left=r.center().x-cell*n as f64/2.;let top=r.center().y-cell*n as f64/2.;for y in 0..n{for x in 0..n{let dx=x as f64-6.5;let dy=y as f64-6.5;let distance=(dx*dx+dy*dy).sqrt();if (4.5..6.5).contains(&distance)||distance<1.8{draw::fill(scene,draw::rect(left+x as f64*cell,top+y as f64*cell,cell-2.,cell-2.),0.,fg);}}}}

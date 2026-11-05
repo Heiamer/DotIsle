@@ -99,7 +99,7 @@ pub fn panel(ui:&mut Ui,m:&Model,width:f64,height:f64){
         if chosen{draw::fill(ui.scene,r,10.,s.secondary_container);}
         let index=ui.hit(r,family,Action::FontSelect((*family).clone()),true);ui.state(r,10.,index,s.on_surface);
         ui.label(family,r.x0+14.,r.y0+7.,15.,if chosen{s.on_secondary_container}else{s.on_surface},chosen,r.width()-40.);
-        if chosen{draw::icon(ui.scene,Icon::Check,r.x1-28.,r.y0+8.,16.,s.primary);}
+        if chosen{ui.icon(Icon::Check,r.x1-28.,r.y0+8.,16.,s.primary);}
     }
     ui.end_clip(rect(0.,0.,width,height));
     if rows.is_empty(){ui.label("没有匹配的字体",list.x0+14.,list.y0+10.,14.,s.on_surface_variant,false,list.width()-28.);}

@@ -20,6 +20,7 @@ enum Command {
     Fill(Fill, Affine, Brush, Option<Affine>, Geometry),
     Stroke(Stroke, Affine, Brush, Option<Affine>, BezPath),
     Layer(BlendMode, f32, Affine, BezPath),
+    SoftLayer(Affine, BezPath, f32),
     Pop,
     Append(Scene, Affine),
     Blur(Affine, Rect, peniko::Color, f64, f64),
@@ -43,6 +44,11 @@ impl Scene {
         self.push(Command::Layer(blend.into(),alpha.clamp(0.,1.),transform,shape.to_path(0.1)));
     }
     pub fn push_clip_layer(&mut self,transform:Affine,shape:&impl Shape) { self.push_layer(BlendMode::default(),1.,transform,shape); }
+    /// True Gaussian filtering of a bounded content group; zero keeps the ordinary clip path.
+    pub fn push_gaussian_layer(&mut self,transform:Affine,shape:&impl Shape,sigma:f64){
+        let sigma=if sigma.is_finite(){sigma.clamp(0.,3.)as f32}else{0.};
+        if sigma<0.015{self.push_clip_layer(transform,shape);}else{self.push(Command::SoftLayer(transform,shape.to_path(0.1),sigma));}
+    }
     pub fn pop_layer(&mut self) { self.push(Command::Pop); }
     pub fn append(&mut self,scene:&Scene,transform:Option<Affine>) {
         if !scene.commands.is_empty() { self.push(Command::Append(scene.clone(),transform.unwrap_or(Affine::IDENTITY))); }
@@ -134,6 +140,11 @@ fn replay(commands:&[Command],root:Affine,scene:&mut vello_hybrid::Scene,resourc
                 let clip=*alpha==1.&&*blend==BlendMode::default();
                 if clip{scene.push_clip_path(path)}else{scene.push_layer(Some(path),Some(*blend),Some(*alpha),None,None);}
                 layers.push(clip);
+            }
+            Command::SoftLayer(tr,path,sigma)=>{
+                scene.set_transform(root * *tr);scene.set_fill_rule(Fill::NonZero);
+                let filter=vello_common::filter_effects::Filter::from_function(vello_common::filter_effects::FilterFunction::Blur{radius:*sigma});
+                scene.push_layer(Some(path),None,None,None,Some(filter));layers.push(false);
             }
             Command::Pop=>{if layers.pop()==Some(true){scene.pop_clip_path()}else{scene.pop_layer()}},
             Command::Append(child,tr)=>replay(&child.commands,root * *tr,scene,resources,cache,layers),

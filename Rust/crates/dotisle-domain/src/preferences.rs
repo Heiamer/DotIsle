@@ -5,12 +5,13 @@ use serde_json::{Value,json};
 #[derive(Clone,Debug,Serialize,Deserialize)]
 #[serde(default,rename_all="camelCase")]
 pub struct Preferences{
+    pub backgrounds:Vec<Background>,
     pub schema:u32,pub dark:bool,pub monet:bool,pub seed:u32,pub translation:bool,
     pub word_highlight:bool,pub online:bool,pub include_browser:bool,pub offset_ms:i32,
     pub reduced_motion:bool,pub island:bool,pub always_on_top:bool,pub reminder_sound:bool,
-    pub local_folders:Vec<String>,
+    pub local_folders:Vec<String>,pub control_center_theme:String,pub nothing_dynamic:bool,pub font_scope:String,
 }
-impl Default for Preferences{fn default()->Self{Self{schema:3,dark:false,monet:true,seed:0x496b55,translation:true,word_highlight:true,online:true,include_browser:false,offset_ms:0,reduced_motion:false,island:false,always_on_top:true,reminder_sound:true,local_folders:vec![]}}}
+impl Default for Preferences{fn default()->Self{Self{backgrounds:vec![Background::default();5],schema:3,dark:false,monet:true,seed:0x496b55,translation:true,word_highlight:true,online:true,include_browser:false,offset_ms:0,reduced_motion:false,island:false,always_on_top:true,reminder_sound:true,local_folders:vec![],control_center_theme:"Nothing".into(),nothing_dynamic:false,font_scope:"Both".into()}}}
 impl Preferences{
     pub fn load(path:&Path)->Result<Self,String>{
         if !path.exists(){return Ok(Self::default())}
@@ -18,11 +19,17 @@ impl Preferences{
         if bytes.len()>1024*1024{return Err("偏好文件过大，原文件已保留".into())}
         let mut p:Self=serde_json::from_slice(&bytes).map_err(|e|format!("偏好读取失败，原文件已保留：{e}"))?;
         if p.schema!=3{return Err("不支持此偏好版本，原文件已保留".into())}
+        p.backgrounds.resize_with(5,Background::default);p.backgrounds.truncate(5);for bg in &mut p.backgrounds{bg.opacity=finite(bg.opacity,0.3).clamp(0.,1.);bg.brightness=finite(bg.brightness,1.).clamp(0.,2.);bg.blur=finite(bg.blur,0.).clamp(0.,40.);if bg.mode!="Contain"{bg.mode="Cover".into();}}
         p.offset_ms=p.offset_ms.clamp(-10000,10000);p.seed&=0xffffff;Ok(p)
     }
     pub fn save(&self,path:&Path)->Result<(),String>{lyric_backend::io::save_settings(path,&serde_json::to_value(self).map_err(|e|e.to_string())?)}
     pub fn backend(&self)->Value{json!({"Translation":self.translation,"WordHighlight":self.word_highlight,"OnlineSongInfo":self.online,"OffsetMilliseconds":self.offset_ms,"LocalFolders":self.local_folders,"IgnoredSources":if self.include_browser{Vec::<String>::new()}else{vec!["Browser".into()]}})}
 }
+fn finite(v:f64,default:f64)->f64{if v.is_finite(){v}else{default}}
+#[derive(Clone,Debug,Serialize,Deserialize)]
+#[serde(default,rename_all="camelCase")]
+pub struct Background{pub path:String,pub enabled:bool,pub opacity:f64,pub brightness:f64,pub blur:f64,pub mode:String}
+impl Default for Background{fn default()->Self{Self{path:String::new(),enabled:false,opacity:0.3,brightness:1.,blur:0.,mode:"Cover".into()}}}
 pub fn data_dir()->PathBuf{PathBuf::from(std::env::var_os("APPDATA").unwrap_or_default()).join("DotIsle/V3")}
 pub fn import_legacy(source:&Path,dest:&Path)->Result<Preferences,String>{
     for name in ["preferences.json","todos.json","timers.json"]{if dest.join(name).exists(){return Err("V3 已有数据。请先备份并使用空的数据目录导入。".into())}}
@@ -44,4 +51,8 @@ pub fn import_legacy(source:&Path,dest:&Path)->Result<Preferences,String>{
 #[cfg(test)]mod tests{use super::*;
     #[test]fn corrupt_preferences_are_not_replaced(){let p=std::env::temp_dir().join(format!("dotisle-v3-prefs-{}",std::process::id()));std::fs::write(&p,b"bad").unwrap();assert!(Preferences::load(&p).is_err());assert_eq!(std::fs::read(&p).unwrap(),b"bad");std::fs::remove_file(p).unwrap();}
     #[test]fn import_refuses_to_overwrite_existing_v3_data(){let p=std::env::temp_dir().join(format!("dotisle-v3-import-{}",std::process::id()));std::fs::create_dir_all(&p).unwrap();std::fs::write(p.join("todos.json"),b"keep").unwrap();assert!(import_legacy(&p,&p).is_err());assert_eq!(std::fs::read(p.join("todos.json")).unwrap(),b"keep");std::fs::remove_dir_all(p).unwrap();}
+}
+
+#[cfg(test)]mod wallpaper_migration_tests{use super::*;
+ #[test]fn older_theme_wallpapers_survive_adding_themes(){let path=std::env::temp_dir().join(format!("dotisle-wallpaper-migration-{}.json",std::process::id()));let value=json!({"schema":3,"backgrounds":[{"path":"original.png","enabled":true},{"path":"nothing.png","opacity":0.4},{"path":"porcelain.png","blur":12.}]});std::fs::write(&path,serde_json::to_vec(&value).unwrap()).unwrap();let p=Preferences::load(&path).unwrap();assert!(p.backgrounds.len()>=4);assert_eq!(p.backgrounds[1].path,"nothing.png");assert_eq!(p.backgrounds[1].opacity,0.4);assert_eq!(p.backgrounds[2].blur,12.);assert!(!p.backgrounds.last().unwrap().enabled);std::fs::remove_file(path).unwrap();}
 }

@@ -229,12 +229,12 @@ const ROW_H:f64=64.;
 
 fn row_icon(ui:&mut Ui,r:vello::kurbo::Rect,kind:Icon,label:&'static str,action:Action,enabled:bool,fg:u32){
     let index=ui.hit(r,label,action,enabled);if enabled{ui.state(r,10.,index,fg);}
-    draw::icon(ui.scene,kind,r.center().x-9.,r.center().y-9.,18.,if enabled{fg}else{ui.s.outline});
+    ui.icon(kind,r.center().x-9.,r.center().y-9.,18.,if enabled{fg}else{ui.s.outline});
 }
 fn row_step(ui:&mut Ui,r:vello::kurbo::Rect,plus:bool,label:&'static str,action:Action,enabled:bool,fg:u32){
     let index=ui.hit(r,label,action,enabled);if enabled{ui.state(r,10.,index,fg);}
     let color=if enabled{fg}else{ui.s.outline};let(cx,cy)=(r.center().x,r.center().y);
-    if plus{draw::icon(ui.scene,Icon::Plus,cx-8.,cy-8.,16.,color);}
+    if plus{ui.icon(Icon::Plus,cx-8.,cy-8.,16.,color);}
     else{draw::line(ui.scene,(cx-6.,cy),(cx+6.,cy),color,2.);}
 }
 fn row_chevron(ui:&mut Ui,r:vello::kurbo::Rect,up:bool,label:&'static str,action:Action,enabled:bool,fg:u32){
@@ -247,13 +247,13 @@ fn hero_button(ui:&mut Ui,r:vello::kurbo::Rect,label:&str,icon:Option<Icon>,acti
     let s=ui.s;let i=ui.hit(r,label,action,enabled);let p=if enabled&&ui.pressed==i{1.}else{0.};let rr=r.inset((r.width()*0.015*p,r.height()*0.015*p));
     let(bg,fg)=if !enabled{(s.high,s.on_surface_variant)}else if primary{(s.primary,s.on_primary)}else{(s.surface,s.on_surface)};
     draw::fill(ui.scene,rr,rr.height()/2.-8.*p,bg);if enabled{ui.state(rr,rr.height()/2.,i,fg);}
-    if let Some(icon)=icon{draw::icon(ui.scene,icon,rr.x0+16.,rr.center().y-9.,18.,fg);ui.center(label,vello::kurbo::Rect::new(rr.x0+32.,rr.y0,rr.x1-8.,rr.y1),13.5,fg,true);}
+    if let Some(icon)=icon{ui.icon(icon,rr.x0+16.,rr.center().y-9.,18.,fg);ui.center(label,vello::kurbo::Rect::new(rr.x0+32.,rr.y0,rr.x1-8.,rr.y1),13.5,fg,true);}
     else{ui.center(label,rr,13.5,fg,true);}
 }
 fn quick_chip(ui:&mut Ui,r:vello::kurbo::Rect,label:&str,action:Action,enabled:bool){
     let s=ui.s;draw::fill(ui.scene,r,18.,if enabled{s.container}else{s.high});
     let index=ui.hit(r,label,action,enabled);if enabled{ui.state(r,18.,index,s.on_surface);}
-    draw::icon(ui.scene,Icon::Plus,r.x0+13.,r.center().y-8.,16.,if enabled{s.primary}else{s.outline});
+    ui.icon(Icon::Plus,r.x0+13.,r.center().y-8.,16.,if enabled{s.primary}else{s.outline});
     ui.center(label,vello::kurbo::Rect::new(r.x0+34.,r.y0,r.x1-8.,r.y1),12.5,if enabled{s.on_surface}else{s.on_surface_variant},false);
 }
 
@@ -344,7 +344,7 @@ fn running_full(ui:&mut Ui,m:&Model,timer:&dotisle_domain::timers::Timer,x:f64,y
     ui.center(stage.map(|s|s.name.as_str()).unwrap_or("阶段"),rect(x+24.,y+48.,w-48.,40.),30.,s.on_primary_container,true);
     ui.center(&format_time(timer.remaining_ms().div_ceil(1000)),rect(x+24.,y+94.,w-48.,80.),64.,s.on_primary_container,true);
     ui.center(&format!("第 {} / {} 阶段 · 已过 {}",index+1,count,format_time(timer.elapsed_ms/1000)),rect(x+24.,y+178.,w-48.,22.),13.,s.on_primary_container,false);
-    let track=rect(x+40.,y+210.,w-80.,8.);draw::fill(ui.scene,track,4.,s.secondary_container);
+    let track=rect(x+40.,y+210.,w-80.,8.);draw::fill(ui.scene,track,4.,if ui.nothing||ui.porcelain{s.outline_variant}else{s.secondary_container});
     draw::fill(ui.scene,rect(track.x0,track.y0,(track.width()*timer.progress()).max(0.001),track.height()),4.,s.primary);
     let banner=rect(x+40.,y+232.,w-80.,44.);draw::fill(ui.scene,banner,22.,s.secondary_container);
     let text=if timer.finished{"流程已结束，可以重新开始或编辑副本。"}else if waiting{"本阶段完成，准备进入下一阶段。"}else if timer.running{"正在专注，阶段完成后由你点「下一阶段」。"}else{"已暂停，继续后重新开始计时。"};

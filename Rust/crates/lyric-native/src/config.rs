@@ -7,6 +7,15 @@ defaults["AcrylicCapsuleFrost"]=json!(40.);defaults["AcrylicCapsuleOpacity"]=jso
 defaults["ExpandedMonetEnabled"]=json!(true);defaults["ExpandedCoverOverlay"]=json!(true);
 defaults["AcrylicAdjustTarget"]=json!("Card");
 defaults["GlassRefractionEnabled"]=json!(true);defaults["SoundLibraryVersion"]=json!(2);for p in ["Notification","Todo","Device"]{defaults[format!("{p}SoundSource")]=json!("Builtin");}defaults["CapsuleCornerRadius"]=Value::Null;defaults["SwipeUpHide"]=json!(true);defaults["GestureTutorialSeen"]=json!(false);defaults}
+/// The face the island actually paints with. `fontScope == "Center"` keeps the island on the
+/// shipped face while the stored `IslandFontFamily` remains the user's choice for the centre.
+pub fn resolve_render_font(s:&mut Value,path:&std::path::Path){
+    let family=s["IslandFontFamily"].as_str().unwrap_or("Noto Sans SC").to_string();
+    let mut render=family;
+    let prefs=path.with_file_name("preferences.json");
+    if let Ok(raw)=std::fs::read(&prefs){if let Ok(p)=serde_json::from_slice::<Value>(&raw){if p["fontScope"].as_str()==Some("Center"){render="Noto Sans SC".into();}}}
+    s["IslandFontFamilyRender"]=json!(render);
+}
 pub fn load(path:&std::path::Path)->Value {
     let stored=lyric_backend::io::read_settings(path);let mut s=defaults();
     let legacy_material=stored.get("IslandGlassMaterial").and_then(Value::as_bool);
@@ -33,7 +42,12 @@ pub fn load(path:&std::path::Path)->Value {
     // list. The filter is now expressed the other way round: everything responds, and the entries
     // here are the ones that do not.
     let stored_font=s["IslandFontFamily"].as_str().unwrap_or("Noto Sans SC").to_owned();
-    s["IslandFontFamily"]=json!(if stored_font=="Noto Sans SC"{stored_font}else{dotisle_render::draw::Text::system_family(&stored_font).unwrap_or_else(||"Noto Sans SC".into())});
+    let family=if stored_font=="Noto Sans SC"{stored_font}else{dotisle_render::draw::Text::system_family(&stored_font).unwrap_or_else(||"Noto Sans SC".into())};
+    // Keep the user's choice in IslandFontFamily: the control centre reads it to decide its own face.
+    s["IslandFontFamily"]=json!(family.clone());
+    // Font scope lives with the control centre, but the island must honour it too: resolve the
+    // face the island renders with, leaving the stored family untouched for the centre.
+    resolve_render_font(&mut s,path);
     migrate_player_filter(&mut s);
     // Four legacy per-kind flags are aliases of the single system-hint preference.
     let enabled=s["SystemStateHintsEnabled"].as_bool().unwrap_or(true);for key in ["SystemStateHintsEnabled","CapsLockHintEnabled","NumLockHintEnabled","MicrophoneMuteHintEnabled","TouchpadHintEnabled"]{s[key]=json!(enabled);}

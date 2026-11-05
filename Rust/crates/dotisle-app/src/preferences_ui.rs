@@ -3,9 +3,30 @@ use crate::{widgets::Ui,model::{Model,Action},draw::{self,rect,Icon}};
 use serde_json::{Value,json};
 fn heading(ui:&mut Ui,title:&str,x:f64,y:&mut f64,w:f64){ui.label(title,x+4.,*y+4.,21.,ui.s.on_surface,true,w-8.);*y+=46.;}
 fn toggles(ui:&mut Ui,m:&Model,x:f64,y:&mut f64,w:f64,rows:&[(&str,&str,&'static str,bool)]){let s=ui.s;ui.panel(rect(x,*y,w,rows.len()as f64*76.+12.),s.container);for(i,(title,detail,key,default))in rows.iter().enumerate(){let on=m.setting(key).as_bool().unwrap_or(*default);ui.toggle(rect(x+24.,*y+6.+i as f64*76.,w-48.,70.),title,detail,on,Action::NativeEdit(key,json!(!on)));}*y+=rows.len()as f64*76.+28.;}
-pub fn range(ui:&mut Ui,m:&Model,x:f64,y:&mut f64,w:f64,title:&str,key:&'static str,default:f64,min:f64,max:f64,unit:&str){let s=ui.s;let v=m.setting(key).as_f64().unwrap_or(default);ui.panel(rect(x,*y,w,96.),s.container);ui.label(title,x+24.,*y+14.,15.,s.on_surface,false,w-160.);ui.label(&format!("{v:.1} {unit}"),x+w-132.,*y+14.,13.,s.primary,true,108.);let r=rect(x+28.,*y+52.,w-56.,28.);let p=((v-min)/(max-min)).clamp(0.,1.);draw::fill(ui.scene,rect(r.x0,r.center().y-4.,r.width(),8.),4.,s.secondary_container);if p>0.{draw::fill(ui.scene,rect(r.x0,r.center().y-4.,r.width()*p,8.),4.,s.primary);}draw::fill(ui.scene,rect(r.x0+r.width()*p-2.,r.y0,4.,28.),2.,s.primary);ui.hit(r.inflate(8.,8.),title,Action::RangeHandle(key,min,max,[r.x0,r.y0,r.width(),r.height()]),true);*y+=108.;}
+pub fn range(ui:&mut Ui,m:&Model,x:f64,y:&mut f64,w:f64,title:&str,key:&'static str,default:f64,min:f64,max:f64,unit:&str){let s=ui.s;let v=m.preview_values.get(key).and_then(|v|v.as_f64()).unwrap_or_else(||m.setting(key).as_f64().unwrap_or(default));ui.panel(rect(x,*y,w,96.),s.container);ui.label(title,x+24.,*y+14.,15.,s.on_surface,false,w-160.);ui.label(&format!("{v:.1} {unit}"),x+w-132.,*y+14.,13.,s.primary,true,108.);let r=rect(x+28.,*y+52.,w-56.,28.);let p=((v-min)/(max-min)).clamp(0.,1.);draw::fill(ui.scene,rect(r.x0,r.center().y-4.,r.width(),8.),4.,if ui.nothing||ui.porcelain||ui.terminal||ui.pixel{s.outline_variant}else{s.secondary_container});if p>0.{draw::fill(ui.scene,rect(r.x0,r.center().y-4.,r.width()*p,8.),4.,s.primary);}draw::fill(ui.scene,rect(r.x0+r.width()*p-2.,r.y0,4.,28.),2.,s.primary);ui.hit(r.inflate(8.,8.),title,Action::RangeHandle(key,min,max,[r.x0,r.y0,r.width(),r.height()]),true);*y+=108.;}
 fn choices(ui:&mut Ui,m:&Model,x:f64,y:&mut f64,w:f64,title:&str,key:&'static str,default:&str,options:&[(&str,&str)]){let s=ui.s;ui.panel(rect(x,*y,w,108.),s.container);ui.label(title,x+24.,*y+14.,16.,s.on_surface,true,w-48.);let v=m.setting(key);let v=v.as_str().unwrap_or(default);let cw=(w-48.-(options.len()-1)as f64*8.)/options.len()as f64;for(i,(label,value))in options.iter().enumerate(){ui.chip(rect(x+24.+i as f64*(cw+8.),*y+52.,cw,38.),label,v==*value,Action::NativeEdit(key,json!(value)));}*y+=124.;}
 fn action(ui:&mut Ui,x:f64,y:&mut f64,w:f64,title:&str,detail:&str,label:&str,a:Action){let s=ui.s;ui.panel(rect(x,*y,w,96.),s.container);ui.label(title,x+24.,*y+16.,16.,s.on_surface,true,w-222.);ui.label(detail,x+24.,*y+48.,12.,s.on_surface_variant,false,w-222.);ui.button(rect(x+w-176.,*y+26.,152.,44.),label,None,a,true,true);*y+=112.;}
+pub fn theme_options(ui:&mut Ui,m:&Model,x:f64,y:&mut f64,w:f64){
+ let s=ui.s;let current=crate::nothing::slot(m);let pos=crate::nothing::position(current);
+ ui.panel(rect(x,*y,w,156.),s.container);
+ ui.label("控制中心主题",x+24.,*y+14.,16.,s.on_surface,true,w-48.);
+ ui.label("点击选项切换 · 也可拖动选中块 · 五套主题独立呈现",x+24.,*y+42.,12.,s.on_surface_variant,false,w-48.);
+ let track=rect(x+24.,*y+76.,w-48.,60.);let cw=track.width()/5.;
+ draw::fill(ui.scene,track,if ui.terminal||ui.pixel{0.}else if ui.nothing{8.}else{30.},s.high);
+ let preview=m.preview_values.get("ControlCenterThemeSlot").and_then(|v|v.as_f64());
+ let pos=preview.map(|p|p*4.).unwrap_or(pos);let selected=preview.map(crate::nothing::slot_from_fraction).unwrap_or(current);
+ let active=rect(track.x0+cw*pos+4.,track.y0+4.,cw-8.,52.);
+ draw::fill(ui.scene,active,if ui.terminal||ui.pixel{0.}else if ui.nothing{6.}else{26.},s.primary);
+ for i in 0..5u8{
+  let r=rect(track.x0+cw*i as f64,track.y0,cw,60.);
+  let hit=ui.hit(r,crate::nothing::label(i),Action::ThemeHandle([track.x0+cw/2.,track.y0,track.width()-cw,60.]),true);
+  ui.state(r,if ui.terminal||ui.pixel{0.}else if ui.nothing{8.}else{30.},hit,s.on_surface);
+  let fg=crate::nothing::mix(s.on_surface_variant,s.on_primary,(1.-(pos-i as f64).abs()).clamp(0.,1.));
+  if i==4{crate::pixel::icon(ui.scene,Icon::Island,r.x0+18.,r.center().y-10.,20.,fg);}else if i==3{crate::terminal::icon(ui.scene,ui.text,Icon::Island,r.x0+18.,r.center().y-10.,20.,fg);}else if i==0{draw::icon(ui.scene,Icon::Island,r.x0+18.,r.center().y-10.,20.,fg);}else{crate::theme_icons::icon(ui.scene,Icon::Island,r.x0+18.,r.center().y-10.,20.,fg,i==2);}
+  ui.center(crate::nothing::label(i),rect(r.x0+28.,r.y0,r.width()-28.,r.height()),14.,fg,selected==i);
+ }
+ *y+=172.;
+}
 pub fn extra(ui:&mut Ui,m:&Model,x:f64,mut y:f64,w:f64,tab:u8)->f64{
  match tab{
   0=>{action(ui,x,&mut y,w,"还原控制中心主题色","恢复原版浅色和深色主题色。","还原配色",Action::NativeCommand("resetSettingsColors",Value::Null));},
@@ -33,6 +54,12 @@ pub fn extra(ui:&mut Ui,m:&Model,x:f64,mut y:f64,w:f64,tab:u8)->f64{
    heading(ui,"快速提醒",x,&mut y,w);ui.button(rect(x,y,180.,44.),"一句话创建提醒",Some(Icon::Plus),Action::QuickReminder,false,true);y+=64.;
    action(ui,x,&mut y,w,"全局快捷键",m.setting("QuickReminderHotkey").as_str().filter(|v|!v.is_empty()).unwrap_or("尚未设置"),"修改快捷键",Action::EditSetting("QuickReminderHotkey","例如 Ctrl+Alt+R · 留空关闭"));
    action(ui,x,&mut y,w,"紧凑尺寸","恢复宽度、字号与固定位置。","恢复尺寸",Action::NativeCommand("resetAppearance",Value::Null));
+   heading(ui,"字体",x,&mut y,w);
+   {let s=ui.s;let scope=m.prefs.font_scope.as_str();let font_value=m.setting("IslandFontFamily");let family=font_value.as_str().filter(|v|!v.is_empty()).unwrap_or("默认字体");
+    ui.panel(rect(x,y,w,132.),s.container);ui.label("字体作用范围",x+24.,y+14.,16.,s.on_surface,true,w-48.);
+    ui.label(&format!("当前字体：{family}"),x+24.,y+40.,12.,s.on_surface_variant,false,w-48.);
+    let cw=(w-48.-16.)/3.;for(i,(label,value))in [("仅灵动岛","Island"),("仅控制中心","Center"),("两者","Both")].iter().enumerate(){ui.chip(rect(x+24.+i as f64*(cw+8.),y+60.,cw,40.),label,scope==*value,Action::FontScope(i as u8));}
+    ui.label("换字体后控制中心文字块仍锚定原基线，矩形不移动。",x+24.,y+104.,11.,s.on_surface_variant,false,w-48.);y+=148.;}
   },
   5=>{
    heading(ui,"设备连接",x,&mut y,w);

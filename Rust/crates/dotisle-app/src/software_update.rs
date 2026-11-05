@@ -17,7 +17,7 @@ pub fn render(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64)->f64{
  let active=matches!(phase,"checking"|"downloading"|"switching"|"verifying"|"applying"|"restarting");
  let fraction=if phase=="downloading"{u["totalBytes"].as_u64().filter(|t|*t>0).map(|t|u["receivedBytes"].as_u64().unwrap_or(0)as f64/t as f64)}else if matches!(phase,"ready"|"completed"){Some(1.)}else{None};
  draw::ring(ui.scene,(x+52.,top+128.),19.,1.,s.outline,4.);
- if let Some(p)=fraction{draw::ring(ui.scene,(x+52.,top+128.),19.,p.clamp(0.,1.),green,4.);}else{draw::icon(ui.scene,if active{Icon::Focus}else{Icon::Check},x+40.,top+116.,24.,green);}
+ if let Some(p)=fraction{draw::ring(ui.scene,(x+52.,top+128.),19.,p.clamp(0.,1.),green,4.);}else{ui.icon(if active{Icon::Focus}else{Icon::Check},x+40.,top+116.,24.,green);}
  let version=match phase{"available"|"downloading"|"switching"|"verifying"|"ready"|"applying"|"restarting"|"completed"|"failed"|"skipped"=>u["version"].as_str().unwrap_or(""),"idle"=>m.native_state["version"].as_str().unwrap_or(env!("CARGO_PKG_VERSION")),_=>""};let title=if version.is_empty(){status.to_owned()}else{format!("{status}  {version}")};ui.label(&title,x+86.,top+104.,18.,s.on_surface,true,w-120.);
  let bytes=|v:u64|format!("{:.1} MB",v as f64/1048576.);
  let detail=if phase=="downloading"{let received=bytes(u["receivedBytes"].as_u64().unwrap_or(0));match u["totalBytes"].as_u64().filter(|t|*t>0){Some(t)=>format!("已下载 {received} / {}",bytes(t)),None=>format!("已下载 {received} · 总大小未知")}}else{u["message"].as_str().filter(|v|!v.is_empty()).unwrap_or(if m.demo{"设计预览；实际更新由主进程处理"}else{"双源检查 · 保留本机设置与数据"}).to_owned()};

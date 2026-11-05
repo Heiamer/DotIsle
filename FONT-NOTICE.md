@@ -11,3 +11,7 @@
 | Noto Sans JP | [Google Fonts](https://github.com/google/fonts/tree/main/ofl/notosansjp) | [NotoSansJP-OFL.txt](licenses/NotoSansJP-OFL.txt) |
 
 字体文件位于 `Assets/Fonts/`。西文、数字与符号使用 Google Sans Flex（Regular / Medium / SemiBold / Bold 四个静态实例），中文使用 Noto Sans SC，包含假名的日文行统一使用 Noto Sans JP，避免一行内混用不同风格的中日文字形。韩文采用可用的系统字体。
+
+Nothing 控制中心随包提供 Space Grotesk、Space Mono 与 Doto，来自 Google Fonts，遵循 SIL OFL；完整许可见 licenses/spacegrotesk-OFL.txt、spacemono-OFL.txt、doto-OFL.txt。中文由 Noto Sans SC 回退。
+
+像素主题随包使用 Fusion Pixel 12px Proportional zh-Hans，项目来源 https://github.com/TakWolf/fusion-pixel-font ，字体与上游许可完整保存在 licenses/FusionPixel。

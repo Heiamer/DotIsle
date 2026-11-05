@@ -53,7 +53,7 @@ fn paths()->&'static HashMap<&'static str,Vec<BezPath>>{
  })
 }
 pub fn paint(scene:&mut Scene,name:&str,x:f64,y:f64,size:f64,rgb:u32)->bool{let Some(paths)=paths().get(name)else{return false};let tr=Affine::translate((x,y+size))*Affine::scale(size/960.);for path in paths{scene.fill(Fill::NonZero,tr,color(rgb),None,path);}true}
-pub fn icon(scene:&mut Scene,icon:Icon,x:f64,y:f64,size:f64,rgb:u32)->bool{let name=match icon{
+fn icon_name(icon:Icon)->Option<&'static str>{Some(match icon{
  Icon::Home=>"home",
  Icon::Music=>"music_note",
  Icon::Focus=>"timer",
@@ -84,9 +84,11 @@ pub fn icon(scene:&mut Scene,icon:Icon,x:f64,y:f64,size:f64,rgb:u32)->bool{let n
  Icon::Translate=>"translate",
  Icon::Heart=>"favorite",
  Icon::Move=>"open_with",
- Icon::Island=>return false,
- };paint(scene,name,x,y,size,rgb)
-}
+ Icon::Island=>return None,
+ })}
+/// Outlines in the official 960-unit, y-up symbol space. Used by the Nothing dot renderer.
+pub fn paths_for(icon:Icon)->Option<&'static [BezPath]>{icon_name(icon).and_then(|name|paths().get(name).map(|v|v.as_slice()))}
+pub fn icon(scene:&mut Scene,icon:Icon,x:f64,y:f64,size:f64,rgb:u32)->bool{let Some(name)=icon_name(icon)else{return false};paint(scene,name,x,y,size,rgb)}
 
 #[cfg(test)]mod tests{
  use super::*;use vello::kurbo::Shape;

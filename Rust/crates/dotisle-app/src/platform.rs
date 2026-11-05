@@ -12,12 +12,12 @@ pub fn set_app_id(){
 }
 
 /// The taskbar uses ICON_BIG; the 1024 px preview PNG is not a valid HICON at that size.
-pub fn set_window_icon(window:&winit::window::Window){
+pub fn set_theme_icon(window:&winit::window::Window,theme:u8){
  use raw_window_handle::{HasWindowHandle,RawWindowHandle};
  use windows::Win32::{Foundation::{HWND,WPARAM,LPARAM},UI::WindowsAndMessaging::{LoadImageW,SendMessageW,IMAGE_ICON,LR_LOADFROMFILE}};
  let Ok(handle)=window.window_handle()else{return};let RawWindowHandle::Win32(h)=handle.as_raw()else{return};let hwnd=HWND(h.hwnd.get()as _);
  let base=std::env::current_exe().ok().and_then(|p|p.parent().map(std::path::Path::to_path_buf)).unwrap_or_default();
- let path=base.join("Assets/LyricIsland-v3.ico");if !path.is_file(){return}
+ let path=base.join(match theme{1=>"Assets/Themes/Nothing.ico",2=>"Assets/Themes/Porcelain.ico",3=>"Assets/Themes/Terminal.ico",4=>"Assets/Themes/Pixel.ico",_=>"Assets/LyricIsland-v3.ico"});if !path.is_file(){return}
  let wide:Vec<u16>=path.as_os_str().encode_wide().chain(Some(0)).collect();
  unsafe{
   if let Ok(big)=LoadImageW(None,PCWSTR(wide.as_ptr()),IMAGE_ICON,64,64,LR_LOADFROMFILE){SendMessageW(hwnd,0x0080,Some(WPARAM(1)),Some(LPARAM(big.0 as isize)));}
@@ -35,3 +35,14 @@ pub fn refresh_taskbar(window:&winit::window::Window){
 }
 
 pub fn backdrop(window:&winit::window::Window){use raw_window_handle::{HasWindowHandle,RawWindowHandle};use windows::Win32::{Foundation::HWND,Graphics::Dwm::*,UI::Controls::MARGINS};let Ok(handle)=window.window_handle()else{return};let RawWindowHandle::Win32(h)=handle.as_raw()else{return};unsafe{let hwnd=HWND(h.hwnd.get()as _);let margins=MARGINS{cxLeftWidth:-1,cxRightWidth:-1,cyTopHeight:-1,cyBottomHeight:-1};let _=DwmExtendFrameIntoClientArea(hwnd,&margins);let acrylic=3u32;let _=DwmSetWindowAttribute(hwnd,DWMWA_SYSTEMBACKDROP_TYPE,&acrylic as *const _ as _,4);}}
+
+/// The owner keeps the picker modal to the control centre and preserves its directory.
+pub fn choose_background(window:&winit::window::Window)->Result<Option<std::path::PathBuf>,String>{
+ use raw_window_handle::{HasWindowHandle,RawWindowHandle};
+ use windows::{core::{PCWSTR,PWSTR},Win32::{Foundation::HWND,UI::Controls::Dialogs::*}};
+ let handle=window.window_handle().map_err(|e|e.to_string())?;let RawWindowHandle::Win32(h)=handle.as_raw()else{return Err("无法打开图片选择器".into())};
+ let filter:Vec<u16>="图片 (PNG / JPEG / BMP)\0*.png;*.jpg;*.jpeg;*.bmp\0\0".encode_utf16().collect();
+ let title:Vec<u16>="选择控制中心背景图片\0".encode_utf16().collect();let mut file=vec![0u16;32768];
+ let mut dialog=OPENFILENAMEW{lStructSize:std::mem::size_of::<OPENFILENAMEW>()as u32,hwndOwner:HWND(h.hwnd.get()as _),lpstrFilter:PCWSTR(filter.as_ptr()),lpstrFile:PWSTR(file.as_mut_ptr()),nMaxFile:file.len()as u32,lpstrTitle:PCWSTR(title.as_ptr()),Flags:OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR|OFN_EXPLORER,..Default::default()};
+ unsafe{if GetOpenFileNameW(&mut dialog).as_bool(){let n=file.iter().position(|v|*v==0).unwrap_or(file.len());return Ok(Some(std::path::PathBuf::from(String::from_utf16_lossy(&file[..n]))))}let error=CommDlgExtendedError();if error.0!=0{return Err(format!("图片选择器未能打开（{}）",error.0))}}Ok(None)
+}

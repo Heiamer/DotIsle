@@ -35,6 +35,12 @@ pub fn run(gpu:&mut Gpu,out:&Path)->Result<(),String>{
         let mut scene=Scene::new();scene.fill(Fill::NonZero,Affine::IDENTITY,Color::from_rgb8(31,127,63),None,&Rect::new(0.,0.,width as f64,height as f64));
         let path=out.join("hybrid-resize.png");gpu.capture(&scene,width,height,&path)?;pixel(&path,width-3,height-3,[31,127,63,255])?;
     }
+    let mut softened=Scene::new();softened.push_gaussian_layer(Affine::IDENTITY,&bounds,1.35);
+    softened.fill(Fill::NonZero,Affine::IDENTITY,Color::from_rgb8(255,255,255),None,&Rect::new(12.,12.,20.,20.));softened.pop_layer();
+    let path=out.join("hybrid-gaussian.png");gpu.capture(&softened,32,32,&path)?;
+    let pixels=image::open(&path).map_err(|e|e.to_string())?.to_rgba8();
+    if pixels.get_pixel(10,16)[3]==0||pixels.get_pixel(12,16)[3]>=250||pixels.get_pixel(16,16)[3]<200{return Err("Gaussian filter did not soften the group edge correctly".into())}
+    let mut sharp=Scene::new();sharp.push_gaussian_layer(Affine::IDENTITY,&bounds,0.);sharp.fill(Fill::NonZero,Affine::IDENTITY,Color::from_rgb8(255,255,255),None,&Rect::new(12.,12.,20.,20.));sharp.pop_layer();let path=out.join("hybrid-gaussian-zero.png");gpu.capture(&sharp,32,32,&path)?;pixel(&path,10,16,[0,0,0,0])?;pixel(&path,16,16,[255,255,255,255])?;
     let mut scene=Scene::new();let mut text=crate::draw::Text::new_lazy_japanese();
     for (i,sample) in ["中文 ABC 123","君に届け ハウル","ภาษาไทย","العربية","한글","🎵"].iter().enumerate(){text.draw(&mut scene,sample,8.,8.+i as f64*35.,20.,0xffffff,false,760.);}
     gpu.capture(&scene,800,240,&out.join("hybrid-multilingual.png"))?;Ok(())

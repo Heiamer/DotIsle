@@ -1,5 +1,5 @@
 //! Owns the non-GUI lifecycle: media, resolution jobs, clocks, artwork and cancellation.
-use std::{path::PathBuf,sync::{Arc,Mutex,mpsc,atomic::{AtomicBool,AtomicU64,Ordering}},time::{Duration,Instant}};
+use std::{path::PathBuf,sync::{Arc,Mutex,Condvar,mpsc,atomic::{AtomicBool,AtomicU64,Ordering}},time::{Duration,Instant}};
 use serde_json::{Value,json};
 use base64::{Engine,engine::general_purpose::STANDARD};
 use lyric_core::{models::*,cache::{LyricPipelineCache,RawLyricCacheEnvelope,ParsedLyricCacheEnvelope},json_store::JsonStore,resolution::{LyricResolutionCoordinator,LyricResolutionCoordinatorBuilder,LyricMappingResolver,select_best_scored,ScoredCandidate},sync::LyricSyncService,local::LocalLyricProvider};
@@ -7,16 +7,17 @@ use crate::{media::{Media,MediaSample,unix_ms},clock::PlaybackClock,netease::Net
 
 struct State{settings:Value,playback:PlaybackSnapshot,clock:PlaybackClock,sync:LyricSyncService,active:Option<windows::Media::Control::GlobalSystemMediaTransportControlsSession>,events:u64,cover:Option<Vec<u8>>,cover_version:u64,cover_key:String,artwork_identity:String,duration_source:String,native_status:String,native_error:Option<String>,track_key:String,pending_weak:Option<(Instant,Instant,String)>,last_strong_track:Option<TrackInfo>,netease_target:Option<crate::netease_control::Target>,netease_sample:Option<crate::netease::TimingSample>,media_command:Value,smtc_can_seek:bool,netease_ready:bool}
 #[derive(Clone)]struct MediaFeed{sample:MediaSample,active:Option<windows::Media::Control::GlobalSystemMediaTransportControlsSession>,events:u64,captured:Instant}
-pub struct Backend{state:Mutex<State>,media_feed:Mutex<Option<MediaFeed>>,command_queue:Mutex<crate::media_commands::Queue>,command_running:AtomicBool,command_sequence:AtomicU64,closed:AtomicBool,generation:AtomicU64,started:Instant,data:PathBuf,local:PathBuf,raw:Arc<JsonStore>,parsed:Arc<JsonStore>,final_cache:FinalCache,logs:PathBuf,search_cancel:Mutex<Option<Arc<AtomicBool>>>}
+pub struct Backend{control_wake:(Mutex<u64>,Condvar),state:Mutex<State>,media_feed:Mutex<Option<MediaFeed>>,command_queue:Mutex<crate::media_commands::Queue>,command_running:AtomicBool,command_sequence:AtomicU64,closed:AtomicBool,generation:AtomicU64,started:Instant,data:PathBuf,local:PathBuf,raw:Arc<JsonStore>,parsed:Arc<JsonStore>,final_cache:FinalCache,logs:PathBuf,search_cancel:Mutex<Option<Arc<AtomicBool>>>}
 impl Backend{
     pub fn new(settings:Value,data:PathBuf,local:PathBuf,logs:PathBuf)->Arc<Self>{
-        let backend=Arc::new(Self{media_feed:Mutex::new(None),raw:Arc::new(JsonStore::new(data.join("database/lyric-pipeline-raw-v1.json"))),parsed:Arc::new(JsonStore::new(data.join("database/lyric-pipeline-parsed-v1.json"))),final_cache:FinalCache(Arc::new(JsonStore::new_enveloped(data.join("database/resolved-lyrics-v1.json")))),data,local,logs,
+        let backend=Arc::new(Self{control_wake:(Mutex::new(0),Condvar::new()),media_feed:Mutex::new(None),raw:Arc::new(JsonStore::new(data.join("database/lyric-pipeline-raw-v1.json"))),parsed:Arc::new(JsonStore::new(data.join("database/lyric-pipeline-parsed-v1.json"))),final_cache:FinalCache(Arc::new(JsonStore::new_enveloped(data.join("database/resolved-lyrics-v1.json")))),data,local,logs,
             state:Mutex::new(State{settings,playback:PlaybackSnapshot::idle(),clock:PlaybackClock::default(),sync:LyricSyncService::new(),active:None,events:0,cover:None,cover_version:0,cover_key:String::new(),artwork_identity:String::new(),duration_source:"等待歌曲信息".into(),native_status:"等待网易云".into(),native_error:None,track_key:String::new(),pending_weak:None,last_strong_track:None,netease_target:None,netease_sample:None,media_command:Value::Null,smtc_can_seek:false,netease_ready:false}),command_queue:Mutex::new(Default::default()),command_running:AtomicBool::new(false),command_sequence:AtomicU64::new(0),closed:AtomicBool::new(false),generation:AtomicU64::new(0),started:Instant::now(),search_cancel:Mutex::new(None)});
         io::log(&backend.logs,"BUILD",&format!("Version={}; Backend=Rust; GUI=Vello; Shell=winit; HTTP=WinHTTP",env!("CARGO_PKG_VERSION")));
         let worker=backend.clone();std::thread::spawn(move||worker.run());let health=backend.clone();std::thread::spawn(move||health.control_health());let media=backend.clone();std::thread::spawn(move||media.media_feed());backend
     }
-    pub fn close(&self){self.closed.store(true,Ordering::Release);self.generation.fetch_add(1,Ordering::AcqRel);if let Ok(mut c)=self.search_cancel.lock(){if let Some(c)=c.take(){c.store(true,Ordering::Release)}}}
-    pub fn apply(&self,settings:Value){if let Ok(mut s)=self.state.lock(){if crate::netease_control::cdp_port(&s.settings)!=crate::netease_control::cdp_port(&settings){s.netease_ready=false;}s.settings=settings;}}
+    pub fn close(&self){self.closed.store(true,Ordering::Release);self.wake_control();self.generation.fetch_add(1,Ordering::AcqRel);if let Ok(mut c)=self.search_cancel.lock(){if let Some(c)=c.take(){c.store(true,Ordering::Release)}}}
+    fn wake_control(&self){if let Ok(mut epoch)=self.control_wake.0.lock(){*epoch=epoch.wrapping_add(1);self.control_wake.1.notify_one();}}
+    pub fn apply(&self,settings:Value){if let Ok(mut s)=self.state.lock(){if crate::netease_control::cdp_port(&s.settings)!=crate::netease_control::cdp_port(&settings){s.netease_ready=false;}s.settings=settings;}self.wake_control();}
     pub fn snapshot(&self,last_cover:u64)->Value{
         let Ok(mut s)=self.state.lock()else{return json!({"error":"backend lock failed"})};
         let mut playback=s.playback.clone();playback.can_seek=s.smtc_can_seek||s.netease_ready&&s.netease_target.is_some()&&s.netease_sample.as_ref().is_some_and(|n|(0..800).contains(&(unix_ms()-n.captured_ms)));let position=s.clock.position(self.started.elapsed().as_secs_f64());let duration=playback.track.as_ref().map(|t|t.duration.as_secs_f64()).unwrap_or(0.);
@@ -68,8 +69,9 @@ impl Backend{
             let seconds=crate::netease_control::bounded_target(seconds,duration)?;
             for attempt in 0..2{
             let sent_ms=unix_ms();let mut sent=false;let mut route="SMTC";let mut dispatched_target=seconds;
-            if let Some(target)=native.as_ref(){
-                let valid=||!self.closed.load(Ordering::Acquire)&&self.state.lock().is_ok_and(|s|s.track_key==key&&s.netease_target.as_ref()==Some(target)&&s.netease_sample.as_ref().is_some_and(|n|n.song_id==song_id&&(0..800).contains(&(unix_ms()-n.captured_ms))));
+            if let Some(session)=session.as_ref(){if session.GetPlaybackInfo().and_then(|p|p.Controls()).and_then(|c|c.IsPlaybackPositionEnabled()).unwrap_or(false){sent=Media::command(session,"seek",seconds).unwrap_or(false);}}
+            if let Some(target)=native.as_ref().filter(|_|!sent){
+                let valid=||!self.closed.load(Ordering::Acquire)&&self.state.lock().is_ok_and(|s|s.track_key==key&&id.is_none_or(|id|s.media_command["id"].as_u64()==Some(id))&&s.netease_target.as_ref()==Some(target)&&s.netease_sample.as_ref().is_some_and(|n|n.song_id==song_id&&(0..800).contains(&(unix_ms()-n.captured_ms))));
                 (route,dispatched_target)=target.seek(port,seconds,duration,&song_id,&valid)?;sent=true;
             }
             if !sent{if let Some(session)=session.as_ref(){if session.GetPlaybackInfo().and_then(|p|p.Controls()).and_then(|c|c.IsPlaybackPositionEnabled()).unwrap_or(false){sent=Media::command(session,"seek",seconds).unwrap_or(false);}}}
@@ -104,12 +106,14 @@ impl Backend{
     }
     /// Keep slow/missing CDP replies off the 160 ms memory timeline reader.
     fn control_health(self:Arc<Self>){
+        let mut observed=0;
         while !self.closed.load(Ordering::Acquire){
             let key=match self.state.lock(){Ok(s)=>(s.netease_target.clone(),crate::netease_control::cdp_port(&s.settings),s.track_key.clone(),s.netease_sample.as_ref().map(|n|n.song_id.clone()).unwrap_or_default()),Err(_)=>break};
             let ready=key.0.as_ref().is_some_and(|t|t.available()&&(t.background_available()||crate::netease_cdp::probe(t.pid,key.1,&key.3)));
             if let Ok(mut s)=self.state.lock(){if s.netease_target==key.0&&crate::netease_control::cdp_port(&s.settings)==key.1&&s.track_key==key.2{s.netease_ready=ready;}}
-            let interval=self.state.lock().map(|s|if s.settings["NeteaseSeekKeepAlive"]==true{10}else{20}).unwrap_or(20);
-            for _ in 0..interval{if self.closed.load(Ordering::Acquire){return}std::thread::sleep(Duration::from_millis(100));}
+            let Ok(epoch)=self.control_wake.0.lock()else{return};
+            if *epoch==observed&&!self.closed.load(Ordering::Acquire){if let Ok((epoch,_))=self.control_wake.1.wait_timeout(epoch,Duration::from_millis(if ready{1000}else{250})){observed=*epoch;}}else{observed=*epoch;}
+
         }
     }
     /// WinRT providers may stall for seconds. Native NetEase sampling must keep running.
@@ -180,7 +184,7 @@ impl Backend{
         p.cover_image_bytes=None;
         let position=s.clock.observe(&p,sample.updated_ms,unix_ms(),self.started.elapsed().as_secs_f64(),native);p.position=Duration::from_secs_f64(position.clamp(0.,86400.));
         s.duration_source=if native{"网易云实时读取"}else if p.track.as_ref().is_some_and(|t|t.duration>Duration::ZERO){"播放器"}else{"正在补取歌曲时长"}.into();
-        s.smtc_can_seek=p.can_seek;let next_target=p.track.as_ref().and_then(|t|netease.control_target(t));if changed||next_target!=s.netease_target{s.netease_ready=false;}s.netease_target=next_target;s.netease_sample=p.track.as_ref().and_then(|t|netease.matching(t));p.can_seek|=s.netease_ready&&s.netease_target.is_some()&&p.track.as_ref().is_some_and(|t|t.duration>Duration::ZERO);s.active=active;s.events=events;s.native_status=netease.status.clone();s.native_error=netease.error.clone();s.playback=p.clone();
+        s.smtc_can_seek=p.can_seek;let next_target=p.track.as_ref().and_then(|t|netease.control_target(t));if changed||next_target!=s.netease_target{s.netease_ready=false;self.wake_control();}s.netease_target=next_target;s.netease_sample=p.track.as_ref().and_then(|t|netease.matching(t));p.can_seek|=s.netease_ready&&s.netease_target.is_some()&&p.track.as_ref().is_some_and(|t|t.duration>Duration::ZERO);s.active=active;s.events=events;s.native_status=netease.status.clone();s.native_error=netease.error.clone();s.playback=p.clone();
         if let Some(track)=p.track{
             if s.sync.begin_track(&track){return Some(track)}
         }else if changed{
