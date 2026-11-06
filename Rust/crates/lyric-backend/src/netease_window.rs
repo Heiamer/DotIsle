@@ -1,23 +1,10 @@
-//! Background seek for the verified official client. No top-level show, focus, global
+//! Version-independent CEF background seek. No top-level show, focus, global
 //! input, debug port, process launch or player-memory writes are involved.
-use std::{path::PathBuf,sync::{Mutex,OnceLock},time::{Duration,Instant,SystemTime}};
-use sha2::{Digest,Sha256};
+use std::time::{Duration,Instant};
 use windows::{core::{BOOL,PCWSTR},Win32::{Foundation::{CloseHandle,HANDLE,HWND,LPARAM,WPARAM,RECT,WAIT_OBJECT_0,WAIT_ABANDONED},System::Threading::{CreateMutexW,ReleaseMutex,WaitForSingleObject},UI::{HiDpi::*,Input::KeyboardAndMouse::IsWindowEnabled,WindowsAndMessaging::*}}};
 use crate::netease_control::Target;
 
-// This package defines a full-width music slider 83 CSS px above the client bottom.
-// Refuse changed resources rather than click an unverified player's interface.
-const VERIFIED_PACKAGE:&str="170413b1675708e87a9e89c2d122a8643a51e86b5b5ae1c6260cfeaf25b19be4";
-type PackageCache=(PathBuf,u64,SystemTime,bool);
-fn supported(target:&Target)->bool{
- let Some(dir)=target.executable.parent()else{return false};let path=dir.join("package/orpheus.ntpk");
- let Ok(meta)=std::fs::metadata(&path)else{return false};let Ok(modified)=meta.modified()else{return false};
- static CACHE:OnceLock<Mutex<Option<PackageCache>>>=OnceLock::new();
- let Ok(mut cache)=CACHE.get_or_init(||Mutex::new(None)).lock()else{return false};
- if let Some((old,len,stamp,ok))=cache.as_ref(){if old==&path&&*len==meta.len()&&*stamp==modified{return *ok}}
- let ok=if meta.len()>64*1024*1024{false}else{std::fs::read(&path).is_ok_and(|bytes|format!("{:x}",Sha256::digest(bytes))==VERIFIED_PACKAGE)};
- *cache=Some((path,meta.len(),modified,ok));ok
-}
+// Detect the running player and its CEF window tree, never a version or package hash.
 fn class(window:HWND,name:&str)->bool{unsafe{let mut text=[0u16;256];let n=GetClassNameW(window,&mut text);n>0&&String::from_utf16_lossy(&text[..n as usize])==name}}
 fn owned(window:HWND,pid:u32)->bool{unsafe{let mut owner=0;GetWindowThreadProcessId(window,Some(&mut owner));owner==pid&&IsWindow(Some(window)).as_bool()}}
 #[derive(Default)]struct Windows{pid:u32,roots:Vec<HWND>,hosts:Vec<HWND>,widgets:Vec<HWND>,renderers:Vec<HWND>}
@@ -75,11 +62,11 @@ fn bounds(width:i32,height:i32,dpi:u32,fraction:f64)->Option<(i32,i32)>{
  let x=(fraction*width as f64).round().clamp(1.,(width-2)as f64)as i32;
  Some((x,(height as f64-81.5*scale).round()as i32))
 }
-pub fn available(target:&Target)->bool{target.available()&&supported(target)&&windows(target.pid).is_some()}
+pub fn available(target:&Target)->bool{target.available()&&windows(target.pid).is_some()}
 
 pub fn seek(target:&Target,seconds:f64,duration:f64,valid:&dyn Fn()->bool)->Result<f64,String>{
  let seconds=crate::netease_control::bounded_target(seconds,duration)?;
- if !available(target){return Err("当前网易云界面版本尚未通过后台进度适配".into())}
+ if !available(target){return Err("网易云后台窗口尚未就绪，请稍后重试".into())}
  let _serial=Serial::enter()?;let _dpi=Dpi::enter();
  let (root,host,widget,mut renderer)=windows(target.pid).ok_or("网易云窗口已变化，已取消进度操作")?;
  let focus=NoActivate::enter(target.pid,host,widget)?;

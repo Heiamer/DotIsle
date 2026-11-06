@@ -3,7 +3,7 @@ use std::{path::PathBuf,sync::{Arc,mpsc},time::{Instant,Duration},collections::V
 use serde_json::{Value,json};
 use dotisle_domain::{todos,timers,preferences::{self,Preferences},monet};
 use lyric_backend::runtime::Backend;
-use vello::peniko::{ImageData,ImageFormat,ImageAlphaType,Blob};
+use vello::peniko::ImageData;
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]pub enum Page{Home,Music,Focus,Todos,Island,Settings}
 impl Page{
     pub const ALL:[Self;6]=[Self::Home,Self::Island,Self::Music,Self::Focus,Self::Todos,Self::Settings];
@@ -24,7 +24,8 @@ impl Page{
 impl Field{pub(crate) fn new(label:&'static str,value:String,max:usize)->Self{let cursor=value.len();Self{label,value,max,selected:false,cursor}}}
 #[derive(Clone,Debug)]pub enum DialogKind{Todo(Option<String>),Paths,Import,Setting(&'static str),TimerPreferences,WorkflowModules,WorkflowModule(Option<usize>),QuickReminder,Rule(Option<String>),WorkflowStage(Option<u32>),WorkflowTemplate(Option<String>),WorkflowTemplates}
 #[derive(Clone,Debug)]pub struct Dialog{pub kind:DialogKind,pub fields:Vec<Field>,pub active:usize,pub daily:bool,pub error:String,pub preedit:String}
-pub struct Artwork{pub image:ImageData,pub seed:Option<u32>}
+pub struct Artwork{pub image:ImageData,pub seed:Option<u32>,pub covers:crate::cover_art::Covers}
+impl Artwork{pub fn new(decoded:image::DynamicImage)->Self{let small=decoded.thumbnail(96,96).to_rgba8();let seed=monet::seed(small.as_raw());let covers=crate::cover_art::Covers::new(&decoded);let image=crate::cover_art::data(decoded.thumbnail(512,512).to_rgba8());Self{image,seed,covers}}}
 enum WorkerReply{Snapshot(Value,Option<Artwork>),Result(Result<bool,String>)}
 pub struct Model{
     pub background:crate::background::Cache,
@@ -43,7 +44,7 @@ impl Model{
         let(prefs,prefs_error)=match Preferences::load(&data.join("preferences.json")){Ok(p)=>(p,None),Err(e)=>(Preferences::default(),Some(e))};
         let todos=todos::Store::new(data.join("todos.json"));let timers=timers::Store::new(data.join("timers.json"));
         let mut s=Self{background:Default::default(),tutorial:None,tutorial_checked:false,tutorial_requested:false,remote:None,native_state:Value::Null,native_error:None,page:Page::Home,prefs,prefs_error,data,snapshot:Value::Null,artwork:None,todos,timers,timer_seconds:None,rest_seconds:300,timer_rounds:4,module_page:0,selected:None,mode:0,minutes:25,scroll:0.,dialog:None,notices:VecDeque::new(),toast:None,undo:None,success_at:None,quick_preview:Value::Null,demo,palette:false,query:String::new(),exit:false,show_center:false,radius_target:1,island_tab:0,preview_values:Default::default(),preview_curve:None,preview_radius:None,details:[false;8],settings_tab:4,cloud_expanded:false,cloud_tab:0,workflow:Default::default(),picker:None,font_picker:None,backend:None,send:None,recv:None,last_awake:awake_ms(),last_save:Instant::now(),last_due:Instant::now()};
-        if demo{s.snapshot=json!({"track":{"id":"preview","title":"海边来信","artist":"点屿 · 设计示例","album":"海边来信","sourceApp":"预览数据","durationSeconds":252.},"isPlaying":false,"positionSeconds":86.,"canSeek":true,"frame":{"currentLine":"海边来信","currentTranslation":"让好音乐，陪你度过好时光","nextLine":"海风与晚霞","wordScanProgress":0.5}});let bytes=include_bytes!("../../../../Assets/DemoCover.png");if let Ok(im)=image::load_from_memory(bytes){let small=im.thumbnail(96,96).to_rgba8();let source=monet::seed(small.as_raw());let rgba=im.thumbnail(512,512).to_rgba8();let(w,h)=rgba.dimensions();s.artwork=Some(Artwork{image:ImageData{data:Blob::new(Arc::new(rgba.into_raw())),format:ImageFormat::Rgba8,alpha_type:ImageAlphaType::Alpha,width:w,height:h},seed:source});}}
+        if demo{s.snapshot=json!({"track":{"id":"preview","title":"海边来信","artist":"点屿 · 设计示例","album":"海边来信","sourceApp":"预览数据","durationSeconds":252.},"isPlaying":false,"positionSeconds":86.,"canSeek":true,"frame":{"currentLine":"海边来信","currentTranslation":"让好音乐，陪你度过好时光","nextLine":"海风与晚霞","wordScanProgress":0.5}});let bytes=include_bytes!("../../../../Assets/DemoCover.png");if let Ok(im)=image::load_from_memory(bytes){s.artwork=Some(Artwork::new(im));}}
 
         else{s.connect();}s.refresh_background();s
     }
@@ -54,7 +55,7 @@ impl Model{
         let packets=self.remote.as_ref().map(|r|r.recv.try_iter().collect::<Vec<_>>()).unwrap_or_default();let changed=!packets.is_empty();
         for packet in packets{match packet{Err(e)=>{crate::tutorial::save_failed(self,&e);self.native_error=Some(e);},Ok(packet)=>{
             self.native_error=None;let state=packet.state;let p=&state["musicPreview"];let cover=p["coverPath"].as_str().unwrap_or("");let old=self.snapshot["coverPath"].as_str().unwrap_or("");
-            if cover!=old{self.artwork=None;if !cover.is_empty(){if let Ok(bytes)=std::fs::read(cover){if let Ok(decoded)=image::load_from_memory(&bytes){let small=decoded.thumbnail(96,96).to_rgba8();let seed=monet::seed(small.as_raw());let rgba=decoded.thumbnail(512,512).to_rgba8();let(w,h)=rgba.dimensions();self.artwork=Some(Artwork{image:ImageData{data:Blob::new(Arc::new(rgba.into_raw())),format:ImageFormat::Rgba8,alpha_type:ImageAlphaType::Alpha,width:w,height:h},seed});}}}}
+            if cover!=old{self.artwork=None;if !cover.is_empty(){if let Ok(bytes)=std::fs::read(cover){if let Ok(decoded)=image::load_from_memory(&bytes){self.artwork=Some(Artwork::new(decoded));}}}}
             self.snapshot=json!({"track":if state["title"].is_string(){json!({"id":state["title"],"title":state["title"],"artist":state["artist"],"durationSeconds":state["duration"],"sourceApp":state["player"]})}else{Value::Null},"isPlaying":state["isPlaying"],"positionSeconds":state["position"],"canSeek":state["canSeek"],"seekStatus":state["seekStatus"],"mediaCommand":state["mediaCommand"],"coverPath":cover,"frame":{"currentLine":p["lyric"],"isPureMusic":p["isPureMusic"],"currentTranslation":p["secondary"],"wordScanProgress":p["highlight"]}});
             let settings=&state["settings"];self.prefs.dark=match settings["SettingsTheme"].as_str().unwrap_or("System"){"Dark"=>true,"Light"=>false,_=>state["settingsDark"].as_bool().unwrap_or(false)};self.prefs.monet=settings["ControlCenterMonetEnabled"].as_bool().unwrap_or(true);self.prefs.translation=settings["Translation"].as_bool().unwrap_or(true);self.prefs.word_highlight=settings["WordHighlight"].as_bool().unwrap_or(true);self.prefs.online=settings["OnlineSongInfo"].as_bool().unwrap_or(true);self.prefs.reduced_motion=settings["Animation"]==false;self.prefs.always_on_top=settings["AlwaysOnTop"]==true;self.prefs.island=state["islandVisible"]==true;self.prefs.offset_ms=settings["OffsetMilliseconds"].as_i64().unwrap_or(0)as i32;self.prefs.local_folders=settings["LocalFolders"].as_array().map(|a|a.iter().filter_map(Value::as_str).map(str::to_owned).collect()).unwrap_or_default();self.prefs.include_browser=!settings["IgnoredSources"].as_array().is_some_and(|a|a.iter().any(|v|v=="Browser"));self.prefs.reminder_sound=settings["TodoSoundEnabled"]==true;
             if let Ok(items)=serde_json::from_value(state["todos"].clone()){self.todos.items=items;}if let Ok(items)=serde_json::from_value(state["timers"].clone()){self.timers.items=items;}

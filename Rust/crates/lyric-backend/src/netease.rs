@@ -114,6 +114,14 @@ fn parse_metadata(response:&serde_json::Value,id:&str)->Result<SongMetadata,Stri
     Ok(SongMetadata{title:text(song,"name"),artist:artists,album:text(album,"name"),cover:if cover.is_empty(){None}else{Some(cover)}})
 }
 pub struct NeteaseTimeline{reader:Option<Reader>,pub latest:Option<TimingSample>,pub status:String,pub error:Option<String>,retry:Instant,local:PathBuf}
+/// Read-only fields for local compatibility diagnosis; never returns memory addresses.
+pub fn timeline_diagnostics()->serde_json::Value{
+ match Reader::attach(){Err(error)=>serde_json::json!({"error":error}),Ok(r)=>{
+  let state=r.bytes::<4>(r.player+0x60).map(i32::from_le_bytes);let id=r.id();let position=r.bytes::<8>(r.schedule).map(f64::from_le_bytes);let duration=r.bytes::<8>(r.player+0xA8).map(f64::from_le_bytes);
+  let local=std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_default();let metadata=id.as_ref().ok().map(|id|local_metadata(&local,id));
+  serde_json::json!({"state":state,"songId":id,"position":position,"duration":duration,"localMetadata":metadata})
+ }}
+}
 impl NeteaseTimeline{
     pub fn new(local:PathBuf)->Self{Self{reader:None,latest:None,status:"等待网易云".into(),error:None,retry:Instant::now(),local}}
     pub fn read(&mut self,online:bool){

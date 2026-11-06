@@ -9,7 +9,7 @@ on:
       version:
         description: Release version without the leading v
         required: true
-        default: "3.2.1"
+        default: "3.2.2"
       publish:
         description: Publish the release instead of leaving a draft
         type: boolean
@@ -96,6 +96,8 @@ jobs:
           if($verification.ExitCode -ne 0){throw 'Settings verification failed'}
           $themes=Start-Process $app -ArgumentList @('--theme-capture',"$pwd/validation/themes") -WindowStyle Hidden -Wait -PassThru
           if($themes.ExitCode -ne 0){throw 'Theme verification failed'}
+          $covers=Start-Process $app -ArgumentList @('--cover-capture',"$pwd/validation/covers") -WindowStyle Hidden -Wait -PassThru
+          if($covers.ExitCode -ne 0){throw 'Cover and progress verification failed'}
 
       - name: Package validation evidence
         if: always()
@@ -105,6 +107,13 @@ jobs:
             Compress-Archive -Path 'validation/*' -DestinationPath "$out/DotIsle-$env:VERSION-Validation.zip" -Force
             $hash=(Get-FileHash "$out/DotIsle-$env:VERSION-Validation.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
             Add-Content "$out/DotIsle-$env:VERSION-SHA256.txt" "$hash  DotIsle-$env:VERSION-Validation.zip"
+          }
+
+      - name: Require successful acceptance reports
+        run: |
+          foreach($report in @('validation/settings/report.json','validation/themes/report.json','validation/themes/background-report.json','validation/covers/report.json')){
+            if(-not(Test-Path -LiteralPath $report)){throw "Missing acceptance report: $report"}
+            if((Get-Content -LiteralPath $report -Raw | ConvertFrom-Json).success -ne $true){throw "Acceptance failed: $report"}
           }
 
       - name: Create draft release and upload artifacts
