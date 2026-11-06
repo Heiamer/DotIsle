@@ -5,6 +5,8 @@ pub const TITLEBAR_H:f64=56.;
 /// Control-centre face for the configured font scope. `None` keeps the bundled
 /// Google Sans Flex, which also stays the pinned metric source for every rect.
 pub fn center_face(m:&Model)->Option<String>{
+    if crate::swiss::active(m){return Some(Text::system_family("Arial").unwrap_or_else(||"Noto Sans SC".into()))}
+    if crate::miuix::active(m){return Some(Text::system_family("MiSans").unwrap_or_else(||"Noto Sans SC".into()))}
     if crate::pixel::active(m){return Some(crate::pixel::FACE.into())}
     if crate::terminal::active(m){return Some("Space Mono".into())}
     if crate::nothing::active(m){return Some("Space Grotesk".into())}
@@ -17,7 +19,7 @@ pub fn center_face(m:&Model)->Option<String>{
 pub struct View{pub motion_targets:Vec<(String,f64)>,pub scene:Scene,pub hits:Vec<Hit>,pub max_scroll:f64}
 fn page_icon(page:Page)->Icon{match page{Page::Home=>Icon::Home,Page::Music=>Icon::Music,Page::Focus=>Icon::Focus,Page::Todos=>Icon::Todo,Page::Island=>Icon::Island,Page::Settings=>Icon::Settings}}
 fn caption_button(ui:&mut Ui,x:f64,kind:Icon,label:&'static str,action:Action,close:bool){
-    let s=ui.s;let r=rect(x,0.,46.,TITLEBAR_H);let hovered=r.contains(ui.pointer);let locked=ui.nothing||ui.porcelain||ui.terminal||ui.pixel;ui.hit(r,label,action,!(locked&&matches!(kind,Icon::Maximize|Icon::Restore)));
+    let s=ui.s;let r=rect(x,0.,46.,TITLEBAR_H);let hovered=r.contains(ui.pointer);let locked=ui.nothing||ui.miuix||ui.terminal||ui.pixel||ui.swiss;ui.hit(r,label,action,!(locked&&matches!(kind,Icon::Maximize|Icon::Restore)));
     if hovered&&!(locked&&matches!(kind,Icon::Maximize|Icon::Restore)){draw::fill(ui.scene,r,0.,if close{0xC42B1C}else{s.high});}
     // Window chrome uses one shared 12px optical box and a 1.4px stroke.
     // Generic symbol viewBoxes have different ink bounds and a low minimize baseline.
@@ -31,27 +33,27 @@ fn caption_button(ui:&mut Ui,x:f64,kind:Icon,label:&'static str,action:Action,cl
     ui.scene.stroke(&Stroke::new(1.4),Affine::IDENTITY,draw::color(if locked&&matches!(kind,Icon::Maximize|Icon::Restore){s.outline}else if hovered&&close{0xFFFFFF}else{s.on_surface_variant}),None,&path);
 }
 pub fn render(model:&Model,text:&mut Text,width:f64,height:f64,state:&ViewState)->View{
-    let mut scene=Scene::new();let nothing=crate::nothing::active(model);let porcelain=crate::porcelain::active(model);let terminal=crate::terminal::active(model);let pixel=crate::pixel::active(model);let target=if nothing||porcelain||terminal||pixel{crate::nothing::resolved(model)}else{state.color_scheme.unwrap_or_else(||model.scheme())};let s=crate::nothing::blend_to(target);let window=rect(0.,0.,width,height);
-    let mut ui=Ui{selection_values:state.selection_values.clone(),motion_targets:vec![],press_layers:state.press_layers.clone(),switches:state.switches.clone(),scene:&mut scene,text,s,hits:vec![],state_layers:state.state_layers.clone(),pointer:state.pointer,focus:state.focus,pressed:state.pressed,clip:window,nothing,porcelain,terminal,pixel,face:center_face(model)};
+    let mut scene=Scene::new();let nothing=crate::nothing::active(model);let miuix=crate::miuix::active(model);let terminal=crate::terminal::active(model);let pixel=crate::pixel::active(model);let swiss=crate::swiss::active(model);let target=if nothing||miuix||terminal||pixel||swiss{crate::nothing::resolved(model)}else{state.color_scheme.unwrap_or_else(||model.scheme())};let s=crate::nothing::blend_to(target);let window=rect(0.,0.,width,height);
+    let mut ui=Ui{selection_values:state.selection_values.clone(),motion_targets:vec![],press_layers:state.press_layers.clone(),switches:state.switches.clone(),scene:&mut scene,text,s,hits:vec![],state_layers:state.state_layers.clone(),pointer:state.pointer,focus:state.focus,pressed:state.pressed,clip:window,nothing,miuix,terminal,pixel,swiss,face:center_face(model)};
     draw::fill(ui.scene,window,0.,s.surface);crate::background::paint(ui.scene,model,rect(96.,TITLEBAR_H,width-96.,height-TITLEBAR_H));draw::fill(ui.scene,rect(0.,TITLEBAR_H,96.,height-TITLEBAR_H),0.,s.container);
-    if pixel{crate::pixel::panel(ui.scene,rect(16.,14.,28.,28.),s.primary,s.on_surface);}else if terminal{draw::fill(ui.scene,rect(16.,14.,28.,28.),0.,s.primary);}else if nothing{draw::fill(ui.scene,rect(16.,14.,28.,28.),8.,0x000000);draw::outline(ui.scene,rect(16.,14.,28.,28.),8.,s.outline_variant,1.);}else{draw::fill(ui.scene,rect(16.,14.,28.,28.),8.,s.primary);}ui.icon(Icon::Island,22.,20.,16.,if nothing{0xFFFFFF}else{s.on_primary});
+    if swiss{draw::fill(ui.scene,rect(16.,14.,28.,28.),0.,s.primary);}else if pixel{crate::pixel::panel(ui.scene,rect(16.,14.,28.,28.),s.primary,s.on_surface);}else if terminal{draw::fill(ui.scene,rect(16.,14.,28.,28.),0.,s.primary);}else if nothing{draw::fill(ui.scene,rect(16.,14.,28.,28.),8.,0x000000);draw::outline(ui.scene,rect(16.,14.,28.,28.),8.,s.outline_variant,1.);}else{draw::fill(ui.scene,rect(16.,14.,28.,28.),8.,s.primary);}ui.icon(Icon::Island,22.,20.,16.,if nothing{0xFFFFFF}else{s.on_primary});
     ui.label("点屿",52.,16.,16.,s.on_surface,true,44.);ui.label("/",94.,19.,13.,s.outline,false,12.);ui.label(model.page.label(),108.,19.,13.,s.on_surface_variant,false,86.);
     if model.demo{ui.label("设计预览 · 示例歌曲",196.,20.,11.,s.on_surface_variant,false,(width-600.).max(40.));}
     ui.icon_button(rect(width-378.,10.,36.,36.),Icon::Search,"搜索与跳转 · Ctrl+K",Action::Palette,false,true);
     ui.icon_button(rect(width-334.,10.,36.,36.),if model.prefs.dark{Icon::Sun}else{Icon::Moon},"切换明暗主题",Action::Pref("dark"),false,true);
     ui.button(rect(width-290.,10.,140.,36.),if model.prefs.island{"收起灵动岛"}else{"开启灵动岛"},Some(Icon::Island),Action::Pref("island"),true,true);
     caption_button(&mut ui,width-138.,Icon::Minimize,"最小化窗口",Action::WindowMinimize,false);
-    caption_button(&mut ui,width-92.,if state.maximized{Icon::Restore}else{Icon::Maximize},if nothing||porcelain||terminal||pixel{"窗口尺寸已固定"}else if state.maximized{"还原窗口"}else{"最大化窗口"},Action::WindowMaximize,false);
+    caption_button(&mut ui,width-92.,if state.maximized{Icon::Restore}else{Icon::Maximize},if nothing||miuix||terminal||pixel||swiss{"窗口尺寸已固定"}else if state.maximized{"还原窗口"}else{"最大化窗口"},Action::WindowMaximize,false);
     caption_button(&mut ui,width-46.,Icon::Close,"关闭窗口",Action::WindowClose,true);
-    let rail_y=if nothing||terminal||pixel{112.+Page::ALL.iter().position(|p|*p==model.page).unwrap_or(0)as f64*82.}else if state.rail_y>=TITLEBAR_H{state.rail_y}else{112.+Page::ALL.iter().position(|p|*p==model.page).unwrap_or(0)as f64*82.};
-    let stretch=if nothing||terminal||pixel||model.prefs.reduced_motion{0.}else{state.rail_target.map(|target|((target-rail_y).abs()*0.12).min(14.)).unwrap_or(0.)};draw::fill(ui.scene,rect(18.+stretch*0.15,rail_y-stretch/2.,60.-stretch*0.3,36.+stretch),if terminal||pixel{0.}else{18.},s.secondary_container);
+    let rail_y=if nothing||terminal||pixel||swiss{112.+Page::ALL.iter().position(|p|*p==model.page).unwrap_or(0)as f64*82.}else if state.rail_y>=TITLEBAR_H{state.rail_y}else{112.+Page::ALL.iter().position(|p|*p==model.page).unwrap_or(0)as f64*82.};
+    let stretch=if nothing||terminal||pixel||swiss||model.prefs.reduced_motion{0.}else{state.rail_target.map(|target|((target-rail_y).abs()*0.12).min(14.)).unwrap_or(0.)};draw::fill(ui.scene,rect(18.+stretch*0.15,rail_y-stretch/2.,60.-stretch*0.3,36.+stretch),if terminal||pixel||swiss{0.}else if miuix{14.}else{18.},s.secondary_container);
     for(i,page)in Page::ALL.iter().enumerate(){let y=112.+i as f64*82.;let r=rect(8.,y-8.,80.,72.);let index=ui.hit(r,page.label(),Action::Navigate(*page),true);ui.state(rect(18.,y,60.,36.),18.,index,s.on_surface);ui.icon(page_icon(*page),36.,y+6.,24.,if model.page==*page{s.on_secondary_container}else{s.on_surface_variant});ui.center(page.label(),rect(8.,y+38.,80.,26.),12.,s.on_surface_variant,model.page==*page);}
     ui.center(if terminal{"TTY"}else{"V3"},rect(8.,height-44.,80.,26.),12.,s.on_surface_variant,true);
     let x=132.;let w=width-x-36.;
-    ui.label(if terminal{crate::terminal::page(model.page)}else{model.page.label()},x,101.,if terminal{28.}else{40.},s.on_surface,true,w-220.);ui.label(model.page.description(),x,159.,15.,s.on_surface_variant,false,w-220.);
-    if model.page==Page::Todos{ui.button(rect(width-198.,118.,162.,52.),"新建待办",Some(Icon::Plus),Action::EditTodo(None),false,true);}
+    if swiss{let(title,index)=crate::swiss::page(model.page);ui.label(title,x,91.,44.,s.on_surface,true,w-100.);ui.label(index,width-115.,88.,56.,s.primary,true,90.);ui.label(model.page.description(),x,159.,14.,s.on_surface_variant,false,w-150.);draw::fill(ui.scene,rect(x,194.,w,2.),0.,s.on_surface);}else{ui.label(if terminal{crate::terminal::page(model.page)}else{model.page.label()},x,101.,if terminal{28.}else if miuix{36.}else{40.},s.on_surface,true,w-220.);ui.label(model.page.description(),x,159.,15.,s.on_surface_variant,false,w-220.);}
+    if model.page==Page::Todos{ui.button(rect(if swiss{width-320.}else{width-198.},118.,162.,52.),"新建待办",Some(Icon::Plus),Action::EditTodo(None),false,true);}
     let clip=Rect::new(x-4.,203.,width-24.,height-20.);ui.clip(clip);
-    let enter=if nothing||terminal||pixel||model.prefs.reduced_motion{1.}else{state.page_enter.unwrap_or(1.)};let e=enter.clamp(0.,1.);ui.scene.push_layer(vello::peniko::Mix::Normal,(0.82+0.18*e)as f32,Affine::IDENTITY,&clip);let y=212.-model.scroll+12.*(1.-e);
+    let enter=if nothing||terminal||pixel||swiss||model.prefs.reduced_motion{1.}else{state.page_enter.unwrap_or(1.)};let e=enter.clamp(0.,1.);ui.scene.push_layer(vello::peniko::Mix::Normal,(0.82+0.18*e)as f32,Affine::IDENTITY,&clip);let y=212.-model.scroll+12.*(1.-e);
     let bottom=match model.page{Page::Home=>home(&mut ui,model,x,y,w,state),Page::Music=>music(&mut ui,model,x,y,w,state),Page::Focus=>focus(&mut ui,model,x,y,w),Page::Todos=>todos(&mut ui,model,x,y,w),Page::Island=>crate::island_settings::render(&mut ui,model,x,y,w,state),Page::Settings=>settings(&mut ui,model,x,y,w)};
     ui.scene.pop_layer();ui.end_clip(window);
     let max_scroll=(bottom+model.scroll-(height-28.)).max(0.);
@@ -65,15 +67,16 @@ pub fn render(model:&Model,text:&mut Text,width:f64,height:f64,state:&ViewState)
     if model.tutorial.is_some(){crate::tutorial::overlay(&mut ui,model,width,height,state);}
     let max_scroll=if model.tutorial.is_some(){0.}else{max_scroll};let motion_targets=ui.motion_targets;let hits=ui.hits;View{motion_targets,scene,hits,max_scroll}
 }
-fn record(ui:&mut Ui,m:&Model,r:Rect,_flower:bool){if let Some(a)=&m.artwork{if ui.pixel{crate::cover_art::paint(ui.scene,&a.covers.pixel,r);}else if ui.terminal{draw::fill(ui.scene,r,0.,ui.s.high);crate::cover_art::paint(ui.scene,&a.covers.terminal,r);}else{draw::image(ui.scene,&a.image,r,15.);}}else if ui.pixel{crate::pixel::record(ui.scene,r,ui.s.primary,ui.s.on_surface);}else if ui.terminal{crate::terminal::record(ui.scene,r,ui.s.primary,ui.s.high);}else{draw::fill(ui.scene,r,15.,ui.s.secondary_container);let size=r.width().min(r.height())*0.32;ui.icon(Icon::Music,r.center().x-size/2.,r.center().y-size/2.,size,ui.s.on_surface_variant);}}
-fn player_controls(ui:&mut Ui,m:&Model,x:f64,y:f64,large:bool){
+pub(crate) fn record(ui:&mut Ui,m:&Model,r:Rect,_flower:bool){if let Some(a)=&m.artwork{draw::image(ui.scene,&a.image,r,if ui.pixel||ui.terminal||ui.swiss{0.}else if ui.miuix{16.}else{15.});}else if ui.pixel{crate::pixel::record(ui.scene,r,ui.s.primary,ui.s.on_surface);}else if ui.terminal{crate::terminal::record(ui.scene,r,ui.s.primary,ui.s.high);}else{draw::fill(ui.scene,r,if ui.swiss{0.}else{15.},if ui.swiss{ui.s.high}else{ui.s.secondary_container});let size=r.width().min(r.height())*0.32;ui.icon(Icon::Music,r.center().x-size/2.,r.center().y-size/2.,size,ui.s.on_surface_variant);}}
+pub(crate) fn player_controls(ui:&mut Ui,m:&Model,x:f64,y:f64,large:bool){
     let s=ui.s;let size=if large{64.}else{52.};let pad=(size-44.)/2.;let ink=dotisle_domain::music_controls::on_surface(s.primary_container,s.on_primary_container);
     ui.s.on_surface_variant=ink;ui.icon_button(rect(x,y+pad,44.,44.),Icon::Prev,"上一首",Action::Media("previous"),false,m.track());ui.s=s;
     ui.icon_button(rect(x+56.,y,size,size),if m.playing(){Icon::Pause}else{Icon::Play},if m.playing(){"暂停播放"}else{"开始播放"},Action::Media("toggle"),true,m.track());
     ui.s.on_surface_variant=ink;ui.icon_button(rect(x+size+68.,y+pad,44.,44.),Icon::Next,"下一首",Action::Media("next"),false,m.track());ui.s=s;
 }
-fn progress(ui:&mut Ui,m:&Model,r:Rect,state:&ViewState){let duration=m.snapshot["track"]["durationSeconds"].as_f64().unwrap_or(0.);let pos=state.media_position.unwrap_or_else(||m.snapshot["positionSeconds"].as_f64().unwrap_or(0.));let bar=dotisle_render::progress::BarStyle::from_setting(m.setting("ProgressBarStyle").as_str().unwrap_or("Wavy"));let thumb=if m.setting("ProgressBarThumbEnabled").as_bool().unwrap_or(false){dotisle_render::progress::ThumbStyle::from_setting(m.setting("ProgressBarThumb").as_str().unwrap_or("Pill"))}else{dotisle_render::progress::ThumbStyle::None};let spin=if m.setting("ProgressBarThumbSpin").as_bool().unwrap_or(false)&&!m.prefs.reduced_motion{state.time*0.25}else{0.};ui.slider(r,if duration>0.{pos/duration}else{0.},m.track()&&m.snapshot["canSeek"].as_bool().unwrap_or(false),if m.playing()&&!m.prefs.reduced_motion{state.time*2.}else{0.},spin,bar,thumb);ui.label(&dotisle_domain::timers::format_time(pos.max(0.)as u64),r.x0,r.y1+2.,11.,ui.s.on_surface_variant,false,80.);let total=dotisle_domain::timers::format_time(duration.max(0.)as u64);ui.label(&total,r.x1-42.,r.y1+2.,11.,ui.s.on_surface_variant,false,60.);}
+pub(crate) fn progress(ui:&mut Ui,m:&Model,r:Rect,state:&ViewState){let duration=m.snapshot["track"]["durationSeconds"].as_f64().unwrap_or(0.);let pos=state.media_position.unwrap_or_else(||m.snapshot["positionSeconds"].as_f64().unwrap_or(0.));let bar=dotisle_render::progress::BarStyle::from_setting(m.setting("ProgressBarStyle").as_str().unwrap_or("Wavy"));let thumb=if m.setting("ProgressBarThumbEnabled").as_bool().unwrap_or(false){dotisle_render::progress::ThumbStyle::from_setting(m.setting("ProgressBarThumb").as_str().unwrap_or("Pill"))}else{dotisle_render::progress::ThumbStyle::None};let spin=if m.setting("ProgressBarThumbSpin").as_bool().unwrap_or(false)&&!m.prefs.reduced_motion{state.time*0.25}else{0.};ui.slider(r,if duration>0.{pos/duration}else{0.},m.track()&&m.snapshot["canSeek"].as_bool().unwrap_or(false),if m.playing()&&!m.prefs.reduced_motion{state.time*2.}else{0.},spin,bar,thumb);ui.label(&dotisle_domain::timers::format_time(pos.max(0.)as u64),r.x0,r.y1+2.,11.,ui.s.on_surface_variant,false,80.);let total=dotisle_domain::timers::format_time(duration.max(0.)as u64);ui.label(&total,r.x1-42.,r.y1+2.,11.,ui.s.on_surface_variant,false,60.);}
 fn home(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64,state:&ViewState)->f64{
+    if ui.swiss{return crate::swiss::home(ui,m,x,y,w,state)}
     let s=ui.s;let gap=20.;let left=(w-gap)*0.63;let right=w-left-gap;let rx=x+left+gap;
     ui.panel(rect(x,y,left,300.),s.primary_container);ui.label(if m.track(){"此刻的旋律"}else{"音乐，随时相伴"},x+26.,y+24.,13.,s.on_primary_container,true,left-52.);
     record(ui,m,rect(x+left-190.,y+62.,160.,160.),true);
@@ -92,11 +95,11 @@ fn home(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64,state:&ViewState)->f64{
     y+216.
 }
 fn music(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64,state:&ViewState)->f64{
-    let s=ui.s;ui.panel(rect(x,y,w,300.),s.primary_container);record(ui,m,rect(x+24.,y+24.,252.,252.),false);let px=x+310.;let avail=w-340.;
+    let s=ui.s;if ui.swiss{crate::swiss::music_head(ui,m,x,y,w,state);}else{ui.panel(rect(x,y,w,300.),s.primary_container);record(ui,m,rect(x+24.,y+24.,252.,252.),false);let px=x+310.;let avail=w-340.;
     ui.label(if m.demo{"音乐预览"}else if m.track(){"正在播放"}else{"等待播放器"},px,y+25.,12.,s.on_primary_container,true,avail);
     ui.label(m.title(),px,y+60.,36.,s.on_primary_container,true,avail);ui.label(m.artist(),px,y+113.,16.,s.on_primary_container,false,avail);
     progress(ui,m,rect(px,y+164.,avail,28.),state);player_controls(ui,m,px+avail/2.-88.,y+218.,true);
-    let mut y=y+320.;
+    }let mut y=y+if ui.swiss{364.}else{320.};
     if m.track()&&m.snapshot["canSeek"].as_bool()==Some(false){
         let status=m.snapshot["seekStatus"].as_str().unwrap_or("播放器尚未提供静默进度通道");
         ui.panel(rect(x,y,w,64.),s.container);ui.label("播放进度",x+24.,y+12.,15.,s.on_surface,true,200.);ui.label(status,x+24.,y+38.,12.,s.on_surface_variant,false,w-280.);
@@ -105,17 +108,17 @@ fn music(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64,state:&ViewState)->f64{
     }
     ui.panel(rect(x,y,w,194.),s.container);ui.label("歌词",x+26.,y+22.,13.,s.on_surface_variant,true,100.);
     let line=m.snapshot["frame"]["currentLine"].as_str().filter(|s|!s.is_empty()).unwrap_or("把耳朵交给音乐，把此刻留给自己。");
-    ui.label(line,x+26.,y+if ui.nothing||ui.porcelain||ui.terminal||ui.pixel{52.}else{56.},if ui.nothing||ui.porcelain||ui.terminal||ui.pixel{24.}else{28.},s.on_surface,true,w-52.);
-    if m.prefs.word_highlight&&m.track(){let p=m.snapshot["frame"]["wordScanProgress"].as_f64().unwrap_or(0.).clamp(0.,1.);ui.scene.push_clip_layer(Affine::IDENTITY,&rect(x+26.,y+if ui.nothing||ui.porcelain||ui.terminal||ui.pixel{50.}else{54.},(w-52.)*p,45.));ui.label(line,x+26.,y+if ui.nothing||ui.porcelain||ui.terminal||ui.pixel{52.}else{56.},if ui.nothing||ui.porcelain||ui.terminal||ui.pixel{24.}else{28.},s.primary,true,w-52.);ui.scene.pop_layer();}
-    if m.prefs.translation{let tr=m.snapshot["frame"]["currentTranslation"].as_str().unwrap_or("");ui.label(tr,x+28.,y+if ui.nothing||ui.porcelain||ui.terminal||ui.pixel{110.}else{105.},14.,s.on_surface_variant,false,w-56.);}
-    ui.label(m.snapshot["frame"]["nextLine"].as_str().unwrap_or("歌词会在歌曲播放后自动匹配"),x+28.,y+if ui.nothing||ui.porcelain||ui.terminal||ui.pixel{156.}else{147.},18.,s.on_surface_variant,false,w-56.);
+    ui.label(line,x+26.,y+if ui.nothing||ui.miuix||ui.terminal||ui.pixel||ui.swiss{52.}else{56.},if ui.nothing||ui.miuix||ui.terminal||ui.pixel||ui.swiss{24.}else{28.},s.on_surface,true,w-52.);
+    if m.prefs.word_highlight&&m.track(){let p=m.snapshot["frame"]["wordScanProgress"].as_f64().unwrap_or(0.).clamp(0.,1.);ui.scene.push_clip_layer(Affine::IDENTITY,&rect(x+26.,y+if ui.nothing||ui.miuix||ui.terminal||ui.pixel||ui.swiss{50.}else{54.},(w-52.)*p,45.));ui.label(line,x+26.,y+if ui.nothing||ui.miuix||ui.terminal||ui.pixel||ui.swiss{52.}else{56.},if ui.nothing||ui.miuix||ui.terminal||ui.pixel||ui.swiss{24.}else{28.},s.primary,true,w-52.);ui.scene.pop_layer();}
+    if m.prefs.translation{let tr=m.snapshot["frame"]["currentTranslation"].as_str().unwrap_or("");ui.label(tr,x+28.,y+if ui.nothing||ui.miuix||ui.terminal||ui.pixel||ui.swiss{110.}else{105.},14.,s.on_surface_variant,false,w-56.);}
+    ui.label(m.snapshot["frame"]["nextLine"].as_str().unwrap_or("歌词会在歌曲播放后自动匹配"),x+28.,y+if ui.nothing||ui.miuix||ui.terminal||ui.pixel||ui.swiss{156.}else{147.},18.,s.on_surface_variant,false,w-56.);
     let y=y+214.;ui.panel(rect(x,y,w,72.),s.high);ui.label("歌词同步",x+24.,y+13.,15.,s.on_surface,true,200.);ui.label("向左提前，向右延后 · 每次 100 ms",x+24.,y+39.,12.,s.on_surface_variant,false,w-300.);
     ui.icon_button(rect(x+w-238.,y+14.,44.,44.),Icon::Back,"歌词提前 100 毫秒",Action::Offset(-100),false,true);ui.center(&format!("{:+} ms",m.prefs.offset_ms),rect(x+w-187.,y+14.,120.,44.),15.,s.primary,true);ui.icon_button(rect(x+w-60.,y+14.,44.,44.),Icon::Arrow,"歌词延后 100 毫秒",Action::Offset(100),false,true);y+72.
 }
 fn focus(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64)->f64{crate::timer_surface::render(ui,m,x,y,w)}
 fn todos(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64)->f64{
     let s=ui.s;ui.label(&format!("{} 件未完成 · 共 {} 件",m.pending(),m.todos.items.len()),x+4.,y+4.,13.,s.on_surface_variant,false,w);let now=dotisle_domain::todos::Now::local();let mut items=m.todos.items.iter().collect::<Vec<_>>();items.sort_by_key(|t|(t.done(&now),t.date.clone(),t.time.clone()));
-    if items.is_empty(){ui.panel(rect(x,y+45.,w,360.),s.container);if ui.nothing||ui.terminal||ui.pixel{ui.icon(Icon::Leaf,x+w/2.-22.,y+136.,44.,s.on_surface);}else{draw::circle(ui.scene,x+w/2.,y+158.,42.,s.secondary_container);ui.icon(Icon::Leaf,x+w/2.-22.,y+136.,44.,if ui.porcelain{s.on_secondary_container}else{s.primary});}ui.center("心里，少一点牵挂",rect(x,y+234.,w,44.),28.,s.on_surface,true);ui.center("点击右上角的新建待办，记下第一件事。",rect(x,y+293.,w,28.),14.,s.on_surface_variant,false);return y+405.}
+    if items.is_empty(){ui.panel(rect(x,y+45.,w,360.),s.container);if ui.nothing||ui.terminal||ui.pixel||ui.swiss{ui.icon(Icon::Leaf,x+w/2.-22.,y+136.,44.,s.on_surface);}else{draw::circle(ui.scene,x+w/2.,y+158.,42.,s.secondary_container);ui.icon(Icon::Leaf,x+w/2.-22.,y+136.,44.,if ui.miuix{s.on_secondary_container}else{s.primary});}ui.center("心里，少一点牵挂",rect(x,y+234.,w,44.),28.,s.on_surface,true);ui.center("点击右上角的新建待办，记下第一件事。",rect(x,y+293.,w,28.),14.,s.on_surface_variant,false);return y+405.}
     let mut bottom=y+42.;for t in items{let done=t.done(&now);ui.panel(rect(x,bottom,w,96.),if done{s.container}else{s.high});ui.icon_button(rect(x+16.,bottom+26.,44.,44.),Icon::Check,if done{"恢复待办"}else{"完成待办"},Action::ToggleTodo(t.id.clone()),done,true);let title=if done{format!("已完成 · {}",t.title)}else{t.title.clone()};ui.label(&title,x+78.,bottom+17.,18.,if done{s.on_surface_variant}else{s.on_surface},!done,w-248.);ui.label(&format!("{}  {}{}{}",t.date,t.time,if t.daily{" · 每天"}else{""},if t.content.is_empty(){String::new()}else{format!("  /  {}",t.content)}),x+78.,bottom+54.,13.,s.on_surface_variant,false,w-248.);ui.button(rect(x+w-156.,bottom+26.,88.,44.),"编辑",None,Action::EditTodo(Some(t.id.clone())),true,true);ui.icon_button(rect(x+w-60.,bottom+26.,44.,44.),Icon::Trash,"移除待办",Action::DeleteTodo(t.id.clone()),false,true);bottom+=108.;}bottom
 }
 fn settings(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64)->f64{

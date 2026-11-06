@@ -100,7 +100,7 @@ impl App{
   }
   if key==Key::Named(NamedKey::Escape)&&self.drag.is_some(){self.cancel_drag();self.redraw();return}if key==Key::Named(NamedKey::Escape){if self.model.dialog.is_some(){self.action(Action::CancelModal);}else if self.model.palette{self.action(Action::Palette);}else if cloud{self.model.cloud_expanded=false;}return}
   if self.mods.control_key(){if let Key::Character(c)=&key{match c.to_lowercase().as_str(){"k"=>{self.action(Action::Palette);return},"v"=>{if let Some(text)=platform::clipboard(){self.model.input(&text);}self.redraw();return},"a"=>{self.model.select_all();self.redraw();return},"1"|"2"|"3"|"4"|"5"|"6"=>{let i=c.parse::<usize>().unwrap_or(1)-1;self.rail.snap(112.+i as f64*82.);self.action(Action::Navigate(Page::ALL[i]));return},_=>{}}}}
-  if !cloud&&self.model.page==Page::Settings&&self.model.settings_tab==0&&self.model.dialog.is_none(){if let Key::Named(NamedKey::ArrowLeft|NamedKey::ArrowRight)=key{let cur=crate::nothing::slot(&self.model);let next=if matches!(key,Key::Named(NamedKey::ArrowRight)){(cur+1).min(4)}else{cur.saturating_sub(1)};self.action(Action::ControlTheme(next));return}}
+  if !cloud&&self.model.page==Page::Settings&&self.model.settings_tab==0&&self.model.dialog.is_none(){if let Key::Named(NamedKey::ArrowLeft|NamedKey::ArrowRight)=key{let cur=crate::nothing::slot(&self.model);let next=if matches!(key,Key::Named(NamedKey::ArrowRight)){(cur+1).min(5)}else{cur.saturating_sub(1)};self.action(Action::ControlTheme(next));return}}
   if key==Key::Named(NamedKey::Tab){if let Some(d)=&mut self.model.dialog{if !d.fields.is_empty(){let n=d.fields.len();d.active=(d.active+if self.mods.shift_key(){n-1}else{1})%n;}self.redraw();return}let reverse=self.mods.shift_key();if let Some(s)=self.get(cloud){let enabled=s.hits.iter().enumerate().filter(|(_,h)|h.enabled).map(|(i,_)|i).collect::<Vec<_>>();if !enabled.is_empty(){let pos=s.focus.and_then(|i|enabled.iter().position(|n|*n==i));let next=if reverse{pos.map(|p|(p+enabled.len()-1)%enabled.len()).unwrap_or(enabled.len()-1)}else{pos.map(|p|(p+1)%enabled.len()).unwrap_or(0)};s.focus=Some(enabled[next]);}}self.redraw();return}
   if let Key::Named(n)=&key{let name=match n{NamedKey::ArrowLeft=>Some("Left"),NamedKey::ArrowRight=>Some("Right"),NamedKey::Home=>Some("Home"),NamedKey::End=>Some("End"),NamedKey::Delete=>Some("Delete"),_=>None};if let Some(name)=name{if self.model.dialog.is_some(){self.model.edit_key(name);self.redraw();return}}}
   if key==Key::Named(NamedKey::Backspace){self.model.backspace();self.redraw();return}
@@ -181,9 +181,9 @@ pub fn verify_seek_inputs(data:&std::path::Path)->Result<(),String>{
 /// Exercise the same drag/release/cancel handlers used by the native window.
 pub fn verify_theme_inputs(out:&std::path::Path)->Result<(),String>{
  let mut app=App::new(Model::new(out.to_path_buf(),true));app.model.page=Page::Settings;app.model.settings_tab=0;
- for target in 0..5u8{app.drag=Some(Action::ThemeHandle([100.,100.,600.,60.]));app.drag_to((100.+150.*target as f64,100.));app.up();if crate::nothing::slot(&app.model)!=target{return Err(format!("theme drag/release failed for {target}"))}}
- app.drag=Some(Action::ThemeHandle([100.,100.,600.,60.]));app.drag_to((100.,100.));app.cancel_drag();app.up();if crate::nothing::slot(&app.model)!=4{return Err("cancelled theme drag committed".into())}
- app.key(false,Key::Named(NamedKey::ArrowLeft),None);if crate::nothing::slot(&app.model)!=3{return Err("left arrow failed".into())}
- app.key(false,Key::Named(NamedKey::ArrowRight),None);if crate::nothing::slot(&app.model)!=4{return Err("right arrow failed".into())}
+ for target in 0..6u8{app.drag=Some(Action::ThemeHandle([100.,100.,600.,60.]));app.drag_to((100.+120.*target as f64,100.));app.up();if crate::nothing::slot(&app.model)!=target{return Err(format!("theme drag/release failed for {target}"))}}
+ app.drag=Some(Action::ThemeHandle([100.,100.,600.,60.]));app.drag_to((100.,100.));app.cancel_drag();app.up();if crate::nothing::slot(&app.model)!=5{return Err("cancelled theme drag committed".into())}
+ app.key(false,Key::Named(NamedKey::ArrowLeft),None);if crate::nothing::slot(&app.model)!=4{return Err("left arrow failed".into())}
+ app.key(false,Key::Named(NamedKey::ArrowRight),None);if crate::nothing::slot(&app.model)!=5{return Err("right arrow failed".into())}
  crate::nothing::end_transition();Ok(())
 }

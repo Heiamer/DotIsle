@@ -8,15 +8,15 @@
 
 音乐控制与实时歌词 · 番茄钟与计时 · 待办提醒 · 通知与设备
 
-[下载安装版](https://github.com/Heiamer/DotIsle/releases/download/v3.2.2/DotIsle-3.2.2-Setup.exe) · [下载便携版](https://github.com/Heiamer/DotIsle/releases/download/v3.2.2/DotIsle-3.2.2-Portable.zip) · [3.2.2 更新说明](https://github.com/Heiamer/DotIsle/releases/tag/v3.2.2) · [反馈问题](https://github.com/Heiamer/DotIsle/issues)
+[下载安装版](https://github.com/Heiamer/DotIsle/releases/download/v3.2.3/DotIsle-3.2.3-Setup.exe) · [下载便携版](https://github.com/Heiamer/DotIsle/releases/download/v3.2.3/DotIsle-3.2.3-Portable.zip) · [3.2.3 更新说明](https://github.com/Heiamer/DotIsle/releases/tag/v3.2.3) · [反馈问题](https://github.com/Heiamer/DotIsle/issues)
 
 Windows 10 / 11 · x64 · Rust 原生应用
 
 </div>
 
-## 五套主题，同一套功能
+## 六套主题，同一套功能
 
-![点屿 3.2.2 五套主题：默认、Nothing、云瓷、终端 TTY 与像素 Pixel](docs/images/themes-3.2.2.png)
+![点屿 3.2.3 六套主题：默认、Nothing、MIUIX、终端 TTY、像素 Pixel 与 Swiss](docs/images/themes-3.2.3.png)
 
 截图来自应用原生渲染；歌曲、歌词与待办为演示数据。点击图片可查看大图。
 
@@ -24,17 +24,18 @@ Windows 10 / 11 · x64 · Rust 原生应用
 | --- | --- |
 | **默认** | 保留原有配色、布局、图标和窗口行为。 |
 | **Nothing** | 黑白工业风、简洁线条图标与点阵计时数字。 |
-| **云瓷 · Porcelain** | 暖灰、瓷白、亮蓝，圆润卡片与白色滑钮。 |
-| **终端 · TTY** | 等宽字符、方正面板、色块唱片和离散进度。 |
-| **像素 · Pixel** | 中英像素字体、16 位机卡带、方块图标与阶梯边框。 |
+| **MIUIX** | 白色分组、连续圆角、蓝色强调和轻量交互，支持原云瓷配置迁移。 |
+| **终端 · TTY** | 等宽字符、方正面板、块状进度与原始专辑封面。 |
+| **像素 · Pixel** | 中英像素字体、方块图标与阶梯边框，专辑封面保留原图。 |
+| **瑞士国际 · Swiss** | 编号、左对齐大字、非对称网格、黑白纸色与一抹红色。 |
 
-在 **控制中心 → 设置 → 外观** 选择主题。五个选项块支持点击、拖动和键盘切换，重启后保留选择；四套非默认主题使用固定窗口尺寸。
+在 **控制中心 → 设置 → 外观** 选择主题。六个选项块支持点击、拖动和键盘切换，重启后保留选择；五套非默认主题使用固定窗口尺寸。
 
-### 让真实封面变成色块与字符
+### 专辑封面，原样呈现
 
-![原始专辑封面、终端半块字符与 RGB565 像素封面的对比](docs/images/covers-3.2.2.png)
+所有主题都直接显示播放器提供的原始封面。终端与像素主题保留各自的字体、图标和控件风格，图片不再经过 ASCII、像素化、RGB565 或调色板滤镜。
 
-终端和像素主题都使用正在播放歌曲的真实封面，颜色来自原图；仅在没有封面时显示占位图。转换结果随封面缓存，切歌或封面延迟到达后自动刷新。播放进度采用**已播实心块、未播空心块**，暂停时同样可辨。
+播放进度继续用**已播实心块、未播空心块**区分。切歌或封面延迟到达后自动刷新，缺少图片时才显示占位图。
 
 ### 用自己的图片做背景
 
@@ -50,15 +51,15 @@ Windows 10 / 11 · x64 · Rust 原生应用
 
 ## 下载与开始使用
 
-最新正式版：**[3.2.2](https://github.com/Heiamer/DotIsle/releases/tag/v3.2.2)**。发行包由 [GitHub Actions](https://github.com/Heiamer/DotIsle/actions/workflows/windows-release.yml) 编译，运行时不需要安装 Rust、Python 或 .NET。
+最新正式版：**[3.2.3](https://github.com/Heiamer/DotIsle/releases/tag/v3.2.3)**。发行包由 [GitHub Actions](https://github.com/Heiamer/DotIsle/actions/workflows/windows-release.yml) 编译，运行时不需要安装 Rust、Python 或 .NET。
 
 | 文件 | 用途 |
 | --- | --- |
-| [安装版 · Setup.exe](https://github.com/Heiamer/DotIsle/releases/download/v3.2.2/DotIsle-3.2.2-Setup.exe) | 推荐使用。标准安装向导，支持开始菜单与卸载。 |
-| [便携版 · Portable.zip](https://github.com/Heiamer/DotIsle/releases/download/v3.2.2/DotIsle-3.2.2-Portable.zip) | 免安装，完整解压后运行 `LyricIsland.exe`。 |
-| [完整源码 · Source.zip](https://github.com/Heiamer/DotIsle/releases/download/v3.2.2/DotIsle-3.2.2-Source.zip) | 对应发行构建的源码、资源与第三方许可。 |
-| [SHA256 校验清单](https://github.com/Heiamer/DotIsle/releases/download/v3.2.2/DotIsle-3.2.2-SHA256.txt) | 校验下载文件是否完整。 |
-| [验证记录 · Validation.zip](https://github.com/Heiamer/DotIsle/releases/download/v3.2.2/DotIsle-3.2.2-Validation.zip) | Actions 中的控制中心与主题渲染验收记录。 |
+| [安装版 · Setup.exe](https://github.com/Heiamer/DotIsle/releases/download/v3.2.3/DotIsle-3.2.3-Setup.exe) | 推荐使用。标准安装向导，支持开始菜单与卸载。 |
+| [便携版 · Portable.zip](https://github.com/Heiamer/DotIsle/releases/download/v3.2.3/DotIsle-3.2.3-Portable.zip) | 免安装，完整解压后运行 `LyricIsland.exe`。 |
+| [完整源码 · Source.zip](https://github.com/Heiamer/DotIsle/releases/download/v3.2.3/DotIsle-3.2.3-Source.zip) | 对应发行构建的源码、资源与第三方许可。 |
+| [SHA256 校验清单](https://github.com/Heiamer/DotIsle/releases/download/v3.2.3/DotIsle-3.2.3-SHA256.txt) | 校验下载文件是否完整。 |
+| [验证记录 · Validation.zip](https://github.com/Heiamer/DotIsle/releases/download/v3.2.3/DotIsle-3.2.3-Validation.zip) | Actions 中的控制中心与主题渲染验收记录。 |
 
 1. 安装，或把便携包**完整解压到可写目录**；不要在压缩包内直接启动 EXE。
 2. 运行点屿，从系统托盘打开控制中心。
@@ -71,7 +72,7 @@ Windows 10 / 11 · x64 · Rust 原生应用
 
 在“关于与更新”检查更新，或手动下载新包。手动迁移时先退出旧版，备份并复制原运行目录的 `Data` 到新目录；不要同时运行两个版本操作同一份数据。
 
-发行页中的 `LyricIsland-3.2.2-Portable.zip` 与对应 SHA256 文件供旧更新器识别，日常下载请使用上表的 DotIsle 包。国内镜像可能晚于 GitHub 更新。
+发行页中的 `LyricIsland-3.2.3-Portable.zip` 与对应 SHA256 文件供旧更新器识别，日常下载请使用上表的 DotIsle 包。国内镜像可能晚于 GitHub 更新。
 
 ## 能做什么
 
@@ -79,22 +80,22 @@ Windows 10 / 11 · x64 · Rust 原生应用
 - **专注与计时**：番茄钟、倒计时、秒表和流程计时，支持多项目与暂停恢复。
 - **待办与提醒**：记录、编辑、完成、撤销，以及日期和时间提醒。
 - **通知与设备**：在岛体中展示通知与设备连接状态，具体能力受系统、权限及设备接口影响。
-- **外观与交互**：五套主题、独立图片背景、明暗模式、灵动岛布局与动画设置。
+- **外观与交互**：六套主题、独立图片背景、明暗模式、灵动岛布局与动画设置。
 
-## 3.2.2 修了什么
+## 3.2.3 更新
 
-- 终端和像素主题从固定唱片 / 卡带占位图改为真实封面重绘，分别使用彩色半块字符与 RGB565 色块。
-- 已播、未播进度改用实心和空心两种形态区分，不再只靠接近的颜色。
-- 取消网易云固定客户端资源包的哈希白名单，按实际进程与 CEF 窗口能力识别控制通道。
-- 默认主题保留原有外观，其他主题的布局、背景和已有功能继续保留。
+- 封面恢复原图直出，移除终端和像素主题的图片滤镜。
+- 云瓷替换为 MIUIX，旧主题选择及独立图片背景自动迁移。设计参考 [MIUIX 官方组件](https://github.com/compose-miuix-ui/miuix)，在现有原生渲染中实现。
+- 新增第六套 Swiss 瑞士国际风格，重新排列音乐版式并绘制几何图标，支持明暗与独立背景。
+- 六个主题选项块支持点击、拖动、方向键及重启记忆，默认主题保持原样。
 
-**网易云兼容范围：** 当前已在 3.1.43.205627 验证连续跳转、快速请求合并、暂停后跳转并保持暂停，以及原进度和播放状态恢复。该客户端仍会产生任务栏注意力请求，保护线程已全部清除；其他版本和窗口场景仍需分别验证，去除版本白名单不等于保证任意布局都兼容。详见[本版发布说明](https://github.com/Heiamer/DotIsle/releases/tag/v3.2.2)。
+**网易云兼容范围：** 沿用 3.2.2 已验证的进度控制，取消固定资源包哈希白名单。3.1.43.205627 已验证连续跳转、请求合并、暂停后跳转并保持暂停，以及原状态恢复。客户端仍会产生任务栏注意力请求，保护线程已全部清除；其他版本和窗口场景仍按实际能力检测。详见[本版发布说明](https://github.com/Heiamer/DotIsle/releases/tag/v3.2.3)。
 
 ## 源码与构建
 
 使用 **Rust、Win32、Vello Hybrid、wgpu 与 Parley**。源码包含发行所需字体、资源和第三方补丁，不包含用户数据或编译缓存。
 
-推荐使用仓库的 [Windows Release 工作流](.github/workflows/windows-release.yml) 构建；本地环境与命令见 **[3.2.2 构建说明](BUILD-3.2.2.md)**。本版通过 490 项工作区测试，以及主题、背景和控制中心渲染检查；自动检查不能替代所有播放器与桌面交互场景的实机验证。
+推荐使用仓库的 [Windows Release 工作流](.github/workflows/windows-release.yml) 构建；本地环境与命令见 **[3.2.3 构建说明](BUILD-3.2.3.md)**。本版通过 490 项工作区测试，以及主题、背景和控制中心渲染检查；自动检查不能替代所有播放器与桌面交互场景的实机验证。
 
 ## 许可与反馈
 

@@ -8,7 +8,7 @@ pub fn run(out:&Path)->Result<(),String>{
  crate::background::verify(out)?;
  let data=out.join("isolated-data");let mut m=Model::new(data.clone(),true);m.tutorial=None;m.tutorial_checked=true;
  let mut text=Text::new();let mut gpu=Gpu::new();let mut rows=vec![];let mut reference=None;
- for slot in 0..5u8{
+ for slot in 0..6u8{
   m.dispatch(Action::ControlTheme(slot));m.toast=None;
   let restored=Model::new(data.clone(),true);
   if crate::nothing::slot(&restored)!=slot{return Err(format!("theme {slot} did not persist"))}
@@ -26,7 +26,7 @@ pub fn run(out:&Path)->Result<(),String>{
     if slot>0&&view.hits.iter().any(|h|matches!(h.action,Action::WindowMaximize)&&h.enabled){return Err("maximize action is enabled".into())}
     if page==Page::Settings{
      let options=view.hits.iter().filter(|h|matches!(h.action,Action::ThemeHandle(_))).collect::<Vec<_>>();
-     if options.len()!=5{return Err(format!("expected 5 theme option blocks, got {}",options.len()))}
+     if options.len()!=6{return Err(format!("expected 6 theme option blocks, got {}",options.len()))}
      for (i,h) in options.iter().enumerate(){
       if h.rect.height()<44.{return Err("theme option is too short".into())}
       if let Action::ThemeHandle(b)=h.action{let f=((h.rect.center().x-b[0])/b[2]).clamp(0.,1.);if crate::nothing::slot_from_fraction(f)!=i as u8{return Err("theme option maps to wrong slot".into())}}
@@ -48,14 +48,15 @@ pub fn run(out:&Path)->Result<(),String>{
    }
   }
  }
+ for theme in ["Miuix","Swiss"]{m.prefs.control_center_theme=theme.into();for dark in [false,true]{m.prefs.dark=dark;for page in Page::ALL{m.page=page;m.settings_tab=0;m.scroll=0.;let v=views::render(&m,&mut text,900.,720.,&ViewState::default());if v.hits.iter().any(|h|h.rect.x0<0.||h.rect.x1>900.01||h.rect.y1>720.01){return Err(format!("{theme}/{page:?} small-screen hit clipping"))}gpu.capture(&v.scene,900,720,&out.join(format!("{theme}-{}-{:?}-900.png",if dark{"dark"}else{"light"},page)))?;}}}
  for soft in [false,true]{
   let mut scene=vello::Scene::new();draw::fill(&mut scene,draw::rect(0.,0.,800.,360.),0.,0xF5F5F5);
   for (i,kind) in crate::nothing::ALL.iter().enumerate(){let x=24.+(i%8)as f64*96.;let y=22.+(i/8)as f64*86.;crate::theme_icons::icon(&mut scene,*kind,x+20.,y,32.,0x1A1A1A,soft);text.draw(&mut scene,crate::nothing::icon_name(*kind),x,y+40.,11.,0x666666,false,92.);}
-  gpu.capture(&scene,800,360,&out.join(if soft{"icons-Porcelain.png"}else{"icons-Nothing.png"}))?;
+  gpu.capture(&scene,800,360,&out.join(if soft{"icons-Miuix.png"}else{"icons-Nothing.png"}))?;
  }
  m.page=Page::Settings;m.settings_tab=0;m.scroll=0.;m.prefs.control_center_theme="Original".into();let base=views::render(&m,&mut text,1200.,800.,&ViewState::default());let _=base;
- crate::nothing::begin_transition(0,m.scheme(),false);m.prefs.control_center_theme="Porcelain".into();crate::nothing::set_transition_progress(Some(0.5));
+ crate::nothing::begin_transition(0,m.scheme(),false);m.prefs.control_center_theme="Miuix".into();crate::nothing::set_transition_progress(Some(0.5));
  let view=views::render(&m,&mut text,1200.,800.,&ViewState::default());gpu.capture(&view.scene,1200,800,&out.join("theme-switch-mid.png"))?;crate::nothing::end_transition();
- std::fs::write(out.join("report.json"),serde_json::to_vec_pretty(&json!({"success":true,"custom_theme_window_locked":true,"original_window_behavior_preserved":true,"theme_count":5,"production_drag_release_cancel_arrows":true,"persisted_all":true,"five_option_blocks":true,"geometry_stable":true,"captures":rows})).unwrap()).map_err(|e|e.to_string())?;
+ std::fs::write(out.join("report.json"),serde_json::to_vec_pretty(&json!({"success":true,"custom_theme_window_locked":true,"original_window_behavior_preserved":true,"theme_count":6,"swiss_and_miuix_small_viewport":true,"porcelain_replaced":true,"production_drag_release_cancel_arrows":true,"persisted_all":true,"six_option_blocks":true,"geometry_stable":true,"captures":rows})).unwrap()).map_err(|e|e.to_string())?;
  Ok(())
 }

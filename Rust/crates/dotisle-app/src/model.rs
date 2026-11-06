@@ -24,8 +24,8 @@ impl Page{
 impl Field{pub(crate) fn new(label:&'static str,value:String,max:usize)->Self{let cursor=value.len();Self{label,value,max,selected:false,cursor}}}
 #[derive(Clone,Debug)]pub enum DialogKind{Todo(Option<String>),Paths,Import,Setting(&'static str),TimerPreferences,WorkflowModules,WorkflowModule(Option<usize>),QuickReminder,Rule(Option<String>),WorkflowStage(Option<u32>),WorkflowTemplate(Option<String>),WorkflowTemplates}
 #[derive(Clone,Debug)]pub struct Dialog{pub kind:DialogKind,pub fields:Vec<Field>,pub active:usize,pub daily:bool,pub error:String,pub preedit:String}
-pub struct Artwork{pub image:ImageData,pub seed:Option<u32>,pub covers:crate::cover_art::Covers}
-impl Artwork{pub fn new(decoded:image::DynamicImage)->Self{let small=decoded.thumbnail(96,96).to_rgba8();let seed=monet::seed(small.as_raw());let covers=crate::cover_art::Covers::new(&decoded);let image=crate::cover_art::data(decoded.thumbnail(512,512).to_rgba8());Self{image,seed,covers}}}
+pub struct Artwork{pub image:ImageData,pub seed:Option<u32>}
+impl Artwork{pub fn new(decoded:image::DynamicImage)->Self{let small=decoded.thumbnail(96,96).to_rgba8();let seed=monet::seed(small.as_raw());let rgba=if decoded.width()>512||decoded.height()>512{decoded.thumbnail(512,512).to_rgba8()}else{decoded.to_rgba8()};let image=crate::cover_art::data(rgba);Self{image,seed}}}
 enum WorkerReply{Snapshot(Value,Option<Artwork>),Result(Result<bool,String>)}
 pub struct Model{
     pub background:crate::background::Cache,
@@ -126,7 +126,7 @@ impl Model{
     fn notice(&mut self,s:String){if self.notices.len()==32{self.notices.pop_front();}self.notices.push_back(s.clone());self.message(s);if self.prefs.reminder_sound&&!self.demo{unsafe{let _=windows::Win32::System::Diagnostics::Debug::MessageBeep(windows::Win32::UI::WindowsAndMessaging::MB_OK);}}}
     pub fn dispatch(&mut self,a:Action){if crate::tutorial::dispatch(self,&a){return}if self.remote.is_some()&&self.remote_action(&a){return}match a{
         Action::BackgroundPick=>{},Action::BackgroundReset=>{let old=self.prefs.clone();let i=crate::nothing::slot(self)as usize;self.prefs.backgrounds[i]=Default::default();self.save_preferences(old);self.refresh_background();},Action::BackgroundEnable(on)=>{let old=self.prefs.clone();let i=crate::nothing::slot(self)as usize;self.prefs.backgrounds[i].enabled=on;self.save_preferences(old);self.refresh_background();},Action::BackgroundMode(contain)=>{let old=self.prefs.clone();let i=crate::nothing::slot(self)as usize;self.prefs.backgrounds[i].mode=if contain{"Contain"}else{"Cover"}.into();self.save_preferences(old);},Action::BackgroundValue(key,value)=>self.background_value(key,value),
-        Action::ControlTheme(slot)=>{let old=self.prefs.clone();self.prefs.control_center_theme=crate::nothing::SLOTS[slot.min(4)as usize].into();self.save_preferences(old);self.refresh_background();},
+        Action::ControlTheme(slot)=>{let old=self.prefs.clone();self.prefs.control_center_theme=crate::nothing::SLOTS[slot.min(5)as usize].into();self.save_preferences(old);self.refresh_background();},
         Action::NothingDynamic(on)=>{let old=self.prefs.clone();self.prefs.nothing_dynamic=on;self.save_preferences(old);},
         Action::FontScope(slot)=>{let old=self.prefs.clone();self.prefs.font_scope=["Island","Center","Both"][slot as usize%3].into();self.save_preferences(old);},
         Action::ThemeHandle(_)=>{},

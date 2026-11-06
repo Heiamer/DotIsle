@@ -105,8 +105,8 @@ pub fn verify(out:&Path)->Result<(),String>{
  m.import_background(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../Assets/DemoCover.png"))?;
  m.dispatch(Action::BackgroundValue("BackgroundOpacity",55.));m.dispatch(Action::BackgroundValue("BackgroundBlur",12.));
  let mut text=crate::draw::Text::new();let mut gpu=crate::gpu::Gpu::new();
- for slot in [0u8,1,2,3,4]{
-  m.dispatch(Action::ControlTheme(slot));if slot==0||slot==3||slot==4{m.import_background(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../Assets/DemoCover.png"))?;}
+ for slot in [0u8,1,2,3,4,5]{
+  m.dispatch(Action::ControlTheme(slot));if slot==0||slot==3||slot==4||slot==5{m.import_background(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../Assets/DemoCover.png"))?;}
   for dark in [false,true]{m.prefs.dark=dark;m.page=crate::model::Page::Home;m.toast=None;m.scroll=0.;let v=crate::views::render(&m,&mut text,1200.,800.,&Default::default());let name=format!("wallpaper-{}-{}.png",crate::nothing::SLOTS[slot as usize],if dark{"dark"}else{"light"});gpu.capture(&v.scene,1200,800,&out.join(&name))?;
    m.prefs.backgrounds[slot as usize].enabled=false;let plain=crate::views::render(&m,&mut text,1200.,800.,&Default::default());let baseline=out.join("wallpaper-cover-baseline.png");gpu.capture(&plain.scene,1200,800,&baseline)?;m.prefs.backgrounds[slot as usize].enabled=true;
    let a=image::open(out.join(&name)).map_err(|e|e.to_string())?.to_rgba8();let b=image::open(&baseline).map_err(|e|e.to_string())?.to_rgba8();
@@ -117,6 +117,6 @@ pub fn verify(out:&Path)->Result<(),String>{
   gpu.capture(&view.scene,1200,800,&out.join(format!("wallpaper-settings-{}.png",crate::nothing::SLOTS[slot as usize])))?;
   m.dispatch(Action::BackgroundEnable(false));if m.background.image.is_some(){return Err("disabled background retained visible texture".into())}m.dispatch(Action::BackgroundEnable(true));
  }
- m.dispatch(Action::BackgroundReset);if m.background.image.is_some()||m.prefs.backgrounds[4].enabled{return Err("background reset failed".into())}
+ m.dispatch(Action::BackgroundReset);if m.background.image.is_some()||m.prefs.backgrounds[5].enabled{return Err("background reset failed".into())}
  std::fs::write(out.join("background-report.json"),serde_json::to_vec_pretty(&serde_json::json!({"success":true,"per_theme":true,"import_is_local_copy":true,"source_can_be_removed":true,"corrupt_image_keeps_previous":true,"restart_restores_image_and_controls":true,"opacity_brightness_blur_controls":true,"disable_and_reset":true})).unwrap()).map_err(|e|e.to_string())?;Ok(())
 }

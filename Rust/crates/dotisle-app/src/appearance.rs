@@ -3,10 +3,10 @@ use crate::{widgets::Ui,model::{Model,Action,Page},draw::{self,rect}};
 use serde_json::json;
 pub fn render(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64)->f64{
  let s=ui.s;
- if ui.porcelain||ui.terminal||ui.pixel{
-  ui.panel(rect(x,y,w,112.),s.container);ui.label(if ui.pixel{"像素 · PIXEL"}else if ui.terminal{"终端 · TTY"}else{"云瓷 · PORCELAIN"},x+24.,y+18.,21.,s.on_surface,true,w-48.);ui.label(if ui.pixel{"16 位机的像素文字、卡带精灵与阶梯边框。"}else if ui.terminal{"等宽字符、像素唱片与块状进度，像在终端里听歌。"}else{"暖灰与瓷白，配一抹亮蓝。"},x+24.,y+58.,14.,s.on_surface_variant,false,w-48.);
+ if ui.miuix||ui.terminal||ui.pixel||ui.swiss{
+  ui.panel(rect(x,y,w,112.),s.container);ui.label(if ui.swiss{"瑞士国际风格 · SWISS"}else if ui.pixel{"像素 · PIXEL"}else if ui.terminal{"终端 · TTY"}else{"MIUIX"},x+24.,y+18.,21.,s.on_surface,true,w-48.);ui.label(if ui.swiss{"网格、左对齐、无衬线排版与一抹红色。"}else if ui.pixel{"16 位机控件与像素字体，专辑封面保留原图。"}else if ui.terminal{"等宽字符、块状进度与原始专辑封面。"}else{"分组留白、连续圆角与轻盈的蓝色交互。"},x+24.,y+58.,14.,s.on_surface_variant,false,w-48.);
   ui.panel(rect(x,y+128.,w,172.),s.container);
-  ui.toggle(rect(x+24.,y+134.,w-48.,72.),"深色外观",if ui.pixel{"切换奶油紫与深色游戏机配色"}else if ui.terminal{"在纸色终端与深色终端之间切换"}else{"夜间切换为深灰卡片与柔和蓝色"},m.prefs.dark,Action::Pref("dark"));
+  ui.toggle(rect(x+24.,y+134.,w-48.,72.),"深色外观",if ui.swiss{"切换纸白印刷与深色版式"}else if ui.pixel{"切换奶油紫与深色游戏机配色"}else if ui.terminal{"在纸色终端与深色终端之间切换"}else{"切换纯白分组与深色分组"},m.prefs.dark,Action::Pref("dark"));
   ui.toggle(rect(x+24.,y+214.,w-48.,72.),"减少动态效果","关闭切换过渡与控件形变",m.prefs.reduced_motion,Action::Pref("motion"));return y+320.;
  }
  let requested=if m.prefs.monet{m.setting("ControlCenterColorSource").as_str().unwrap_or("Content").to_owned()}else{"Custom".into()};

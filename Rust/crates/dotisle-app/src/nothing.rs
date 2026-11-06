@@ -10,7 +10,7 @@ use crate::model::Model;
 pub const ACCENT:u32=0xD71921;
 pub const ORIGINAL:&str="Original";
 pub const NOTHING:&str="Nothing";
-pub const SLOTS:[&str;5]=[ORIGINAL,NOTHING,"Porcelain","Terminal","Pixel"];
+pub const SLOTS:[&str;6]=[ORIGINAL,NOTHING,"Miuix","Terminal","Pixel","Swiss"];
 /// Main grid for 20dp and above: 16×16 cells, dots at cell centres.
 pub const GRID:f64=16.;
 /// Below 16dp the same drawing is sampled on 8×8 cells so the ink can still be read.
@@ -24,9 +24,9 @@ pub const TRANSITION_MS:f64=200.;
 
 pub fn active(m:&Model)->bool{m.prefs.control_center_theme.as_str()==NOTHING}
 pub fn name(m:&Model)->&'static str{SLOTS[slot(m)as usize]}
-pub fn slot(m:&Model)->u8{match m.prefs.control_center_theme.as_str(){NOTHING=>1,"Porcelain"=>2,"Terminal"=>3,"Pixel"=>4,_=>0}}
-pub fn slot_from_fraction(f:f64)->u8{(f.clamp(0.,1.)*4.).round()as u8}
-pub fn label(slot:u8)->&'static str{["默认","Nothing","云瓷","终端","像素"][slot.min(4)as usize]}
+pub fn slot(m:&Model)->u8{match m.prefs.control_center_theme.as_str(){NOTHING=>1,"Miuix"=>2,"Terminal"=>3,"Pixel"=>4,"Swiss"=>5,_=>0}}
+pub fn slot_from_fraction(f:f64)->u8{(f.clamp(0.,1.)*(SLOTS.len()-1)as f64).round()as u8}
+pub fn label(slot:u8)->&'static str{["默认","Nothing","MIUIX","终端","像素","Swiss"][slot.min(5)as usize]}
 
 // ---- theme transition --------------------------------------------------------------------
 struct Transition{from:u8,from_scheme:Scheme,dark:bool,start:Instant,progress:Option<f64>}
@@ -74,7 +74,7 @@ pub fn position(target:u8)->f64{
     let from=trans().lock().ok().and_then(|g|g.as_ref().map(|t|t.from)).unwrap_or(target);
     let e=1.-(1.-p).powi(3);from as f64+(target as f64-from as f64)*e
 }
-pub fn resolved(m:&Model)->Scheme{if active(m){let mut s=scheme(m.prefs.dark);if m.prefs.nothing_dynamic{let colors=m.scheme();s.primary=colors.primary;s.on_primary=colors.on_primary;s.secondary_container=colors.primary;s.on_secondary_container=colors.on_primary;}s}else if crate::porcelain::active(m){crate::porcelain::scheme(m.prefs.dark)}else if crate::terminal::active(m){crate::terminal::scheme(m.prefs.dark)}else if crate::pixel::active(m){crate::pixel::scheme(m.prefs.dark)}else{m.scheme()}}
+pub fn resolved(m:&Model)->Scheme{if active(m){let mut s=scheme(m.prefs.dark);if m.prefs.nothing_dynamic{let colors=m.scheme();s.primary=colors.primary;s.on_primary=colors.on_primary;s.secondary_container=colors.primary;s.on_secondary_container=colors.on_primary;}s}else if crate::miuix::active(m){crate::miuix::scheme(m.prefs.dark)}else if crate::terminal::active(m){crate::terminal::scheme(m.prefs.dark)}else if crate::pixel::active(m){crate::pixel::scheme(m.prefs.dark)}else if crate::swiss::active(m){crate::swiss::scheme(m.prefs.dark)}else{m.scheme()}}
 pub fn blend_to(target:Scheme)->Scheme{
     match active_from(){Some((from,p))=>mix_scheme(from,target,p),None=>target}
 }
