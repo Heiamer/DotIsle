@@ -344,7 +344,7 @@ fn running_full(ui:&mut Ui,m:&Model,timer:&dotisle_domain::timers::Timer,x:f64,y
     ui.center(stage.map(|s|s.name.as_str()).unwrap_or("阶段"),rect(x+24.,y+48.,w-48.,40.),30.,s.on_primary_container,true);
     ui.center(&format_time(timer.remaining_ms().div_ceil(1000)),rect(x+24.,y+94.,w-48.,80.),64.,s.on_primary_container,true);
     ui.center(&format!("第 {} / {} 阶段 · 已过 {}",index+1,count,format_time(timer.elapsed_ms/1000)),rect(x+24.,y+178.,w-48.,22.),13.,s.on_primary_container,false);
-    let track=rect(x+40.,y+210.,w-80.,8.);draw::fill(ui.scene,track,4.,if ui.nothing||ui.miuix{s.outline_variant}else{s.secondary_container});
+    let track=rect(x+40.,y+210.,w-80.,8.);draw::fill(ui.scene,track,4.,if ui.nothing||ui.miuix||ui.terminal||ui.pixel||ui.swiss{s.outline_variant}else{s.secondary_container});
     draw::fill(ui.scene,rect(track.x0,track.y0,(track.width()*timer.progress()).max(0.001),track.height()),4.,s.primary);
     let banner=rect(x+40.,y+232.,w-80.,44.);draw::fill(ui.scene,banner,22.,s.secondary_container);
     let text=if timer.finished{"流程已结束，可以重新开始或编辑副本。"}else if waiting{"本阶段完成，准备进入下一阶段。"}else if timer.running{"正在专注，阶段完成后由你点「下一阶段」。"}else{"已暂停，继续后重新开始计时。"};

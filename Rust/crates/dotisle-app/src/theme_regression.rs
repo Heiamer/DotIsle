@@ -22,6 +22,7 @@ pub fn run(out:&Path)->Result<(),String>{
     let view=views::render(&m,&mut text,1200.,800.,&state);
     let filename=format!("{}-{}-{:?}.png",crate::nothing::SLOTS[slot as usize],if dark{"dark"}else{"light"},page);
     gpu.capture(&view.scene,1200,800,&out.join(&filename))?;
+    if slot==0&&page==Page::Focus{let im=image::open(out.join(&filename)).map_err(|e|e.to_string())?.to_rgb8();let actual=im.get_pixel(200,458);let expected=m.scheme().outline;for(channel,shift)in [16,8,0].into_iter().enumerate(){if(actual[channel]as i16-((expected>>shift)&255)as i16).abs()>1{return Err(format!("original timer track colour changed in {filename}"))}}}
     for h in &view.hits{if !h.rect.x0.is_finite()||h.rect.x0<0.||h.rect.x1>1200.01||h.rect.y0<0.||h.rect.y1>800.01{return Err(format!("hit outside viewport: {}",h.label))}}
     if slot>0&&view.hits.iter().any(|h|matches!(h.action,Action::WindowMaximize)&&h.enabled){return Err("maximize action is enabled".into())}
     if page==Page::Settings{
@@ -57,6 +58,6 @@ pub fn run(out:&Path)->Result<(),String>{
  m.page=Page::Settings;m.settings_tab=0;m.scroll=0.;m.prefs.control_center_theme="Original".into();let base=views::render(&m,&mut text,1200.,800.,&ViewState::default());let _=base;
  crate::nothing::begin_transition(0,m.scheme(),false);m.prefs.control_center_theme="Miuix".into();crate::nothing::set_transition_progress(Some(0.5));
  let view=views::render(&m,&mut text,1200.,800.,&ViewState::default());gpu.capture(&view.scene,1200,800,&out.join("theme-switch-mid.png"))?;crate::nothing::end_transition();
- std::fs::write(out.join("report.json"),serde_json::to_vec_pretty(&json!({"success":true,"custom_theme_window_locked":true,"original_window_behavior_preserved":true,"theme_count":6,"swiss_and_miuix_small_viewport":true,"porcelain_replaced":true,"production_drag_release_cancel_arrows":true,"persisted_all":true,"six_option_blocks":true,"geometry_stable":true,"captures":rows})).unwrap()).map_err(|e|e.to_string())?;
+ std::fs::write(out.join("report.json"),serde_json::to_vec_pretty(&json!({"success":true,"custom_theme_window_locked":true,"original_window_behavior_preserved":true,"original_timer_track_preserved":true,"theme_count":6,"swiss_and_miuix_small_viewport":true,"porcelain_replaced":true,"production_drag_release_cancel_arrows":true,"persisted_all":true,"six_option_blocks":true,"geometry_stable":true,"captures":rows})).unwrap()).map_err(|e|e.to_string())?;
  Ok(())
 }

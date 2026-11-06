@@ -95,7 +95,7 @@ pub fn settings(ui:&mut Ui,m:&Model,x:f64,y:&mut f64,w:f64){
 
 /// Persistence, image import, processing, error recovery, and cross-theme isolation.
 pub fn verify(out:&Path)->Result<(),String>{
- let data=out.join("wallpaper-data");let mut m=Model::new(data.clone(),true);m.tutorial=None;m.tutorial_checked=true;
+ let data=out.join(format!("wallpaper-data-{}",std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()));let mut m=Model::new(data.clone(),true);m.tutorial=None;m.tutorial_checked=true;
  m.dispatch(Action::ControlTheme(1));let file=out.join("wallpaper-source.png");std::fs::write(&file,include_bytes!("../../../../Assets/DemoCover.png")).map_err(|e|e.to_string())?;
  m.import_background(&file)?;m.dispatch(Action::BackgroundValue("BackgroundOpacity",65.));m.dispatch(Action::BackgroundValue("BackgroundBrightness",75.));m.dispatch(Action::BackgroundValue("BackgroundBlur",18.));
  std::fs::remove_file(&file).map_err(|e|e.to_string())?;
