@@ -276,9 +276,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.8.0"
+version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6651c9ed80effdc7db0ff72512157f901af5e3549e341e24b1dd4887d836d838"
+checksum = "86e055fa6e3e40ad6187ba25b6855eeb635d5271f8e0f0e1e9a5826b8d75bea0"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -516,7 +516,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-app"
-version = "3.2.3"
+version = "3.2.4"
 dependencies = [
  "base64",
  "dotisle-domain",
@@ -537,7 +537,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-domain"
-version = "3.2.3"
+version = "3.2.4"
 dependencies = [
  "lyric-backend",
  "lyric-core",
@@ -549,7 +549,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-render"
-version = "3.2.3"
+version = "3.2.4"
 dependencies = [
  "dotisle-scene",
  "fontique",
@@ -562,7 +562,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-scene"
-version = "3.2.3"
+version = "3.2.4"
 dependencies = [
  "glifo",
  "vello_common",
@@ -659,9 +659,9 @@ checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.14"
+version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
+checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 
 [[package]]
 name = "fixedbitset"
@@ -1207,9 +1207,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.190"
+version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
+checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "libloading"
@@ -1318,7 +1318,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-archive"
-version = "3.2.3"
+version = "3.2.4"
 dependencies = [
  "flate2",
  "sha2",
@@ -1326,13 +1326,14 @@ dependencies = [
 
 [[package]]
 name = "lyric-backend"
-version = "3.2.3"
+version = "3.2.4"
 dependencies = [
  "aes",
  "base64",
  "lyric-core",
  "md-5",
  "regex",
+ "roxmltree",
  "serde",
  "serde_json",
  "sha2",
@@ -1341,7 +1342,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-bootstrap"
-version = "3.2.3"
+version = "3.2.4"
 dependencies = [
  "dotisle-render",
  "dotisle-scene",
@@ -1356,12 +1357,14 @@ dependencies = [
 
 [[package]]
 name = "lyric-core"
-version = "3.2.3"
+version = "3.2.4"
 dependencies = [
  "base64",
+ "cc",
  "encoding_rs",
  "flate2",
  "regex",
+ "roxmltree",
  "serde",
  "serde_json",
  "sha2",
@@ -1370,7 +1373,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-native"
-version = "3.2.3"
+version = "3.2.4"
 dependencies = [
  "base64",
  "dotisle-domain",
@@ -1994,9 +1997,9 @@ dependencies = [
 
 [[package]]
 name = "portable-atomic"
-version = "1.15.0"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
+checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
 
 [[package]]
 name = "portable-atomic-util"
@@ -2205,7 +2208,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2387,9 +2390,12 @@ dependencies = [
 
 [[package]]
 name = "slab"
-version = "0.4.12"
+version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
+checksum = "8f92a496fb766b417c996b9c5e57daf2f7ad3b0bebe1ccfca4856390e3d3bb67"
+dependencies = [
+ "autocfg",
+]
 
 [[package]]
 name = "smallvec"
@@ -2597,14 +2603,14 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
-version = "0.25.17+spec-1.1.0"
+version = "0.25.4+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3641d5bbb5349a79e1020a242d251efbc546ad8048d133958323ce9c40a9c9c"
+checksum = "7193cbd0ce53dc966037f54351dbbcf0d5a642c7f0038c382ef9e677ce8c13f2"
 dependencies = [
  "indexmap",
  "toml_datetime",
  "toml_parser",
- "winnow",
+ "winnow 0.7.13",
 ]
 
 [[package]]
@@ -2613,7 +2619,7 @@ version = "1.1.5+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
 dependencies = [
- "winnow",
+ "winnow 1.0.4",
 ]
 
 [[package]]
@@ -3294,15 +3300,6 @@ dependencies = [
 
 [[package]]
 name = "windows-sys"
-version = "0.59.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e38bc4d79ed67fd075bcc251a1c39b32a1776bbe92e5bef1f0bf1f8c531853b"
-dependencies = [
- "windows-targets",
-]
-
-[[package]]
-name = "windows-sys"
 version = "0.61.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
@@ -3437,12 +3434,18 @@ dependencies = [
 
 [[package]]
 name = "winnow"
-version = "1.0.4"
+version = "0.7.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
+checksum = "21a0236b59786fed61e2a80582dd500fe61f18b5dca67a4a067d0bc9039339cf"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "winnow"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 
 [[package]]
 name = "wit-bindgen"

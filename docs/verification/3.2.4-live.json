@@ -1,0 +1,47 @@
+{
+  "version": "3.2.4",
+  "date": "2026-11-08",
+  "client": "NetEase 3.1.43.205627",
+  "testedCodeVersion": "3.2.4-preview.2",
+  "releaseBuild": "GitHub Actions rebuild of the same implementation with stable version metadata",
+  "success": true,
+  "rustTestsPassed": 393,
+  "pageReaderTestsPassed": 9,
+  "fixes": [
+    "Playback state 1 is paused and 2 is playing.",
+    "Restored paused tracks provide read-only metadata and position before a playback instance exists.",
+    "Same-track display tolerates page gaps for at most 2 seconds; seek validation still requires samples younger than 800 ms."
+  ],
+  "scenarios": {
+    "foreground": {
+      "success": true,
+      "pausedSeekCount": 11,
+      "pauseDriftSeconds": 0.0,
+      "advancedSeconds": 4.94300770000001
+    },
+    "minimized": {
+      "success": true,
+      "pausedSeekCount": 11,
+      "pauseDriftSeconds": 0.0,
+      "advancedSeconds": 5.032055799999995
+    },
+    "tray": {
+      "success": true,
+      "pausedSeekCount": 11,
+      "pauseDriftSeconds": 0.0,
+      "advancedSeconds": 5.028507599999983
+    }
+  },
+  "pausedSeeks": {
+    "count": 33,
+    "maximumReadbackErrorSeconds": 0.17500000000001137,
+    "medianConfirmationMs": 334,
+    "maximumConfirmationMs": 819
+  },
+  "packagedRuntimeSuccess": true,
+  "limits": [
+    "Only this player version and this song were exercised.",
+    "Page percent precision is coarser than the deleted memory reader.",
+    "No real cover-install or uninstall of the user installation was performed."
+  ]
+}

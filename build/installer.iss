@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "3.2.0"
+  #define AppVersion "3.2.4"
 #endif
 #ifndef AppId
   #define AppId "DotIsle"
@@ -11,7 +11,7 @@
 AppId={#AppId}
 AppName=点屿 DotIsle
 AppVersion={#AppVersion}
-AppPublisher=DotIsle
+AppPublisher=Heiamer
 DefaultDirName={localappdata}\Programs\DotIsle
 DefaultGroupName=DotIsle
 PrivilegesRequired=lowest

@@ -1,8 +1,4 @@
-//! Port of IslandTransition.cs. All calculations remain f64, including velocity
-//! on retarget. Frame time is elapsed time, never an accumulated fixed timestep.
-//!
-//! One fluid spring drives the shape and its derived content channels.
-//! Retargeting preserves every live position and velocity.
+//! DotIsle drawer motion with analytic damping and Hermite continuity on interruption.
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -25,85 +21,71 @@ impl Frame {
     pub fn values(self)->[f64;8] { [self.capsule_scale_y,self.card_reveal,self.card_offset_y,self.card_opacity,self.card_scale,self.card_blur,self.content_opacity,self.content_offset_y] }
 }
 
-/// How fast the fluid master spring runs relative to the configured one.
-///
-/// At 1.5× the morph read as a snap: a critically damped spring front-loads its
-/// travel, so most of the shape change landed inside the first ~130 ms and the rest
-/// of the configured length was sub-pixel crawl. Running the master at the configured
-/// pace — 1.0× — spreads the same travel over the length the 「展开响应」 slider names
-/// (a 360 ms setting settles near 520 ms) while keeping the properties that make the
-/// curve safe: no overshoot, and a reversal that carries every channel's velocity.
-const FLUID_SPEED:f64=1.0;
-/// Where the expanded card starts on its way in. Never 0: nothing in the real world
-/// appears from nothing, so a barely-there shape reads as an arrival rather than a pop.
 const FLUID_SCALE_FLOOR:f64=0.98;
-#[derive(Clone, Copy)]
-pub struct Transition { from:Frame, velocity:Frame, options:Options, reduced:bool, rate:f64, pub end:Frame, pub duration_ms:f64 }
-impl Transition {
-    pub fn new(expanded:bool,from:Frame,options:Options,velocity:Frame,reduced:bool)->Self {
-        let rate=if expanded {options.duration} else {options.collapse_duration}/360.;
-        let s=options.spring;let omega=(s.stiffness/s.mass).sqrt();let zeta=(s.damping/(2.*(s.stiffness*s.mass).sqrt())).max(1.);
-        // The settle time has to follow the speed actually used to sample, or the
-        // transition lingers after its last visible frame and keeps the redraw loop awake.
-        let decay=(if zeta>1. {omega/(zeta+(zeta*zeta-1.).sqrt())}else{zeta*omega})*FLUID_SPEED;
-        Self{from,velocity,options,reduced,rate,end:if expanded{Frame::expanded()}else{Frame::hidden(options)},duration_ms:if reduced{120.}else if options.curve.is_some(){if expanded{options.duration}else{options.collapse_duration}}else{(12./decay*1000.*rate).max(1.)}}
+
+#[derive(Clone,Copy)]
+pub struct Transition{origin:Frame,tangent:Frame,options:Options,reduced:bool,frequency:f64,ratio:f64,pub end:Frame,pub duration_ms:f64}
+impl Transition{
+    pub fn new(expanded:bool,origin:Frame,mut options:Options,tangent:Frame,reduced:bool)->Self{
+        let clean=|n:f64,default:f64,lo:f64,hi:f64|if n.is_finite(){n.clamp(lo,hi)}else{default};
+        options.spring.mass=clean(options.spring.mass,0.8,0.05,100.);
+        options.spring.stiffness=clean(options.spring.stiffness,420.,1.,100000.);
+        options.spring.damping=clean(options.spring.damping,30.,0.,10000.);
+        let requested=clean(if expanded{options.duration}else{options.collapse_duration},480.,40.,5000.);
+        let frequency=(options.spring.stiffness/options.spring.mass).sqrt()*360./requested;
+        let ratio=(options.spring.damping/(2.*(options.spring.stiffness*options.spring.mass).sqrt())).max(1.);
+        let slow=frequency/(ratio+(ratio*ratio-1.).sqrt());
+        let duration_ms=if reduced{120.}else if options.curve.is_some(){requested}else{12000./slow};
+        Self{origin,tangent,options,reduced,frequency,ratio,end:if expanded{Frame::expanded()}else{Frame::hidden(options)},duration_ms}
     }
-    pub fn sample(&self,ms:f64)->Frame { self.evaluate(ms,false) }
-    pub fn velocity(&self,ms:f64)->Frame {self.evaluate(ms,true)}
-    fn evaluate(&self,ms:f64,velocity:bool)->Frame {
-        if ms>=self.duration_ms {return if velocity{Frame::default()}else{self.end}}
-        if !self.reduced && ms<=0. {return if velocity{self.velocity}else{self.from}}
-        if self.reduced {
-            if velocity{return Frame::default()}
-            let t=(ms/self.duration_ms).clamp(0.,1.);let mut g=if self.end.card_reveal>0.{self.end}else{Frame::expanded()};
-            g.card_opacity=self.from.card_opacity+(self.end.card_opacity-self.from.card_opacity)*t;
-            g.content_opacity=self.from.content_opacity+(self.end.content_opacity-self.from.content_opacity)*t;return g;
+    pub fn sample(&self,ms:f64)->Frame{self.at(ms).0}
+    pub fn velocity(&self,ms:f64)->Frame{self.at(ms).1}
+    fn at(&self,ms:f64)->(Frame,Frame){
+        if ms>=self.duration_ms{return (self.end,Frame::default())}
+        if ms<=0.||!ms.is_finite(){return (self.origin,self.tangent)}
+        let seconds=ms/1000.;let total=self.duration_ms/1000.;let u=(seconds/total).clamp(0.,1.);
+        if self.reduced{
+            let mut frame=if self.end.card_reveal>0.{self.end}else{Frame::expanded()};
+            frame.card_opacity=self.origin.card_opacity+(self.end.card_opacity-self.origin.card_opacity)*u;
+            frame.content_opacity=self.origin.content_opacity+(self.end.content_opacity-self.origin.content_opacity)*u;
+            return (frame,Frame::default())
         }
-        self.fluid(ms,velocity)
-    }
-    /// One spring on the shape; every other channel is a pure function of it.
-    ///
-    /// Reading order is what makes a morph feel intentional: the outline opens first
-    /// (0 → 0.74), the contents fade in once there is room for them (0.44 → 0.97), and
-    /// the blur that masks the two-layer crossfade is gone by the time the text is
-    /// readable. Because they all come from the same `p`, an interruption mid-flight
-    /// carries every channel through the reversal together.
-    fn fluid(&self,ms:f64,velocity:bool)->Frame {
-        let time=ms.max(0.)/1000.;let speed=FLUID_SPEED/self.rate;
-        let (p,dp)=if let Some(curve)=self.options.curve{let u=(ms/self.duration_ms).clamp(0.,1.);let(ease,slope)=lyric_core::motion_curve::sample(curve,u);let duration=self.duration_ms/1000.;let delta=self.end.card_reveal-self.from.card_reveal;let incoming=self.velocity.card_reveal;let start_slope=lyric_core::motion_curve::sample(curve,0.).1;let interrupted=self.from.card_reveal>0.0001&&self.from.card_reveal<0.9999||incoming.abs()>0.001;let residual=if interrupted{incoming-delta*start_slope/duration}else{0.};let correction=residual*duration*u*(1.-u).powi(2);(self.from.card_reveal+delta*ease+correction,delta*slope/duration+residual*(1.-u)*(1.-3.*u))}else{self.integrate(self.from.card_reveal,self.end.card_reveal,self.velocity.card_reveal,time,speed,1.0)};
-        let channels=|value:f64,rate:f64|->([f64;8],[f64;8]){
-            let q=value.clamp(0.,1.);let (fade,dfade)=step(q,0.16,0.72);
-            let (content,dcontent)=step(q,0.58,0.985);let (scale,dscale)=step(q,0.,0.76);let (blur,dblur)=step(q,0.10,0.82);let lift=self.options.gap+10.;
-            ([1.,value.clamp(0.,1.035),-(1.-q)*lift,fade,FLUID_SCALE_FLOOR+(1.-FLUID_SCALE_FLOOR)*scale,6.*(1.-blur),content,6.*(1.-content)],
-             [0.,rate,lift*rate,dfade*rate,(1.-FLUID_SCALE_FLOOR)*dscale*rate,-6.*dblur*rate,dcontent*rate,-6.*dcontent*rate])
+        let delta=self.end.card_reveal-self.origin.card_reveal;
+        let (position,speed)=if let Some(curve)=self.options.curve{
+            let (ease,slope)=lyric_core::motion_curve::sample(curve,u);
+            let initial_slope=lyric_core::motion_curve::sample(curve,0.).1;
+            let interrupted=(0.0001..0.9999).contains(&self.origin.card_reveal)||self.tangent.card_reveal.abs()>0.001;
+            let extra=if interrupted{self.tangent.card_reveal-delta*initial_slope/total}else{0.};
+            (self.origin.card_reveal+delta*ease+extra*total*u*(1.-u).powi(2),delta*slope/total+extra*(1.-u)*(1.-3.*u))
+        }else{
+            let (x,v)=damped(self.origin.card_reveal-self.end.card_reveal,self.tangent.card_reveal,self.frequency,self.ratio,seconds);
+            (self.end.card_reveal+x,v)
         };
-        let (mut values,mut velocities)=channels(p,dp);let (initial,initial_velocity)=channels(self.from.card_reveal,self.velocity.card_reveal);
-        // Preserve every presentation channel and its velocity on reversal.
-        let omega=(self.options.spring.stiffness/self.options.spring.mass).sqrt()*speed;
-        let decay=(-omega*time).exp();let from=self.from.values();let incoming=self.velocity.values();
-        for i in 0..8{if i==1{continue}let offset=from[i]-initial[i];let tangent=incoming[i]-initial_velocity[i]+omega*offset;
-            values[i]+=(offset+tangent*time)*decay;velocities[i]+=(tangent-omega*(offset+tangent*time))*decay;
-            let bounds=match i{3|6=>Some((0.,1.)),5=>Some((0.,6.)),_=>None};
-            if let Some((lo,hi))=bounds{if values[i]<lo||values[i]>hi{velocities[i]=0.;}values[i]=values[i].clamp(lo,hi);}
+        let (mut values,mut rates)=self.channels(position,speed);
+        let (start,start_rates)=self.channels(self.origin.card_reveal,self.tangent.card_reveal);
+        let original=self.origin.values();let incoming=self.tangent.values();
+        // A cubic Hermite residual joins every presentation channel continuously to the master.
+        let h0=1.-3.*u*u+2.*u*u*u;let h1=u*(1.-u).powi(2);
+        for i in 0..8{if i==1{continue}let offset=original[i]-start[i];let velocity=incoming[i]-start_rates[i];
+            values[i]+=offset*h0+velocity*total*h1;
+            rates[i]+=offset*6.*u*(u-1.)/total+velocity*(1.-u)*(1.-3.*u);
+            if matches!(i,3|5|6){let maximum=if i==5{6.}else{1.};if values[i]<0.||values[i]>maximum{rates[i]=0.}values[i]=values[i].clamp(0.,maximum);}
         }
-        let r=if velocity{velocities}else{values};
-        Frame{capsule_scale_y:r[0],card_reveal:r[1],card_offset_y:r[2],card_opacity:r[3],card_scale:r[4],card_blur:r[5],content_opacity:r[6],content_offset_y:r[7]}
+        (frame(values),frame(rates))
     }
-    /// The damping floor keeps the master spring from overshooting its measured card.
-    fn integrate(&self,from:f64,target:f64,velocity:f64,time:f64,speed:f64,zeta_floor:f64)->(f64,f64) {
-        let s=self.options.spring;let omega=(s.stiffness/s.mass).sqrt()*speed;let zeta=(s.damping/(2.*(s.stiffness*s.mass).sqrt())).max(zeta_floor);let d=from-target;
-        let (x,v)=if zeta<0.999999 {
-            let decay=zeta*omega;let wd=omega*(1.-zeta*zeta).sqrt();let b=(velocity+decay*d)/wd;
-            let cos=(wd*time).cos();let sin=(wd*time).sin();let e=(-decay*time).exp();
-            (e*(d*cos+b*sin),e*((b*wd-decay*d)*cos-(d*wd+decay*b)*sin))
-        }else if zeta<=1.000001 {
-            let b=velocity+omega*d;let e=(-omega*time).exp();((d+b*time)*e,(velocity-omega*b*time)*e)
-        }else {
-            let root=(zeta*zeta-1.).sqrt();let r1=-omega/(zeta+root);let r2=-omega*(zeta+root);
-            let a=(velocity-r2*d)/(r1-r2);let b=d-a;
-            (a*(r1*time).exp()+b*(r2*time).exp(),a*r1*(r1*time).exp()+b*r2*(r2*time).exp())
-        };(target+x,v)
+    fn channels(&self,p:f64,v:f64)->([f64;8],[f64;8]){
+        let q=p.clamp(0.,1.);let (opacity,d_opacity)=step(q,0.16,0.72);let (text,d_text)=step(q,0.58,0.985);
+        let (size,d_size)=step(q,0.,0.76);let (focus,d_focus)=step(q,0.10,0.82);let lift=self.options.gap+10.;
+        ([1.,p.clamp(0.,1.035),lift*(q-1.),opacity,FLUID_SCALE_FLOOR+(1.-FLUID_SCALE_FLOOR)*size,6.*(1.-focus),text,6.*(1.-text)],
+         [0.,v,lift*v,d_opacity*v,(1.-FLUID_SCALE_FLOOR)*d_size*v,-6.*d_focus*v,d_text*v,-6.*d_text*v])
     }
+}
+fn frame(v:[f64;8])->Frame{Frame{capsule_scale_y:v[0],card_reveal:v[1],card_offset_y:v[2],card_opacity:v[3],card_scale:v[4],card_blur:v[5],content_opacity:v[6],content_offset_y:v[7]}}
+fn damped(displacement:f64,velocity:f64,frequency:f64,ratio:f64,time:f64)->(f64,f64){
+    if (ratio-1.).abs()<1e-6{let linear=velocity+frequency*displacement;let decay=(-frequency*time).exp();return ((displacement+linear*time)*decay,(linear-frequency*(displacement+linear*time))*decay)}
+    let separation=(ratio*ratio-1.).sqrt();let slow=-frequency/(ratio+separation);let fast=-frequency*(ratio+separation);
+    let slow_weight=(velocity-fast*displacement)/(slow-fast);let fast_weight=displacement-slow_weight;
+    let a=slow_weight*(slow*time).exp();let b=fast_weight*(fast*time).exp();(a+b,slow*a+fast*b)
 }
 /// A smoothstep remap of `p` onto 0..1 across `[a,b]`, with its derivative in `p`.
 ///

@@ -13,7 +13,11 @@ pub fn describe(release:&Value,current:&str)->Result<Value,String>{
     if release["draft"]==true||release["prerelease"]==true{return Err("未找到正式更新".into())}
     let tag=release["tag_name"].as_str().ok_or("更新响应缺少版本号")?;
     let latest=version(tag).ok_or("更新版本号格式无效")?;
-    let newer=latest>version(current).ok_or("当前版本号无效")?;
+    let (installed,preview)=if let Some((base,sequence))=current.split_once("-preview."){
+        if sequence.is_empty()||!sequence.bytes().all(|b|b.is_ascii_digit()){return Err("当前版本号无效".into())}
+        (version(base).ok_or("当前版本号无效")?,true)
+    }else{(version(current).ok_or("当前版本号无效")?,false)};
+    let newer=latest>installed||preview&&latest==installed;
     Ok(json!({"success":true,"message":if newer{format!("发现新版本 {tag}，点击“下载并更新”自动安装，保留现有设置。")}else{format!("当前已是最新版本（{current}）")},"newer":newer,"version":tag,"url":RELEASES}))
 }
 fn sources()->Value{let path=std::env::current_exe().ok().and_then(|p|p.parent().map(|p|p.join("Assets/UpdateSources.json")));path.and_then(|p|std::fs::read(p).ok()).and_then(|b|serde_json::from_slice(&b).ok()).unwrap_or_else(||serde_json::from_str(include_str!("../../../../Assets/UpdateSources.json")).unwrap_or_else(|_|json!({})))}
@@ -88,6 +92,11 @@ pub fn install()->Result<Value,String>{
         assert_eq!(describe(&json!({"tag_name":"v1.10"}),"1.2.0").unwrap()["newer"],true);
         assert_eq!(describe(&json!({"tag_name":"v1.1"}),"1.2.0").unwrap()["newer"],false);
         assert_eq!(describe(&json!({"tag_name":"v1.2"}),"1.2.0").unwrap()["newer"],false);
+    }
+    #[test]fn installed_preview_can_upgrade_to_its_stable_release_without_downgrading(){
+        for (tag,newer) in [("v3.2.3",false),("v3.2.4",true),("v3.2.5",true)]{assert_eq!(describe(&json!({"tag_name":tag}),"3.2.4-preview.1").unwrap()["newer"],newer);}
+        for current in ["3.2.4-preview.","3.2.4-preview.1/evil","3.2.4-beta"]{assert!(describe(&json!({"tag_name":"v3.2.4"}),current).is_err());}
+        assert!(describe(&json!({"tag_name":"v3.2.4-preview.1"}),"3.2.3").is_err());
     }
     #[test]fn rejects_untrusted_tags_and_preview_releases(){for tag in ["latest","v1.3-beta","v1.3/evil"]{assert!(describe(&json!({"tag_name":tag}),"1.2.0").is_err());}assert!(describe(&json!({"tag_name":"v2.0","prerelease":true}),"1.2.0").is_err());}
     #[test]fn fallback_reads_only_canonical_repository_metadata(){assert_eq!(page_release(r#"<meta property="og:url" content="/Heiamer/DotIsle/releases/tag/v1.2" />"#).unwrap()["tag_name"],"v1.2");assert!(page_release(r#"<meta property="og:url" content="/other/project/releases/tag/v9.0" />"#).is_err());}

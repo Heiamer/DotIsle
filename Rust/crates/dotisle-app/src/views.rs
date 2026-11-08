@@ -103,7 +103,7 @@ fn music(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64,state:&ViewState)->f64{
     if m.track()&&m.snapshot["canSeek"].as_bool()==Some(false){
         let status=m.snapshot["seekStatus"].as_str().unwrap_or("播放器尚未提供静默进度通道");
         ui.panel(rect(x,y,w,64.),s.container);ui.label("播放进度",x+24.,y+12.,15.,s.on_surface,true,200.);ui.label(status,x+24.,y+38.,12.,s.on_surface_variant,false,w-280.);
-        if status=="播放器尚未提供静默进度通道"&&m.snapshot["sourceId"].as_str().is_some_and(|id|id.eq_ignore_ascii_case("cloudmusic.exe")){ui.button(rect(x+w-216.,y+10.,192.,44.),"重新连接进度",None,Action::NativeCommand("neteaseEnableSilent",serde_json::Value::Null),true,!m.demo);}
+        if status=="播放器尚未提供静默进度通道"&&m.snapshot["sourceId"].as_str().is_some_and(|id|id.eq_ignore_ascii_case("cloudmusic.exe")){ui.button(rect(x+w-216.,y+10.,192.,44.),"查看连接说明",None,Action::NativeCommand("neteaseEnableSilent",serde_json::Value::Null),true,!m.demo);}
         y+=88.;
     }
     ui.panel(rect(x,y,w,194.),s.container);ui.label("歌词",x+26.,y+22.,13.,s.on_surface_variant,true,100.);

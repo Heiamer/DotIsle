@@ -9,7 +9,7 @@ on:
       version:
         description: Release version without the leading v
         required: true
-        default: "3.2.3"
+        default: "3.2.4"
       publish:
         description: Publish the release instead of leaving a draft
         type: boolean
@@ -32,12 +32,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Resolve release version
         run: |
           $version='${{ inputs.version }}'
           if(-not $version){$version='${{ github.ref_name }}'.TrimStart('v')}
           if($version -notmatch '^\d+\.\d+\.\d+$'){throw "Invalid version $version"}
           "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Verify release source, version and licenses
+        run: python build/verify_release_source.py --version $env:VERSION --report validation/source/report.json
+
+      - name: Test NetEase page reader
+        run: |
+          node --test tests/netease-timeline.test.cjs
+          if($LASTEXITCODE -ne 0){throw 'Page reader tests failed'}
 
       - name: Prepare GNU toolchain, Zig, LLVM and Inno Setup
         run: |
@@ -69,10 +85,10 @@ jobs:
           "INNO_SETUP_COMPILER=$compiler" >> $env:GITHUB_ENV
 
       - name: Test workspace
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 test --workspace
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 test --workspace --locked
 
       - name: Build release binaries
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 build --release --workspace --bins
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 build --release --workspace --bins --locked
 
       - name: Package installer, portable, OTA and source
         run: |
@@ -111,7 +127,7 @@ jobs:
 
       - name: Require successful acceptance reports
         run: |
-          foreach($report in @('validation/settings/report.json','validation/themes/report.json','validation/themes/background-report.json','validation/covers/report.json')){
+          foreach($report in @('validation/source/report.json','validation/settings/report.json','validation/themes/report.json','validation/themes/background-report.json','validation/covers/report.json')){
             if(-not(Test-Path -LiteralPath $report)){throw "Missing acceptance report: $report"}
             if((Get-Content -LiteralPath $report -Raw | ConvertFrom-Json).success -ne $true){throw "Acceptance failed: $report"}
           }

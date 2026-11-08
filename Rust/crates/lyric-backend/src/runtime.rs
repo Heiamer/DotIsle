@@ -2,16 +2,16 @@
 use std::{path::PathBuf,sync::{Arc,Mutex,Condvar,mpsc,atomic::{AtomicBool,AtomicU64,Ordering}},time::{Duration,Instant}};
 use serde_json::{Value,json};
 use base64::{Engine,engine::general_purpose::STANDARD};
-use lyric_core::{models::*,cache::{LyricPipelineCache,RawLyricCacheEnvelope,ParsedLyricCacheEnvelope},json_store::JsonStore,resolution::{LyricResolutionCoordinator,LyricResolutionCoordinatorBuilder,LyricMappingResolver,select_best_scored,ScoredCandidate},sync::LyricSyncService,local::LocalLyricProvider};
-use crate::{media::{Media,MediaSample,unix_ms},clock::PlaybackClock,netease::NeteaseTimeline,providers::OnlineSource,http::{self,RequestContext},storage::{CompactStore,FinalCache,MappingDb},io};
+use lyric_core::{models::*,cache::Cache,sync::Timeline,local::LocalLibrary};
+use crate::{media::{Media,MediaSample,unix_ms},clock::PlaybackClock,netease::NeteaseTimeline,providers::OnlineSource,http::{self,RequestContext},storage::{FinalCache,MappingDb},io};
 
-struct State{settings:Value,playback:PlaybackSnapshot,clock:PlaybackClock,sync:LyricSyncService,active:Option<windows::Media::Control::GlobalSystemMediaTransportControlsSession>,events:u64,cover:Option<Vec<u8>>,cover_version:u64,cover_key:String,artwork_identity:String,duration_source:String,native_status:String,native_error:Option<String>,track_key:String,pending_weak:Option<(Instant,Instant,String)>,last_strong_track:Option<TrackInfo>,netease_target:Option<crate::netease_control::Target>,netease_sample:Option<crate::netease::TimingSample>,media_command:Value,smtc_can_seek:bool,netease_ready:bool}
+struct State{settings:Value,playback:Playback,clock:PlaybackClock,sync:Timeline,active:Option<windows::Media::Control::GlobalSystemMediaTransportControlsSession>,events:u64,cover:Option<Vec<u8>>,cover_version:u64,cover_key:String,artwork_identity:String,duration_source:String,native_status:String,native_error:Option<String>,track_key:String,pending_weak:Option<(Instant,Instant,String)>,last_strong_track:Option<Track>,netease_target:Option<crate::netease_control::Target>,netease_sample:Option<crate::netease::TimingSample>,media_command:Value,smtc_can_seek:bool,netease_ready:bool}
 #[derive(Clone)]struct MediaFeed{sample:MediaSample,active:Option<windows::Media::Control::GlobalSystemMediaTransportControlsSession>,events:u64,captured:Instant}
-pub struct Backend{control_wake:(Mutex<u64>,Condvar),state:Mutex<State>,media_feed:Mutex<Option<MediaFeed>>,command_queue:Mutex<crate::media_commands::Queue>,command_running:AtomicBool,command_sequence:AtomicU64,closed:AtomicBool,generation:AtomicU64,started:Instant,data:PathBuf,local:PathBuf,raw:Arc<JsonStore>,parsed:Arc<JsonStore>,final_cache:FinalCache,logs:PathBuf,search_cancel:Mutex<Option<Arc<AtomicBool>>>}
+pub struct Backend{control_wake:(Mutex<u64>,Condvar),state:Mutex<State>,media_feed:Mutex<Option<MediaFeed>>,command_queue:Mutex<crate::media_commands::Queue>,command_running:AtomicBool,command_sequence:AtomicU64,closed:AtomicBool,generation:AtomicU64,started:Instant,data:PathBuf,local:PathBuf,raw:Arc<Cache>,final_cache:FinalCache,logs:PathBuf,search_cancel:Mutex<Option<Arc<AtomicBool>>>}
 impl Backend{
     pub fn new(settings:Value,data:PathBuf,local:PathBuf,logs:PathBuf)->Arc<Self>{
-        let backend=Arc::new(Self{control_wake:(Mutex::new(0),Condvar::new()),media_feed:Mutex::new(None),raw:Arc::new(JsonStore::new(data.join("database/lyric-pipeline-raw-v1.json"))),parsed:Arc::new(JsonStore::new(data.join("database/lyric-pipeline-parsed-v1.json"))),final_cache:FinalCache(Arc::new(JsonStore::new_enveloped(data.join("database/resolved-lyrics-v1.json")))),data,local,logs,
-            state:Mutex::new(State{settings,playback:PlaybackSnapshot::idle(),clock:PlaybackClock::default(),sync:LyricSyncService::new(),active:None,events:0,cover:None,cover_version:0,cover_key:String::new(),artwork_identity:String::new(),duration_source:"等待歌曲信息".into(),native_status:"等待网易云".into(),native_error:None,track_key:String::new(),pending_weak:None,last_strong_track:None,netease_target:None,netease_sample:None,media_command:Value::Null,smtc_can_seek:false,netease_ready:false}),command_queue:Mutex::new(Default::default()),command_running:AtomicBool::new(false),command_sequence:AtomicU64::new(0),closed:AtomicBool::new(false),generation:AtomicU64::new(0),started:Instant::now(),search_cancel:Mutex::new(None)});
+        let backend=Arc::new(Self{control_wake:(Mutex::new(0),Condvar::new()),media_feed:Mutex::new(None),raw:Arc::new(Cache::new(data.join("database/dotisle-payload-v3.json"))),final_cache:FinalCache(Arc::new(Cache::new(data.join("database/dotisle-lyrics-v3.json")))),data,local,logs,
+            state:Mutex::new(State{settings,playback:Playback::idle(),clock:PlaybackClock::default(),sync:Timeline::new(),active:None,events:0,cover:None,cover_version:0,cover_key:String::new(),artwork_identity:String::new(),duration_source:"等待歌曲信息".into(),native_status:"等待网易云".into(),native_error:None,track_key:String::new(),pending_weak:None,last_strong_track:None,netease_target:None,netease_sample:None,media_command:Value::Null,smtc_can_seek:false,netease_ready:false}),command_queue:Mutex::new(Default::default()),command_running:AtomicBool::new(false),command_sequence:AtomicU64::new(0),closed:AtomicBool::new(false),generation:AtomicU64::new(0),started:Instant::now(),search_cancel:Mutex::new(None)});
         io::log(&backend.logs,"BUILD",&format!("Version={}; Backend=Rust; GUI=Vello; Shell=winit; HTTP=WinHTTP",env!("CARGO_PKG_VERSION")));
         let worker=backend.clone();std::thread::spawn(move||worker.run());let health=backend.clone();std::thread::spawn(move||health.control_health());let media=backend.clone();std::thread::spawn(move||media.media_feed());backend
     }
@@ -104,7 +104,7 @@ impl Backend{
             }Ok(true)
         }
     }
-    /// Keep slow/missing CDP replies off the 160 ms memory timeline reader.
+    /// Probe control capability independently from media sampling.
     fn control_health(self:Arc<Self>){
         let mut observed=0;
         while !self.closed.load(Ordering::Acquire){
@@ -133,23 +133,24 @@ impl Backend{
         let mut netease=NeteaseTimeline::new(self.local.clone());let mut last_cover=String::new();let mut cover_retry=Instant::now();let mut durations=crate::duration::DurationResolver::new(self.data.join("database/track-durations-v1.json"));
         while !self.closed.load(Ordering::Acquire){
             let (filter,online)=match self.state.lock(){Ok(s)=>{let list=|key:&str|s.settings[key].as_array().map(|a|a.iter().filter_map(Value::as_str).map(str::to_string).collect::<Vec<_>>());(crate::media::SourceFilter{ignored:list("IgnoredSources").unwrap_or_else(||vec!["Browser".into()]),only:list("AllowedSources").unwrap_or_default()},s.settings["OnlineSongInfo"].as_bool().unwrap_or(false))},Err(_)=>break};
+            netease.port=self.state.lock().map(|s|crate::netease_control::cdp_port(&s.settings)).unwrap_or(crate::netease_cdp::DEFAULT_PORT);
             if filter.allows("cloudmusic.exe"){netease.read(online)}else{netease.latest=None;}
             let feed=self.media_feed.lock().ok().and_then(|f|f.clone()).filter(|f|f.captured.elapsed()<Duration::from_secs(5)&&filter.allows(&f.sample.playback.source_app_user_model_id));
-            let (mut sample,active,events)=feed.map(|f|(f.sample,f.active,f.events)).unwrap_or_else(||(MediaSample{playback:PlaybackSnapshot::idle(),updated_ms:0,raw:0.,status:"Closed".into(),rate:1.,cover_identity:String::new()},None,0));
+            let (mut sample,active,events)=feed.map(|f|(f.sample,f.active,f.events)).unwrap_or_else(||(MediaSample{playback:Playback::idle(),updated_ms:0,raw:0.,status:"Closed".into(),rate:1.,cover_identity:String::new()},None,0));
             {
                     if sample.playback.track.is_none(){
                         if let Some((title,artist))=crate::media::netease_window_metadata(&filter){
-                            sample.playback.track=Some(TrackInfo::new(format!("Netease|{title}|{artist}"),title,artist,"","Netease",Duration::ZERO));sample.playback.source_app_user_model_id="cloudmusic.exe".into();
+                            sample.playback.track=Some(Track::new(format!("Netease|{title}|{artist}"),title,artist,"","Netease",Duration::ZERO));sample.playback.source_app_user_model_id="cloudmusic.exe".into();
                         }
                     }
                     if sample.playback.track.is_none(){if let Some(n)=netease.latest.as_ref().filter(|n|unix_ms()-n.captured_ms<800){
-                        let mut track=TrackInfo::new(format!("Netease|{}",n.song_id),&n.title,&n.artist,&n.album,"Netease",Duration::from_secs_f64(n.duration));track.song_id=Some(n.song_id.clone());sample.playback.track=Some(track);sample.playback.source_app_user_model_id="cloudmusic.exe".into();
+                        let mut track=Track::new(format!("Netease|{}",n.song_id),&n.title,&n.artist,&n.album,"Netease",Duration::from_secs_f64(n.duration));track.song_id=Some(n.song_id.clone());sample.playback.track=Some(track);sample.playback.source_app_user_model_id="cloudmusic.exe".into();
                     }}
                     let mut native=false;let mut cover_url=None;
-                    if let Some(t)=sample.playback.track.as_mut(){if let Some(n)=netease.matching(t){
+                    if let Some(t)=sample.playback.track.as_mut(){if let Some(n)=netease.display_matching(t).filter(|n|unix_ms()-n.captured_ms<800||sample.updated_ms<=n.captured_ms){
                         cover_url=n.cover_url.clone();if t.title.trim().is_empty()||t.title.eq_ignore_ascii_case("Unknown Title"){t.title=n.title.clone();}if t.artist.trim().is_empty(){t.artist=n.artist.clone();}if t.album.trim().is_empty(){t.album=n.album.clone();}
                         {
-                            let age=((unix_ms()-n.captured_ms) as f64/1000.).max(0.);t.song_id=Some(n.song_id);t.duration=Duration::from_secs_f64(n.duration);sample.playback.is_playing=n.playing;sample.playback.raw_position=Some(Duration::from_secs_f64(n.position));sample.playback.position=Duration::from_secs_f64((n.position+if n.playing{age}else{0.}).min(n.duration));sample.updated_ms=n.captured_ms;sample.raw=n.position;native=true;
+                            let age=((unix_ms()-n.captured_ms) as f64/1000.).max(0.);t.song_id=Some(n.song_id);t.duration=Duration::from_secs_f64(n.duration);sample.playback.is_playing=n.playing;sample.playback.raw_position=Some(Duration::from_secs_f64(n.position));sample.playback.position=Duration::from_secs_f64((n.position+if n.playing{age}else{0.}).min(n.duration));sample.updated_ms=n.captured_ms;sample.raw=n.position;native=(unix_ms()-n.captured_ms)<800;
                         }
                     }}
                     if !native&&sample.updated_ms>0&&sample.updated_ms<=unix_ms()+5000&&sample.playback.is_playing{
@@ -159,7 +160,7 @@ impl Backend{
                     let job=self.accept(&sample,native,active,events,&netease);
                     if let Ok(mut state)=self.state.lock(){if !native{state.duration_source=durations.source.clone();}}
                     if let Some(track)=job{self.start_search(track);}
-                    let key=sample.playback.track.as_ref().map(|t|LyricSyncService::build_stable_track_identity(t)).unwrap_or_default();
+                    let key=sample.playback.track.as_ref().map(|t|Timeline::build_stable_track_identity(t)).unwrap_or_default();
                     if key!=last_cover{last_cover=key.clone();cover_retry=Instant::now();}
                     if let Some(url)=cover_url{let needed=self.state.lock().is_ok_and(|s|s.cover.is_none());if needed&&Instant::now()>=cover_retry{cover_retry=Instant::now()+Duration::from_secs(15);self.start_artwork(key,url);}}
                 }
@@ -167,17 +168,17 @@ impl Backend{
             std::thread::sleep(Duration::from_millis(160));
         }
     }
-    fn accept(&self,sample:&MediaSample,native:bool,active:Option<windows::Media::Control::GlobalSystemMediaTransportControlsSession>,events:u64,netease:&NeteaseTimeline)->Option<TrackInfo>{
+    fn accept(&self,sample:&MediaSample,native:bool,active:Option<windows::Media::Control::GlobalSystemMediaTransportControlsSession>,events:u64,netease:&NeteaseTimeline)->Option<Track>{
         let mut s=self.state.lock().ok()?;let mut p=sample.playback.clone();
         if let (Some(old),Some(new))=(&s.last_strong_track,&p.track){
             let same_source=old.source_app==new.source_app;let same_title=old.title.trim()==new.title.trim();let weak=same_source&&same_title&&!old.artist.trim().is_empty()&&new.artist.trim().is_empty();
             if weak{
-                let now=Instant::now();let id=LyricSyncService::build_stable_track_identity(new);
+                let now=Instant::now();let id=Timeline::build_stable_track_identity(new);
                 if s.pending_weak.as_ref().is_none_or(|(_,_,key)|*key!=id){s.pending_weak=Some((now+Duration::from_millis(750),now+Duration::from_millis(1500),id))}
                 if s.pending_weak.as_ref().is_some_and(|(quiet,max,_)|now<*quiet&&now<*max){p.track=s.last_strong_track.clone();}
             }else{s.pending_weak=None;s.last_strong_track=p.track.clone();}
         }else{s.pending_weak=None;s.last_strong_track=p.track.clone();}
-        let key=p.track.as_ref().map(LyricSyncService::build_stable_track_identity).unwrap_or_default();
+        let key=p.track.as_ref().map(Timeline::build_stable_track_identity).unwrap_or_default();
         let changed=key!=s.track_key;
         if changed{s.track_key=key.clone();s.cover_key=sample.cover_identity.clone();s.cover=p.cover_image_bytes.clone();s.cover_version+=1;s.artwork_identity.clear();}
         else if p.cover_image_bytes.is_some()&&p.cover_image_bytes!=s.cover{s.cover=p.cover_image_bytes.clone();s.cover_version+=1;s.artwork_identity.clear();}
@@ -188,71 +189,51 @@ impl Backend{
         if let Some(track)=p.track{
             if s.sync.begin_track(&track){return Some(track)}
         }else if changed{
-            s.sync.get_display_frame(&PlaybackSnapshot::idle());self.generation.fetch_add(1,Ordering::AcqRel);if let Ok(mut c)=self.search_cancel.lock(){if let Some(c)=c.take(){c.store(true,Ordering::Release)}}
+            s.sync.get_display_frame(&Playback::idle());self.generation.fetch_add(1,Ordering::AcqRel);if let Ok(mut c)=self.search_cancel.lock(){if let Some(c)=c.take(){c.store(true,Ordering::Release)}}
         }
         None
     }
-    fn start_search(self:&Arc<Self>,track:TrackInfo){
+    fn start_search(self:&Arc<Self>,track:Track){
         let generation=self.generation.fetch_add(1,Ordering::AcqRel)+1;let cancel=Arc::new(AtomicBool::new(false));
         if let Ok(mut previous)=self.search_cancel.lock(){if let Some(old)=previous.replace(cancel.clone()){old.store(true,Ordering::Release)}}
         let backend=self.clone();std::thread::spawn(move||{
             if !wait_delay(&cancel,Duration::from_millis(750)){return}
-            let mut result=LyricResolutionResult::unavailable();
+            let mut result=Lookup::unavailable();
             for (attempt,delay) in [0,2,5].into_iter().enumerate(){
                 if attempt>0&&!wait_delay(&cancel,Duration::from_secs(delay)){return}
                 if cancel.load(Ordering::Acquire){return}result=backend.resolve(&track,cancel.clone());
-                if result.status!=LyricResolutionStatus::TransientFailure{break}
+                if result.status!=LookupStatus::TransientFailure{break}
             }
             if backend.closed.load(Ordering::Acquire)||cancel.load(Ordering::Acquire)||backend.generation.load(Ordering::Acquire)!=generation{return}
             if let Ok(mut s)=backend.state.lock(){s.sync.complete_search(&track,result.lyrics.as_ref());}
         });
     }
-    fn resolve(&self,track:&TrackInfo,cancel:Arc<AtomicBool>)->LyricResolutionResult{
-        if let Some(cached)=self.final_cache.get(track){return LyricResolutionResult::from_lyrics(Some(cached))}
+    fn resolve(&self,track:&Track,cancel:Arc<AtomicBool>)->Lookup{
         let settings=self.state.lock().map(|s|s.settings.clone()).unwrap_or_default();
         let mapping=MappingDb(self.data.join("database/song_maps.db")).resolve(track);
-        if mapping.is_pure_music{return LyricResolutionResult::from_lyrics(Some(ResolvedLyrics{content:ParsedLyrics::pure_music_placeholder(LyricPayloadFormat::PlainText),provider_id:known_providers::local(),candidate_id:format!("mapping:{}",track.id),acquisition:LyricAcquisitionKind::SongMapping,diagnostics:Default::default()}))}
-        let mut mapped=track.clone();mapped.title=mapping.title;mapped.artist=mapping.artist;if let Some(a)=mapping.album{mapped.album=a}
-        let local=settings["LocalFolders"].as_array().map(|a|a.iter().filter_map(Value::as_str).map(str::to_string).collect::<Vec<_>>()).unwrap_or_default();
-        if !local.is_empty(){let provider=LocalLyricProvider::new(local);if let Some((content,acquisition))=provider.get_parsed_lyrics(&mapped){return LyricResolutionResult::from_lyrics(Some(ResolvedLyrics{provider_id:known_providers::local(),candidate_id:track.id.clone(),content,acquisition,diagnostics:Default::default()}))}}
-        let mut order=known_providers::online_trust_order();if let Some(official)=lyric_core::policy::LyricSourceRoutingPolicy::try_get_official_provider(Some(&track.source_app)){if let Some(index)=order.iter().position(|p|*p==official){let primary=order.remove(index);order.insert(0,primary);}}let providers=if let Some(p)=mapping.preferred_provider{order.iter().filter(|i|i.eq_ignore_ascii_case(&p)).cloned().collect::<Vec<_>>()}else{order.clone()};
-        let (tx,rx)=mpsc::channel();let primary_cancel=Arc::new(AtomicBool::new(false));
-        for provider in &providers{
-            let tx=tx.clone();let provider=provider.clone();let mapped=mapped.clone();let raw=self.raw.clone();let parsed=self.parsed.clone();let cancel=cancel.clone();let secondary=primary_cancel.clone();let logs=self.logs.clone();
-            std::thread::spawn(move||{
-                if cancel.load(Ordering::Acquire){return}let context=RequestContext{cancelled:secondary,deadline:Instant::now()+Duration::from_secs(9)};
-                // One coordinator per provider, so its trust policy has to name exactly that provider.
-                // Leaving it to the default asks for the whole online order and fails with
-                // MissingProvider, which used to be swallowed by unwrap_or_else and turned every
-                // online resolution into "unavailable" (i.e. no lyrics unless it was already cached).
-                let trust_policy=lyric_core::policy::LyricProviderTrustPolicy::new(vec![provider.clone()],vec![provider.clone()]).ok();
-                let coordinator=LyricResolutionCoordinator::new(LyricResolutionCoordinatorBuilder{sources:vec![Box::new(OnlineSource::new(provider.value(),context))],source_timeout:Some(Duration::from_secs(9)),trust_policy,pipeline_cache:Some(LyricPipelineCache::new(Box::new(CompactStore::<RawLyricCacheEnvelope>::new(raw)),Box::new(CompactStore::<ParsedLyricCacheEnvelope>::new(parsed)))),..Default::default()});
-                let result=match coordinator{Ok(coordinator)=>coordinator.resolve(&mapped),Err(error)=>{io::log(&logs,"LYRIC_ERROR",&format!("coordinator for {} could not be built: {error}",provider.value()));LyricResolutionResult::unavailable()}};
-                if !cancel.load(Ordering::Acquire){let _=tx.send((provider,result));}
-            });
-        }
-        drop(tx);let mut results=vec![];let mut until=Instant::now()+Duration::from_secs(10);
-        while results.len()<providers.len()&&Instant::now()<until{
-            if cancel.load(Ordering::Acquire)||self.closed.load(Ordering::Acquire){primary_cancel.store(true,Ordering::Release);return LyricResolutionResult::unavailable()}
+        if mapping.is_pure_music{return Lookup::from_lyrics(Some(Selection{content:Lyrics::instrumental(),provider_id:Provider::new("Local"),candidate_id:format!("mapping:{}",track.id),score:100}))}
+        let mut mapped=track.clone();mapped.title=mapping.title;mapped.artist=mapping.artist;if let Some(album)=mapping.album{mapped.album=album}
+        let folders=settings["LocalFolders"].as_array().map(|a|a.iter().filter_map(Value::as_str).map(str::to_owned).collect()).unwrap_or_default();
+        if let Some(content)=LocalLibrary::new(folders).get(&mapped){return Lookup::from_lyrics(Some(Selection{content,provider_id:Provider::new("Local"),candidate_id:track.id.clone(),score:100}))}
+        let context=serde_json::to_string(&(lyric_core::identity::track_key(&mapped),&mapping.preferred_provider)).unwrap_or_default();
+        if let Some(cached)=self.final_cache.get(&context){return Lookup::from_lyrics(Some(cached))}
+        let mut order=providers();if let Some(official)=lyric_core::identity::official(&track.source_app){if let Some(i)=order.iter().position(|p|*p==official){let p=order.remove(i);order.insert(0,p);}}
+        if let Some(preferred)=mapping.preferred_provider{order.retain(|p|p.eq_ignore_ascii_case(&preferred));}
+        let (tx,rx)=mpsc::channel();let stopped=Arc::new(AtomicBool::new(false));
+        for provider in &order{let tx=tx.clone();let provider=provider.clone();let mapped=mapped.clone();let cache=self.raw.clone();let cancel=cancel.clone();let stop=stopped.clone();std::thread::spawn(move||{if cancel.load(Ordering::Acquire){return}let mut source=OnlineSource::new(provider.value(),RequestContext{cancelled:stop,deadline:Instant::now()+Duration::from_secs(9)});source.cache=Some(cache);let result=lyric_core::resolution::resolve(&mapped,&source);if !cancel.load(Ordering::Acquire){let _=tx.send((provider,result));}});}
+        drop(tx);let mut results=Vec::new();let mut deadline=Instant::now()+Duration::from_secs(10);
+        while results.len()<order.len()&&Instant::now()<deadline{
+            if cancel.load(Ordering::Acquire)||self.closed.load(Ordering::Acquire){stopped.store(true,Ordering::Release);return Lookup::unavailable()}
             if let Ok((provider,result))=rx.recv_timeout(Duration::from_millis(40)){
-                if providers.first()==Some(&provider)&&result.lyrics.as_ref().and_then(ResolvedLyrics::identity_score).is_some_and(|s|s>=95){primary_cancel.store(true,Ordering::Release);if let Some(r)=&result.lyrics{self.final_cache.put(track,r)}return result}
-                if result.lyrics.as_ref().and_then(ResolvedLyrics::identity_score).is_some_and(|score|score>=95){until=until.min(Instant::now()+Duration::from_millis(600));}
+                if result.lyrics.as_ref().is_some_and(|l|l.score>=96){if order.first()==Some(&provider){stopped.store(true,Ordering::Release);if let Some(r)=&result.lyrics{self.final_cache.put(&context,r)}return result}deadline=deadline.min(Instant::now()+Duration::from_millis(600));}
                 results.push((provider,result));
             }
         }
-        primary_cancel.store(true,Ordering::Release);
-        let scored=results.iter().filter_map(|(provider,r)|r.lyrics.as_ref().map(|l|ScoredCandidate{provider_id:provider.clone(),identity_score:l.identity_score().unwrap_or(0),candidate_id:l.candidate_id.clone()})).collect::<Vec<_>>();
-        if let Some(selected)=select_best_scored(&scored,&order){if let Some((_,r))=results.iter().find(|(p,r)|p==&selected.provider_id&&r.lyrics.as_ref().is_some_and(|l|l.candidate_id==selected.candidate_id)){if let Some(l)=&r.lyrics{self.final_cache.put(track,l)}return r.clone()}}
-        // Nothing usable came back. Record exactly what every provider did so a "找不到歌词"
-        // report can be diagnosed from the log instead of guessed at.
-        let detail=results.iter().map(|(p,r)|format!("{}={{status:{:?} lyrics:{} candidate:{:?} score:{:?}}}",p.value(),r.status,r.lyrics.is_some(),r.lyrics.as_ref().map(|l|l.candidate_id.clone()),r.lyrics.as_ref().and_then(ResolvedLyrics::identity_score))).collect::<Vec<_>>().join(" ");
-        let answered=results.iter().map(|(p,_)|p.value().to_string()).collect::<Vec<_>>();
-        let silent=providers.iter().filter(|p|!answered.contains(&p.value().to_string())).map(|p|p.value().to_string()).collect::<Vec<_>>();
-        io::log(&self.logs,"LYRIC_MISS",&format!("title={:?} artist={:?} songId={:?} sourceApp={:?} asked=[{}] silent=[{}] directSongIdForNetease={} detail: {}",
-            track.title,track.artist,track.song_id,track.source_app,
-            providers.iter().map(|p|p.value()).collect::<Vec<_>>().join(","),silent.join(","),
-            lyric_core::policy::ProviderSongIdPolicy::can_use_direct_song_id(&TrackIdentity::from_track_info(track),&known_providers::netease()),detail));
-        if results.iter().any(|(_,r)|r.status==LyricResolutionStatus::TransientFailure){LyricResolutionResult{lyrics:None,status:LyricResolutionStatus::TransientFailure}}else{LyricResolutionResult::from_lyrics(None)}
+        stopped.store(true,Ordering::Release);
+        let selected=results.iter().filter_map(|(p,r)|r.lyrics.as_ref().map(|l|(p,l))).max_by_key(|(p,l)|(l.score,std::cmp::Reverse(order.iter().position(|id|id==*p).unwrap_or(usize::MAX))));
+        if let Some((_,lyrics))=selected{self.final_cache.put(&context,lyrics);return Lookup::from_lyrics(Some(lyrics.clone()))}
+        io::log(&self.logs,"LYRIC_MISS",&format!("title={:?} artist={:?} results={:?}",track.title,track.artist,results.iter().map(|(p,r)|(p.value(),r.status)).collect::<Vec<_>>()));
+        Lookup{lyrics:None,status:if results.len()<order.len()||results.iter().any(|(_,r)|r.status==LookupStatus::TransientFailure){LookupStatus::TransientFailure}else{LookupStatus::Missing}}
     }
     fn start_artwork(self:&Arc<Self>,key:String,url:String){
         let Some(rest)=url.strip_prefix("https://").or_else(||url.strip_prefix("http://"))else{return};let host=rest.split('/').next().unwrap_or("").to_ascii_lowercase();if host!="music.126.net"&&!host.ends_with(".music.126.net"){return}
@@ -261,20 +242,3 @@ impl Backend{
     }
 }
 fn wait_delay(cancel:&AtomicBool,delay:Duration)->bool{let until=Instant::now()+delay;while Instant::now()<until{if cancel.load(Ordering::Acquire){return false}std::thread::sleep(Duration::from_millis(30));}true}
-#[cfg(test)]mod tests{
-use super::*;
-use lyric_core::resolution::LyricSource;
-/// `resolve` builds one coordinator per provider. With the default trust policy that asks for the
-/// whole online order and fails for a single-source coordinator, which used to be swallowed and
-/// made every online resolution report "unavailable" — i.e. no lyrics unless already cached.
-#[test]fn one_source_coordinator_requires_a_matching_trust_policy(){
-    let source=||Box::new(OnlineSource::new("Netease",RequestContext::new(Duration::from_secs(1)))) as Box<dyn LyricSource>;
-    let default_policy=LyricResolutionCoordinator::new(LyricResolutionCoordinatorBuilder{sources:vec![source()],..Default::default()});
-    assert!(default_policy.is_err(),"the default policy must keep failing for a one-source coordinator");
-    let provider=known_providers::netease();
-    let policy=lyric_core::policy::LyricProviderTrustPolicy::new(vec![provider.clone()],vec![provider.clone()]).expect("single-provider policy");
-    let matched=LyricResolutionCoordinator::new(LyricResolutionCoordinatorBuilder{sources:vec![source()],trust_policy:Some(policy),..Default::default()});
-    assert!(matched.is_ok(),"a matching trust policy must let the per-provider coordinator be built");
-}
-}
-

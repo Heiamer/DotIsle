@@ -1,0 +1,43 @@
+{
+  "removedCoreModules": [
+    "Rust/crates/lyric-core/src/json_store.rs",
+    "Rust/crates/lyric-core/src/lines.rs",
+    "Rust/crates/lyric-core/src/log.rs",
+    "Rust/crates/lyric-core/src/matching.rs",
+    "Rust/crates/lyric-core/src/memory_scan.rs",
+    "Rust/crates/lyric-core/src/payload.rs",
+    "Rust/crates/lyric-core/src/planner.rs",
+    "Rust/crates/lyric-core/src/policy.rs",
+    "Rust/crates/lyric-core/src/projector.rs",
+    "Rust/crates/lyric-core/src/text.rs"
+  ],
+  "licenseFiles": [
+    ".gitattributes",
+    "AndroidX-Motion/Apache-2.0.txt",
+    "AndroidX-Motion/ExpressiveMotionTokens.kt",
+    "AndroidX-Motion/MotionScheme.kt",
+    "AndroidX-Motion/StandardMotionTokens.kt",
+    "FusionPixel/LICENSES/ark-pixel/OFL.txt",
+    "FusionPixel/LICENSES/cubic-11/OFL.txt",
+    "FusionPixel/LICENSES/galmuri/LICENSE.txt",
+    "FusionPixel/OFL.txt",
+    "GoogleSansFlex-OFL.txt",
+    "Hybrid-Rust-Licenses.txt",
+    "Inno-Setup-License.txt",
+    "MaterialSymbols-Apache-2.0.txt",
+    "NeteaseCloudMusicApi-MIT.txt",
+    "NotoSansJP-OFL.txt",
+    "NotoSansSC-OFL.txt",
+    "NotoSerifSC-OFL.txt",
+    "Rewrite-Rust-Licenses.txt",
+    "Rust-Dependencies-Licenses.txt",
+    "SourceSerif4-OFL.txt",
+    "doto-OFL.txt",
+    "e_sqlite3-APACHE-2.0.txt",
+    "material-colors-MIT.txt",
+    "qq-lyric-codec-MIT.txt",
+    "roxmltree-MIT.txt",
+    "spacegrotesk-OFL.txt",
+    "spacemono-OFL.txt"
+  ]
+}

@@ -1,16 +1,8 @@
-//! Real provider checks use metadata only and never operate a music player.
+//! Read-only service interoperability checks; never issues player controls.
 use std::time::{Duration,Instant};
-use lyric_core::{models::*,resolution::{LyricResolutionCoordinator,LyricResolutionCoordinatorBuilder},policy::LyricProviderTrustPolicy};
+use lyric_core::{models::*,resolution::{self,Source}};
 use lyric_backend::{providers::OnlineSource,http::RequestContext};
 fn main()->Result<(),Box<dyn std::error::Error>>{
-    let out=std::env::args().nth(1).ok_or("report path required")?;let mut reports=vec![];
-    for provider in known_providers::online_trust_order(){
-        let began=Instant::now();let source=OnlineSource::new(provider.value(),RequestContext::new(Duration::from_secs(15)));
-        let policy=LyricProviderTrustPolicy::new(vec![provider.clone()],vec![provider.clone()])?;
-        let coordinator=LyricResolutionCoordinator::new(LyricResolutionCoordinatorBuilder{sources:vec![Box::new(source)],trust_policy:Some(policy),source_timeout:Some(Duration::from_secs(15)),..Default::default()})?;
-        let duration=if provider.value()=="Migu"{0}else{326};let track=TrackInfo::new("fixture","海阔天空","BEYOND","乐与怒","Kugou",Duration::from_secs(duration));let result=coordinator.resolve(&track);
-        let lyrics=result.lyrics.as_ref();reports.push(serde_json::json!({"provider":provider.value(),"durationProvided":duration>0,"status":format!("{:?}",result.status),"lyrics":lyrics.is_some(),"score":lyrics.and_then(ResolvedLyrics::identity_score),"elapsedMs":began.elapsed().as_millis()}));
-        std::fs::write(&out,serde_json::to_vec_pretty(&reports)?)?;
-    }
-    Ok(())
+ let out=std::env::args().nth(1).ok_or("report path required")?;let mut reports=Vec::new();
+ for provider in providers(){let start=Instant::now();let source=OnlineSource::new(provider.value(),RequestContext::new(Duration::from_secs(15)));let track=Track::new("service-check","海阔天空","BEYOND","乐与怒","Generic",Duration::ZERO);let search=source.search(&track);let details=match &search{Ok(hits)=>serde_json::json!({"hits":hits.len(),"candidates":hits.iter().take(6).map(|h|serde_json::json!({"title":h.title,"artists":h.artists,"id":h.id,"score":lyric_core::identity::rate(&track,h)})).collect::<Vec<_>>()}),Err(e)=>serde_json::json!({"error":e})};let result=resolution::resolve(&track,&source);reports.push(serde_json::json!({"provider":provider.value(),"search":details,"status":format!("{:?}",result.status),"lyrics":result.lyrics.is_some(),"score":result.lyrics.as_ref().map(|s|s.score),"formatWords":result.lyrics.as_ref().map(|s|s.content.lines.iter().filter(|l|!l.words.is_empty()).count()),"elapsedMs":start.elapsed().as_millis()}));std::fs::write(&out,serde_json::to_vec_pretty(&reports)?)?;}Ok(())
 }

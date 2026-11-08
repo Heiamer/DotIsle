@@ -1,142 +1,47 @@
-//! Read-only NetEase timeline port. Signature/field sources: AF-Media-Bar and Kxnrl (MIT).
-use std::{path::PathBuf,time::{Instant,Duration},sync::mpsc};
-use windows::{Win32::{Foundation::{HANDLE,CloseHandle},System::{Diagnostics::{ToolHelp::*,Debug::ReadProcessMemory},Threading::{OpenProcess,PROCESS_VM_READ}}}};
-use crate::{http::{self,RequestContext},media::unix_ms,providers::text};
-
-const PLAYER:&str="48 8D 0D ? ? ? ? E8 ? ? ? ? 48 8D 0D ? ? ? ? E8 ? ? ? ? 90 48 8D 0D ? ? ? ? E8 ? ? ? ? 48 8D 05 ? ? ? ? 48 8D A5 ? ? ? ? 5F 5D C3 CC CC CC CC CC 48 89 4C 24 ? 55 57 48 81 EC ? ? ? ? 48 8D 6C 24 ? 48 8D 7C 24";
-const SCHEDULE:&str="66 0F 2E 0D ? ? ? ? 7A ? 75 ? 66 0F 2E 15";
-struct Owned(HANDLE);impl Drop for Owned{fn drop(&mut self){unsafe{let _=CloseHandle(self.0);}}}unsafe impl Send for Owned{}
-fn wide(s:&[u16])->String{String::from_utf16_lossy(&s[..s.iter().position(|c|*c==0).unwrap_or(s.len())])}
-#[derive(Clone,serde::Serialize)]#[serde(rename_all="camelCase")]
-pub struct TimingSample{pub song_id:String,pub title:String,pub artist:String,pub album:String,pub position:f64,pub duration:f64,pub playing:bool,pub captured_ms:i64,pub cover_url:Option<String>}
-#[derive(Default)]struct SongMetadata{title:String,artist:String,album:String,cover:Option<String>}
-struct Reader{target:Option<crate::netease_control::Target>,process:Owned,player:usize,schedule:usize,metadata_id:String,title:String,artist:String,album:String,cover:Option<String>,next_metadata:Instant,remote:Option<mpsc::Receiver<(String,SongMetadata)>>,next_remote:Instant}
-impl Reader{
-    fn attach()->Result<Self,String>{unsafe{
-        let snapshot=Owned(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0).map_err(|e|e.to_string())?);
-        let mut entry=PROCESSENTRY32W::default();entry.dwSize=std::mem::size_of_val(&entry) as u32;
-        let mut valid=Process32FirstW(snapshot.0,&mut entry).is_ok();
-        while valid{
-            if wide(&entry.szExeFile).eq_ignore_ascii_case("cloudmusic.exe"){
-                if let Ok(mods)=CreateToolhelp32Snapshot(TH32CS_SNAPMODULE|TH32CS_SNAPMODULE32,entry.th32ProcessID){
-                    let mods=Owned(mods);let mut module=MODULEENTRY32W::default();module.dwSize=std::mem::size_of_val(&module) as u32;
-                    let mut more=Module32FirstW(mods.0,&mut module).is_ok();
-                    while more{
-                        if wide(&module.szModule).eq_ignore_ascii_case("cloudmusic.dll"){
-                            if let Ok(reader)=Self::from_module(entry.th32ProcessID,module.modBaseAddr as usize,wide(&module.szExePath)){return Ok(reader)}
-                        }
-                        more=Module32NextW(mods.0,&mut module).is_ok();
-                    }
-                }
-            }
-            valid=Process32NextW(snapshot.0,&mut entry).is_ok();
-        }
-        Err("No supported NetEase player process".into())
-    }}
-    fn from_module(pid:u32,base:usize,path:String)->Result<Self,String>{
-        let process=Owned(unsafe{OpenProcess(PROCESS_VM_READ,false,pid)}.map_err(|e|e.to_string())?);
-        let mut file=std::fs::File::open(&path).map_err(|e|e.to_string())?;use std::io::{Read,Seek,SeekFrom};
-        let mut dos=[0u8;64];file.read_exact(&mut dos).map_err(|e|e.to_string())?;
-        let pe=u32::from_le_bytes(dos[60..64].try_into().unwrap()) as u64;
-        file.seek(SeekFrom::Start(pe)).map_err(|e|e.to_string())?;let mut coff=[0u8;24];file.read_exact(&mut coff).map_err(|e|e.to_string())?;
-        if &coff[..4]!=b"PE\0\0"{return Err("invalid PE".into())}
-        let sections=u16::from_le_bytes(coff[6..8].try_into().unwrap());let optional=u16::from_le_bytes(coff[20..22].try_into().unwrap());
-        file.seek(SeekFrom::Start(pe+24+optional as u64)).map_err(|e|e.to_string())?;
-        for _ in 0..sections.min(96){let mut section=[0u8;40];file.read_exact(&mut section).map_err(|e|e.to_string())?;
-            if &section[..5]!=b".text"{continue}
-            let value=|at|u32::from_le_bytes(section[at..at+4].try_into().unwrap());let rva=value(12);let length=value(16);let offset=value(20);
-            let p=lyric_core::memory_scan::scan_rip(&path,offset as u64,length as u64,rva as i64,PLAYER,3).map_err(|e|e.to_string())?;
-            let s=lyric_core::memory_scan::scan_rip(&path,offset as u64,length as u64,rva as i64,SCHEDULE,4).map_err(|e|e.to_string())?;
-            return Ok(Self{target:crate::netease_control::Target::from_pid(pid),process,player:(base as i64+p) as usize,schedule:(base as i64+s) as usize,metadata_id:String::new(),title:String::new(),artist:String::new(),album:String::new(),cover:None,next_metadata:Instant::now(),remote:None,next_remote:Instant::now()})
-        }
-        Err("missing executable section".into())
-    }
-    fn bytes<const N:usize>(&self,address:usize)->Result<[u8;N],String>{
-        if address==0{return Err("invalid player address".into())}let mut output=[0u8;N];let mut read=0;
-        unsafe{ReadProcessMemory(self.process.0,address as _,output.as_mut_ptr() as _,N,Some(&mut read))}.map_err(|e|e.to_string())?;
-        if read!=N{return Err("incomplete player field".into())}Ok(output)
-    }
-    fn id(&self)->Result<String,String>{
-        let info=u64::from_le_bytes(self.bytes::<8>(self.player+0x50)?) as usize;if info==0{return Err("missing track".into())}
-        let text=info+0x10;let length=u64::from_le_bytes(self.bytes::<8>(text+0x10)?) as usize;if !(1..=128).contains(&length){return Err("invalid identifier length".into())}
-        let address=if length<=15{text}else{u64::from_le_bytes(self.bytes::<8>(text)?) as usize};
-        let mut buffer=vec![0u8;length];let mut read=0;
-        unsafe{ReadProcessMemory(self.process.0,address as _,buffer.as_mut_ptr() as _,length,Some(&mut read))}.map_err(|e|e.to_string())?;
-        let id=String::from_utf8_lossy(&buffer).split('_').next().unwrap_or("").trim_end_matches('\0').to_string();
-        if id.is_empty()||id.len()>20||!id.bytes().all(|b|b.is_ascii_digit()){return Err("invalid song ID".into())}Ok(id)
-    }
-    fn read(&mut self,local:&PathBuf,online:bool)->Result<Option<TimingSample>,String>{
-        let state=i32::from_le_bytes(self.bytes::<4>(self.player+0x60)?);if state!=1&&state!=2{return Ok(None)}
-        let id=self.id()?;let position=f64::from_le_bytes(self.bytes::<8>(self.schedule)?);let duration=f64::from_le_bytes(self.bytes::<8>(self.player+0xA8)?);
-        if self.metadata_id!=id || self.title.is_empty()&&Instant::now()>=self.next_metadata{
-            if self.metadata_id!=id{self.title.clear();self.artist.clear();self.album.clear();self.cover=None;self.remote=None;self.next_remote=Instant::now()}
-            self.metadata_id=id.clone();self.next_metadata=Instant::now()+Duration::from_secs(1);
-            let (title,cover)=local_metadata(local,&id);if !title.is_empty(){self.title=title}if cover.is_some(){self.cover=cover}
-        }
-        if online&&(self.title.is_empty()||self.artist.is_empty()||self.cover.is_none()){
-            if let Some(r)=self.remote.as_ref(){if let Ok((remote_id,metadata))=r.try_recv(){if remote_id==id{if !metadata.title.is_empty(){self.title=metadata.title}self.artist=metadata.artist;self.album=metadata.album;if metadata.cover.is_some(){self.cover=metadata.cover}}self.remote=None;}}
-            if self.remote.is_none()&&Instant::now()>=self.next_remote{
-                let (tx,rx)=mpsc::channel();self.remote=Some(rx);self.next_remote=Instant::now()+Duration::from_secs(10);let id=id.clone();
-                std::thread::spawn(move||{let metadata=remote_metadata(&id).unwrap_or_default();let _=tx.send((id,metadata));});
-            }
-        }
-        if self.title.is_empty()||self.id()?!=id||!valid(position,duration){return Ok(None)}
-        Ok(Some(TimingSample{song_id:id,title:self.title.clone(),artist:self.artist.clone(),album:self.album.clone(),position,duration,playing:state==1,captured_ms:unix_ms(),cover_url:self.cover.clone()}))
-    }
+//! Read-only local player-page timeline. No process-memory patterns or offsets.
+use std::{path::PathBuf,sync::mpsc,time::{Duration,Instant}};
+use serde_json::{Value,json};
+use lyric_core::{models::Track,identity};
+use crate::{media::unix_ms,netease_control::{Target,players},netease_cdp,http::{self,RequestContext},providers::text};
+#[derive(Clone,Debug)]pub struct TimingSample{pub song_id:String,pub title:String,pub artist:String,pub album:String,pub position:f64,pub duration:f64,pub playing:bool,pub control_ready:bool,pub captured_ms:i64,pub cover_url:Option<String>}
+fn parse(v:&Value,now:i64)->Result<TimingSample,String>{
+ let song_id=text(v,"songId");let position=v["position"].as_f64().ok_or("position missing")?;let duration=v["duration"].as_f64().ok_or("duration missing")?;let captured_ms=v["capturedMs"].as_i64().ok_or("timestamp missing")?;
+ if song_id.is_empty()||song_id.len()>32||!song_id.bytes().all(|b|b.is_ascii_digit())||!position.is_finite()||!duration.is_finite()||!(0.0..=86400.).contains(&duration)||duration==0.||position<0.||position>duration||!(0..800).contains(&(now-captured_ms)){return Err("invalid or stale player timeline".into())}
+ let playing=v["playing"].as_bool().ok_or("playback state missing")?;let cover=text(v,"cover");
+ Ok(TimingSample{song_id,title:text(v,"title"),artist:text(v,"artist"),album:text(v,"album"),position,duration,playing,control_ready:v["controlReady"].as_bool().unwrap_or(false),captured_ms,cover_url:(!cover.is_empty()).then_some(cover)})
 }
-fn valid(p:f64,d:f64)->bool{p.is_finite()&&d.is_finite()&&p>=0.&&d>0.&&d<86400.&&p<=d+0.5}
-fn local_metadata(local:&PathBuf,id:&str)->(String,Option<String>){
-    let directory=local.join("NetEase/CloudMusic/WebData/file");
-    for (file,key) in [("playingList","list"),("fmPlay","queue")]{
-        let path=directory.join(file);if std::fs::metadata(&path).map(|m|m.len()>32*1024*1024).unwrap_or(true){continue}
-        let Ok(input)=std::fs::File::open(path)else{continue};let Ok(value)=serde_json::from_reader::<_,serde_json::Value>(std::io::BufReader::new(input))else{continue};
-        if let Some(list)=value[key].as_array(){for item in list{if text(item,"id")==id{let t=item.get("track").unwrap_or(item);let a=t.get("album").unwrap_or(&t["al"]);let cover=if text(a,"cover").is_empty(){text(a,"picUrl")}else{text(a,"cover")};return(text(t,"name"),if cover.is_empty(){None}else{Some(cover)})}}}
-    }
-    (String::new(),None)
+type ReadResult=Result<(Target,TimingSample),String>;
+fn sample(port:u16)->ReadResult{
+ for target in players(){if !netease_cdp::available(target.pid,port){continue}let value=netease_cdp::read_timeline(target.pid,port)?;return parse(&value,unix_ms()).map(|sample|(target,sample))}
+ Err(format!("本机进度通道未连接（端口 {port}），需退出播放器后运行包内连接脚本；当前使用系统媒体会话"))
 }
-fn remote_metadata(id:&str)->Result<SongMetadata,String>{
-    let ctx=RequestContext::new(Duration::from_secs(4));let response=http::get(&format!("https://music.163.com/api/song/detail/?id={id}&ids=%5B{id}%5D"),&ctx)?;
-    parse_metadata(&response,id)
-}
-/// Raw song object for the client's own playing/play action after a restart.
-pub fn track_detail(id:&str)->Result<serde_json::Value,String>{
-    if id.is_empty()||id.len()>32||!id.bytes().all(|b|b.is_ascii_digit()){return Err("歌曲 ID 无效".into())}
-    let ctx=RequestContext::new(Duration::from_secs(4));
-    let response=http::get(&format!("https://music.163.com/api/song/detail/?id={id}&ids=%5B{id}%5D"),&ctx)?;
-    let song=response["songs"].as_array().and_then(|list|list.first()).cloned().ok_or_else(||"网易云没有返回歌曲详情".to_string())?;
-    if text(&song,"id")!=id{return Err("歌曲详情 ID 不匹配".into())}
-    Ok(song)
-}
-fn parse_metadata(response:&serde_json::Value,id:&str)->Result<SongMetadata,String>{
-    let song=&response["songs"][0];if text(song,"id")!=id{return Err("metadata ID mismatch".into())}
-    let album=song.get("album").unwrap_or(&song["al"]);let cover=text(album,"picUrl");
-    let artists=song.get("artists").or_else(||song.get("ar")).and_then(|v|v.as_array()).map(|a|a.iter().map(|v|text(v,"name")).filter(|s|!s.is_empty()).collect::<Vec<_>>().join(" / ")).unwrap_or_default();
-    Ok(SongMetadata{title:text(song,"name"),artist:artists,album:text(album,"name"),cover:if cover.is_empty(){None}else{Some(cover)}})
-}
-pub struct NeteaseTimeline{reader:Option<Reader>,pub latest:Option<TimingSample>,pub status:String,pub error:Option<String>,retry:Instant,local:PathBuf}
-/// Read-only fields for local compatibility diagnosis; never returns memory addresses.
-pub fn timeline_diagnostics()->serde_json::Value{
- match Reader::attach(){Err(error)=>serde_json::json!({"error":error}),Ok(r)=>{
-  let state=r.bytes::<4>(r.player+0x60).map(i32::from_le_bytes);let id=r.id();let position=r.bytes::<8>(r.schedule).map(f64::from_le_bytes);let duration=r.bytes::<8>(r.player+0xA8).map(f64::from_le_bytes);
-  let local=std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_default();let metadata=id.as_ref().ok().map(|id|local_metadata(&local,id));
-  serde_json::json!({"state":state,"songId":id,"position":position,"duration":duration,"localMetadata":metadata})
- }}
-}
+pub struct NeteaseTimeline{pub latest:Option<TimingSample>,pub status:String,pub error:Option<String>,pub port:u16,target:Option<Target>,pending:Option<(u16,mpsc::Receiver<ReadResult>)>,retry:Instant}
 impl NeteaseTimeline{
-    pub fn new(local:PathBuf)->Self{Self{reader:None,latest:None,status:"等待网易云".into(),error:None,retry:Instant::now(),local}}
-    pub fn read(&mut self,online:bool){
-        if Instant::now()<self.retry{return}let result=(||{if self.reader.is_none(){self.reader=Some(Reader::attach()?)}self.reader.as_mut().unwrap().read(&self.local,online)})();
-        match result{Ok(sample)=>{self.latest=sample;self.error=None;self.status=if self.latest.is_some(){"网易云实时进度"}else{"等待网易云有效进度"}.into()},Err(error)=>{self.latest=None;self.reader=None;self.error=Some(error);self.status="网易云读取不可用，使用系统媒体会话".into();self.retry=Instant::now()+Duration::from_millis(500)}}
-    }
-    pub fn control_target(&self,track:&lyric_core::models::TrackInfo)->Option<crate::netease_control::Target>{self.matching(track)?;self.reader.as_ref()?.target.clone()}
-    pub fn matching(&self,track:&lyric_core::models::TrackInfo)->Option<TimingSample>{
-        let s=self.latest.as_ref()?;let age=unix_ms()-s.captured_ms;
-        if track.source_app!="Netease"||!(0..800).contains(&age)||track.song_id.as_ref().map(|id|id!=&s.song_id).unwrap_or_else(||track.title.trim().to_lowercase()!=s.title.trim().to_lowercase()){return None}Some(s.clone())
-    }
+ pub fn new(_local:PathBuf)->Self{Self{latest:None,status:"等待网易云".into(),error:None,port:netease_cdp::DEFAULT_PORT,target:None,pending:None,retry:Instant::now()}}
+ pub fn read(&mut self,_online:bool){
+  if self.latest.as_ref().is_some_and(|s|!(0..2000).contains(&(unix_ms()-s.captured_ms))){self.latest=None;self.target=None;}
+  if let Some((port,rx))=&self.pending{match rx.try_recv(){Ok(result)=>{let same=*port==self.port;self.pending=None;if same{match result{Ok((target,sample))=>{self.target=Some(target);self.latest=Some(sample);self.status="网易云本机页面进度".into();self.error=None;self.retry=Instant::now();},Err(e)=>{self.target=None;self.status="使用系统媒体会话".into();self.error=Some(e);self.retry=Instant::now()+Duration::from_millis(750);}}}},Err(mpsc::TryRecvError::Disconnected)=>{self.pending=None;self.target=None;self.retry=Instant::now()+Duration::from_millis(750)},Err(mpsc::TryRecvError::Empty)=>{}}}
+  if self.pending.is_none()&&Instant::now()>=self.retry{let port=self.port;let(tx,rx)=mpsc::channel();self.pending=Some((port,rx));std::thread::spawn(move||{let _=tx.send(sample(port));});}
+ }
+ pub fn matching(&self,track:&Track)->Option<TimingSample>{let sample=self.display_matching(track)?;if !(0..800).contains(&(unix_ms()-sample.captured_ms)){return None}Some(sample)}
+ pub fn display_matching(&self,track:&Track)->Option<TimingSample>{let sample=self.latest.as_ref()?;if identity::official(&track.source_app)!=Some(lyric_core::models::Provider::new("Netease"))||!(0..2000).contains(&(unix_ms()-sample.captured_ms)){return None}if let Some(id)=&track.song_id{if id!=&sample.song_id{return None}}else if identity::normalized(&track.title)!=identity::normalized(&sample.title)||(!track.artist.is_empty()&&identity::normalized(&track.artist)!=identity::normalized(&sample.artist)){return None}Some(sample.clone())}
+ pub fn control_target(&self,track:&Track)->Option<Target>{if !self.matching(track)?.control_ready{return None}self.target.clone()}
 }
-#[cfg(test)]mod tests{use super::*;#[test]fn invalid_timelines_are_rejected(){assert!(valid(0.,180.));assert!(!valid(f64::NAN,180.));assert!(!valid(182.,180.));assert!(!valid(0.,0.));}}
-
-
-#[cfg(test)]mod metadata_tests{use super::*;use serde_json::json;
- #[test]fn details_match_song_id_and_include_artist_album(){let response=json!({"songs":[{"id":123,"name":"Song","artists":[{"name":"Artist"}],"album":{"name":"Album","picUrl":"https://p1.music.126.net/cover.jpg"}}]});let m=parse_metadata(&response,"123").unwrap();assert_eq!(m.artist,"Artist");assert_eq!(m.album,"Album");assert!(m.cover.is_some());assert!(parse_metadata(&response,"124").is_err());}
+pub fn timeline_diagnostics()->Value{let port=netease_cdp::DEFAULT_PORT;match sample(port){Ok((target,s))=>json!({"route":"player-page","pid":target.pid,"songId":s.song_id,"position":s.position,"duration":s.duration,"playing":s.playing,"capturedMs":s.captured_ms}),Err(e)=>json!({"route":"player-page","error":e})}}
+pub fn track_detail(id:&str)->Result<Value,String>{if id.is_empty()||id.len()>32||!id.bytes().all(|b|b.is_ascii_digit()){return Err("歌曲 ID 无效".into())}let response=http::get(&format!("https://music.163.com/api/song/detail/?ids=%5B{id}%5D"),&RequestContext::new(Duration::from_secs(4)))?;response["songs"].as_array().and_then(|a|a.iter().find(|s|text(s,"id")==id)).cloned().ok_or("歌曲详情 ID 不匹配".into())}
+#[cfg(test)]mod tests{use super::*;
+ #[test]fn short_page_gaps_hold_display_but_never_control(){
+  let now=unix_ms();let v=json!({"songId":"51","title":"远行","artist":"甲","position":12.5,"duration":150.,"playing":false,"capturedMs":now-1000,"controlReady":true});
+  let mut reader=NeteaseTimeline::new(PathBuf::new());reader.latest=Some(parse(&v,now-1000).unwrap());reader.target=Some(Target{pid:42,executable:PathBuf::from("cloudmusic.exe")});
+  let track=Track::new("Netease|51","远行","甲","","Netease",Duration::from_secs(150));assert_eq!(reader.display_matching(&track).unwrap().position,12.5);assert!(reader.matching(&track).is_none());assert!(reader.control_target(&track).is_none());
+  let other=Track::new("Netease|52","另一首","甲","","Netease",Duration::from_secs(150));assert!(reader.display_matching(&other).is_none());reader.latest.as_mut().unwrap().captured_ms=now-2100;assert!(reader.display_matching(&track).is_none());
+ }
+ #[test]fn restored_readonly_samples_do_not_advertise_control(){
+  let now=unix_ms();let mut v=json!({"songId":"51","title":"远行","artist":"甲","position":12.5,"duration":150.,"playing":false,"capturedMs":now,"controlReady":false});
+  let track=Track::new("Netease|51","远行","甲","","Netease",Duration::from_secs(150));
+  let mut reader=NeteaseTimeline::new(PathBuf::new());reader.latest=Some(parse(&v,now).unwrap());reader.target=Some(Target{pid:42,executable:PathBuf::from("cloudmusic.exe")});
+  assert!(reader.matching(&track).is_some());assert!(reader.control_target(&track).is_none());
+  v["controlReady"]=json!(true);reader.latest=Some(parse(&v,now).unwrap());assert!(reader.control_target(&track).is_some());
+ }
+ #[test]fn reader_rejects_delays_future_and_impossible_samples(){let mut v=json!({"songId":"51","title":"远行","artist":"甲","position":12.5,"duration":150.,"playing":false,"capturedMs":2000});assert!(parse(&v,2200).is_ok());assert!(parse(&v,3000).is_err());assert!(parse(&v,1900).is_err());v["position"]=json!(151.);assert!(parse(&v,2200).is_err());v["position"]=json!(10.);v["playing"]=Value::Null;assert!(parse(&v,2200).is_err());}
 }

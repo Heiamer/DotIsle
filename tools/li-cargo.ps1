@@ -1,4 +1,5 @@
-param([Parameter(Mandatory=$true,ValueFromRemainingArguments=$true)][string[]]$CargoArgs)
+$CargoArgs=@($args)
+if($CargoArgs.Count -eq 0){throw 'Cargo arguments are required.'}
 $ErrorActionPreference='Stop'
 $ProjectRoot = Split-Path $PSScriptRoot -Parent
 $ToolchainRoot = Join-Path $env:USERPROFILE '.rustup/toolchains/stable-x86_64-pc-windows-gnu'

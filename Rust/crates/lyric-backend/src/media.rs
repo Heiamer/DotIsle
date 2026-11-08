@@ -1,7 +1,7 @@
 //! Native SMTC sessions. Every WinRT operation has an explicit bounded wait.
 use std::{sync::{Arc,atomic::{AtomicU64,Ordering}},time::{Duration,Instant,SystemTime,UNIX_EPOCH},sync::mpsc};
 use windows::{core::Result,Foundation::TypedEventHandler,Media::Control::*,Storage::Streams::{DataReader,InputStreamOptions}};
-use lyric_core::models::{TrackInfo,PlaybackSnapshot};
+use lyric_core::models::{Track,Playback};
 
 macro_rules! wait {
     ($operation:expr)=>{{
@@ -82,7 +82,7 @@ pub fn netease_window_metadata(filter:&SourceFilter)->Option<(String,String)>{
 /// No session may be playing or current, but a paused player is still the one
 /// the island must control; only compare against a priority that exists.
 fn better(priority:Option<(bool,bool)>,candidate:(bool,bool))->bool{priority.is_none_or(|p|candidate<p)}
-#[derive(Clone)]pub struct MediaSample { pub playback:PlaybackSnapshot,pub updated_ms:i64,pub raw:f64,pub status:String,pub rate:f64,pub cover_identity:String }
+#[derive(Clone)]pub struct MediaSample { pub playback:Playback,pub updated_ms:i64,pub raw:f64,pub status:String,pub rate:f64,pub cover_identity:String }
 pub struct Media {
     manager:GlobalSystemMediaTransportControlsSessionManager,
     pub active:Option<GlobalSystemMediaTransportControlsSession>,
@@ -105,7 +105,7 @@ impl Media{
             let playing=s.GetPlaybackInfo().ok().and_then(|p|p.PlaybackStatus().ok())==Some(GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing);
             let candidate=(!playing,current.as_ref()!=Some(&s));if better(priority,candidate)||priority==Some(candidate)&&self.active.as_ref()==Some(&s){priority=Some(candidate);best=Some(s)}
         }
-        let Some(session)=best else{self.set_active(None);return Ok(MediaSample{playback:PlaybackSnapshot::idle(),updated_ms:0,raw:0.,status:"Closed".into(),rate:1.,cover_identity:String::new()})};
+        let Some(session)=best else{self.set_active(None);return Ok(MediaSample{playback:Playback::idle(),updated_ms:0,raw:0.,status:"Closed".into(),rate:1.,cover_identity:String::new()})};
         self.set_active(Some(session.clone()));
         let source_id=session.SourceAppUserModelId()?.to_string();let source=normalize_source(&source_id);
         let events=self.property_events.load(Ordering::Acquire);
@@ -140,8 +140,8 @@ impl Media{
             std::thread::spawn(move||{unsafe{let _=windows::Win32::System::WinRT::RoInitialize(windows::Win32::System::WinRT::RO_INIT_MULTITHREADED);}let bytes=Self::cover(&props).ok().flatten();let _=tx.send((key,bytes));});
         }
         let is_media=!title.trim().is_empty()&&status_name!="Closed";
-        let track=if is_media{Some(TrackInfo{id:format!("{source}|{title}|{artist}"),title,artist,album,source_app:source,duration:Duration::from_secs_f64(duration.min(86400.)),song_id})}else{None};
-        Ok(MediaSample{playback:PlaybackSnapshot{track,is_playing:playing,position:Duration::from_secs_f64(raw.clamp(0.,86400.)),raw_position:Some(Duration::from_secs_f64(raw.clamp(0.,86400.))),extrapolated_position:None,cover_image_bytes:self.artwork.bytes.clone(),is_cover_loading:self.artwork.bytes.is_none(),source_app_user_model_id:source_id,can_seek:info.as_ref().and_then(|i|i.Controls().ok()).and_then(|c|c.IsPlaybackPositionEnabled().ok()).unwrap_or(false)},updated_ms,raw,status:status_name.into(),rate:info.as_ref().and_then(|i|i.PlaybackRate().ok()).and_then(|r|r.Value().ok()).unwrap_or(1.),cover_identity:cover_key})
+        let track=if is_media{Some(Track{id:format!("{source}|{title}|{artist}"),title,artist,album,source_app:source,duration:Duration::from_secs_f64(duration.min(86400.)),song_id})}else{None};
+        Ok(MediaSample{playback:Playback{track,is_playing:playing,position:Duration::from_secs_f64(raw.clamp(0.,86400.)),raw_position:Some(Duration::from_secs_f64(raw.clamp(0.,86400.))),extrapolated_position:None,cover_image_bytes:self.artwork.bytes.clone(),is_cover_loading:self.artwork.bytes.is_none(),source_app_user_model_id:source_id,can_seek:info.as_ref().and_then(|i|i.Controls().ok()).and_then(|c|c.IsPlaybackPositionEnabled().ok()).unwrap_or(false)},updated_ms,raw,status:status_name.into(),rate:info.as_ref().and_then(|i|i.PlaybackRate().ok()).and_then(|r|r.Value().ok()).unwrap_or(1.),cover_identity:cover_key})
     }
     fn properties(session:&GlobalSystemMediaTransportControlsSession)->Result<GlobalSystemMediaTransportControlsSessionMediaProperties>{Ok(wait!(session.TryGetMediaPropertiesAsync()))}
     fn cover(props:&GlobalSystemMediaTransportControlsSessionMediaProperties)->Result<Option<Vec<u8>>>{

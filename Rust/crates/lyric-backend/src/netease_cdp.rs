@@ -128,6 +128,12 @@ pub fn probe(pid:u32,port:u16,song_id:&str)->bool{
  let command=command.trim_end_matches(", true)").to_owned()+", false)";
  evaluate(pid,port,&command).is_ok_and(|v|v.get("error").is_none()&&v["result"].get("exceptionDetails").is_none()&&v["result"]["result"]["value"]["dispatched"]==false&&v["result"]["result"]["value"]["trackId"]==song_id&&v["result"]["result"]["value"]["playId"].as_str().is_some_and(|p|!p.is_empty()))
 }
+/// Read the playback page without dispatching actions or installing listeners.
+pub fn read_timeline(pid:u32,port:u16)->Result<Value,String>{
+ let reply=evaluate(pid,port,include_str!("netease_timeline.js"))?;
+ if reply.get("error").is_some()||reply["result"].get("exceptionDetails").is_some(){return Err("网易云页面未提供可用进度".into())}
+ reply.pointer("/result/result/value").cloned().ok_or("网易云进度响应无效".into())
+}
 fn evaluate(pid:u32,port:u16,expression:&str)->Result<Value,String>{
  if !available(pid,port){return Err(format!("网易云静默控制未开启；请在设置中确认端口 {port}，不会回退到弹窗命令"))}
  let until=Instant::now()+Duration::from_millis(2200);

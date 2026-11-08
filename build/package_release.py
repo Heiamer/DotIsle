@@ -41,7 +41,7 @@ def main():
     shutil.copytree(root/'licenses',runtime/'licenses')
     # Read-only SQLite reader for the notification listener and legacy song_maps.db import.
     shutil.copy2(root/'build/e_sqlite3.dll',runtime/'e_sqlite3.dll')
-    for doc in ['README.md','GESTURE-TUTORIAL.md','NETEASE-SEEKFIX.md','CHANGELOG.md','LICENSE','FONT-NOTICE.md','THIRD-PARTY-NOTICES.md','Start-NetEase-SilentControl.cmd','Start-NetEase-SilentControl.ps1']:
+    for doc in ['README.md','GESTURE-TUTORIAL.md','NETEASE-SEEKFIX.md','CHANGELOG.md','LICENSE','FONT-NOTICE.md','THIRD-PARTY-NOTICES.md','REWRITE.md','Start-NetEase-SilentControl.cmd','Start-NetEase-SilentControl.ps1']:
         shutil.copy2(root/doc,runtime/doc)
     shutil.copy2(out/(name+'-Notes.md'),runtime/'发布说明.md')
     installer_stage=scratch/'installer-stage'

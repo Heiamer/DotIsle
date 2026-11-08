@@ -12,6 +12,6 @@
 在线服务协议的核对来源：
 - https://github.com/lyswhut/lx-music-desktop/tree/master/src/renderer/utils/musicSdk
 - https://github.com/ddddxxx/LyricsKit/blob/master/Sources/LyricsService/Provider/Kugou.swift
-- 本项目已注明的 Lyricify Lyrics Helper QRC/KRC 协议参考。
+- 本段仅记录 3.1.7 的历史构建；当前歌词协议和解码器已经替换，参见 REWRITE.md 与 THIRD-PARTY-NOTICES.md。
 
 未更改 README 下载链接和更新清单；本轮未发布。

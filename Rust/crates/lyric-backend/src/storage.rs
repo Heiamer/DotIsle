@@ -1,8 +1,8 @@
 //! Compatible .NET cache/config persistence and native SQLite mapping lookup.
 use std::{ffi::{c_char,c_void,CStr,CString},path::{Path,PathBuf},sync::Arc,time::Duration};
-use serde::{Serialize,de::DeserializeOwned};
+
 use serde_json::{Value,json};
-use lyric_core::{json_store::JsonStore,cache::{LyricCacheStore,try_create_cache_key,ResolvedLyricCacheEntry},models::*,resolution::{LyricMappingResolver,LyricMapping,SongSearchMap,SongSearchMapResolver}};
+use lyric_core::{cache::Cache,models::*,identity::normalized};
 
 pub fn duration_from_text(s:&str)->Option<Duration>{
     let parts=s.split(':').collect::<Vec<_>>();if parts.len()!=3{return None}
@@ -27,48 +27,19 @@ pub fn from_managed(v:Value)->Value{
         v=>v
     }
 }
-fn enum_number(key:&str,value:&str)->Option<usize>{
-    let options:&[&str]=match key{
-        "format"=>&["Unknown","Lrc","Qrc","Krc","Yrc","Ttml","PlainText"],
-        "timingKind"=>&["Unsynced","LineTimed","WordTimed","CharacterTimed","Mixed"],
-        "timingProvenance"=>&["Unknown","ProviderSupplied","Synthetic"],
-        "acquisition"=>&["Unknown","Searching","MemoryCache","DiskCache","Remote","LocalFile","SongMapping","NotFound","UserBinding"],_=>return None};
-    options.iter().position(|s|*s==value)
-}
 pub fn to_managed(v:Value,pascal:bool)->Value{
     match v{
         Value::Array(a)=>Value::Array(a.into_iter().map(|v|to_managed(v,pascal)).collect()),
         Value::Object(m)=>Value::Object(m.into_iter().map(|(key,value)|{
-            let value=if key=="diagnostics"{value}else if is_time(&key)&&value.is_object(){duration_text(&value).map(Value::String).unwrap_or(value)}else if let Some(n)=value.as_str().and_then(|v|enum_number(&key,v)){json!(n)}else{to_managed(value,pascal)};
+            let value=if key=="diagnostics"{value}else if is_time(&key)&&value.is_object(){duration_text(&value).map(Value::String).unwrap_or(value)}else{to_managed(value,pascal)};
             let key=if pascal{let mut c=key.chars();c.next().map(|s|format!("{}{}",s.to_ascii_uppercase(),c.as_str())).unwrap_or_default()}else{key};(key,value)
         }).collect()),v=>v
     }
 }
-pub struct CompactStore<T>{pub store:Arc<JsonStore>,phantom:std::marker::PhantomData<T>}
-impl<T> CompactStore<T>{pub fn new(store:Arc<JsonStore>)->Self{Self{store,phantom:std::marker::PhantomData}}}
-impl<T:Serialize+DeserializeOwned+Send+Sync> LyricCacheStore<T> for CompactStore<T>{
-    fn try_get(&self,key:&str)->Option<(T,LyricAcquisitionKind)>{let(raw,kind)=self.store.get(key)?;let v=from_managed(serde_json::from_str(&raw).ok()?);Some((serde_json::from_value(v).ok()?,if kind==2{LyricAcquisitionKind::DiskCache}else{LyricAcquisitionKind::MemoryCache}))}
-    fn store(&self,key:&str,value:T){if let Ok(mut v)=serde_json::to_value(value){if v.get("fetchedAtUtc").is_some(){let t=unsafe{windows::Win32::System::SystemInformation::GetSystemTime()};v["fetchedAtUtc"]=json!(format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",t.wYear,t.wMonth,t.wDay,t.wHour,t.wMinute,t.wSecond,t.wMilliseconds));}let _=self.store.store(key,&to_managed(v,true).to_string());}}
-    fn remove(&self,key:&str){self.store.remove(key);}
-    fn clear(&self){self.store.clear();}
-}
-pub struct FinalCache(pub Arc<JsonStore>);
+pub struct FinalCache(pub Arc<Cache>);
 impl FinalCache{
-    pub fn get(&self,t:&TrackInfo)->Option<ResolvedLyrics>{
-        self.get_context(t,Some(MANUAL_CACHE_CONTEXT)).or_else(||self.get_context(t,None))
-    }
-    fn get_context(&self,t:&TrackInfo,context:Option<&str>)->Option<ResolvedLyrics>{
-        let key=try_create_cache_key(&t.title,&t.artist,context)?;let(s,kind)=self.0.get(&key)?;
-        let entry:ResolvedLyricCacheEntry=serde_json::from_value(from_managed(serde_json::from_str(&s).ok()?)).ok()?;
-        if try_create_cache_key(entry.title.as_deref()?,entry.artist.as_deref()?,entry.selection_context.as_deref())?!=key{return None}
-        let content=entry.content?;if lyric_core::cache::get_content_validation_failure(Some(&content)).is_some(){return None}
-        Some(ResolvedLyrics{provider_id:LyricProviderId::try_new(entry.provider_id.as_deref()?).ok()?,candidate_id:entry.candidate_id?,acquisition:if kind==2{LyricAcquisitionKind::DiskCache}else{LyricAcquisitionKind::MemoryCache},content,diagnostics:entry.diagnostics.unwrap_or_default()})
-    }
-    pub fn put(&self,t:&TrackInfo,r:&ResolvedLyrics){
-        let Some(key)=try_create_cache_key(&t.title,&t.artist,None)else{return};
-        let entry=ResolvedLyricCacheEntry{track_id:Some(t.id.clone()),title:Some(t.title.clone()),artist:Some(t.artist.clone()),album:Some(t.album.clone()),source_app:Some(t.source_app.clone()),duration:t.duration,song_id:t.song_id.clone(),provider_id:Some(r.provider_id.to_string()),candidate_id:Some(r.candidate_id.clone()),acquisition:r.acquisition,diagnostics:Some(r.diagnostics.clone()),content:Some(r.content.clone()),selection_context:None};
-        if let Ok(v)=serde_json::to_value(entry){let _=self.0.store(&key,&to_managed(v,false).to_string());}
-    }
+ pub fn get(&self,key:&str)->Option<Selection>{self.0.get::<Selection>(key).filter(|r|r.content.usable())}
+ pub fn put(&self,key:&str,value:&Selection){if value.content.usable(){self.0.put(key,value)}}
 }
 pub fn atomic_write(path:&Path,data:&[u8])->Result<(),String>{
     let parent=path.parent().ok_or("missing parent")?;std::fs::create_dir_all(parent).map_err(|e|e.to_string())?;
@@ -96,9 +67,17 @@ impl Sqlite{
 }
 impl Drop for Sqlite{fn drop(&mut self){unsafe{let _=windows::Win32::Foundation::FreeLibrary(self._library);}}}
 pub struct MappingDb(pub PathBuf);
-impl LyricMappingResolver for MappingDb{
-    fn resolve(&self,track:&TrackInfo)->LyricMapping{
-        let rows=unsafe{self.rows()}.unwrap_or_default();SongSearchMapResolver::new(rows).resolve(track)
+pub struct Mapping{pub title:String,pub artist:String,pub album:Option<String>,pub preferred_provider:Option<String>,pub is_pure_music:bool}
+struct SongSearchMap{original_title:String,original_artist:String,original_album:String,mapped_title:String,mapped_artist:String,mapped_album:String,preferred_provider:Option<String>,is_marked_as_pure_music:bool}
+
+impl MappingDb{
+    pub fn resolve(&self,track:&Track)->Mapping{
+        let mut result=Mapping{title:track.title.clone(),artist:track.artist.clone(),album:None,preferred_provider:None,is_pure_music:false};
+        for row in unsafe{self.rows()}.unwrap_or_default(){
+            if normalized(&row.original_title)!=normalized(&track.title)||normalized(&row.original_artist)!=normalized(&track.artist){continue}
+            if !row.original_album.is_empty()&&normalized(&row.original_album)!=normalized(&track.album){continue}
+            if !row.mapped_title.is_empty(){result.title=row.mapped_title}if !row.mapped_artist.is_empty(){result.artist=row.mapped_artist}if !row.mapped_album.is_empty(){result.album=Some(row.mapped_album)}result.preferred_provider=row.preferred_provider;result.is_pure_music=row.is_marked_as_pure_music;break
+        }result
     }
 }
 impl MappingDb{
