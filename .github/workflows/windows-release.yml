@@ -120,6 +120,7 @@ jobs:
         run: |
           $out="$pwd/publish/release-output"
           if(Test-Path 'validation'){
+            New-Item -ItemType Directory -Force $out | Out-Null
             Compress-Archive -Path 'validation/*' -DestinationPath "$out/DotIsle-$env:VERSION-Validation.zip" -Force
             $hash=(Get-FileHash "$out/DotIsle-$env:VERSION-Validation.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
             Add-Content "$out/DotIsle-$env:VERSION-SHA256.txt" "$hash  DotIsle-$env:VERSION-Validation.zip"

@@ -6,10 +6,18 @@ $ToolchainRoot = Join-Path $env:USERPROFILE '.rustup/toolchains/stable-x86_64-pc
 $env:PATH = (Join-Path $ToolchainRoot 'bin') + ';' + (Join-Path $ToolchainRoot 'lib/rustlib/x86_64-pc-windows-gnu/bin/self-contained') + ';' + $env:PATH
 if ($env:DOTISLE_TARGET_DIR) { $env:CARGO_TARGET_DIR = $env:DOTISLE_TARGET_DIR } else { $env:CARGO_TARGET_DIR = Join-Path $ProjectRoot 'target' }
 $env:CC = Join-Path $ProjectRoot 'tools/zig-cc.cmd'
-$env:AR = Join-Path $ToolchainRoot 'lib/rustlib/x86_64-pc-windows-gnu/bin/llvm-ar.exe'
 $DllTool=$env:DOTISLE_DLLTOOL
 if(-not $DllTool){$command=Get-Command llvm-dlltool.exe -ErrorAction SilentlyContinue;if($command){$DllTool=$command.Source}}
 if(-not $DllTool -or -not (Test-Path -LiteralPath $DllTool)){throw 'Install LLVM llvm-dlltool.exe on PATH, or set DOTISLE_DLLTOOL to its absolute path.'}
+$ArchiveTool=$env:DOTISLE_AR
+if(-not $ArchiveTool){
+  foreach($candidate in @((Join-Path $ToolchainRoot 'lib/rustlib/x86_64-pc-windows-gnu/bin/llvm-ar.exe'),(Join-Path (Split-Path $DllTool -Parent) 'llvm-ar.exe'))){
+    if(Test-Path -LiteralPath $candidate){$ArchiveTool=$candidate;break}
+  }
+}
+if(-not $ArchiveTool){$command=Get-Command llvm-ar.exe -ErrorAction SilentlyContinue;if($command){$ArchiveTool=$command.Source}}
+if(-not $ArchiveTool -or -not (Test-Path -LiteralPath $ArchiveTool)){throw 'Install LLVM llvm-ar.exe, or set DOTISLE_AR to its absolute path.'}
+$env:AR=$ArchiveTool
 $LinkerPath=Join-Path $ToolchainRoot 'lib/rustlib/x86_64-pc-windows-gnu/bin/rust-lld.exe'
 $BuildSupport=$env:DOTISLE_BUILD_SUPPORT
 if(-not $BuildSupport){$BuildSupport=$ProjectRoot}
