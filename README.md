@@ -8,7 +8,7 @@
 
 音乐控制与实时歌词 · 番茄钟与计时 · 待办提醒 · 通知与设备
 
-[下载安装版](https://github.com/Heiamer/DotIsle/releases/download/v3.2.5/DotIsle-3.2.5-Setup.exe) · [下载便携版](https://github.com/Heiamer/DotIsle/releases/download/v3.2.5/DotIsle-3.2.5-Portable.zip) · [3.2.5 更新说明](https://github.com/Heiamer/DotIsle/releases/tag/v3.2.5) · [反馈问题](https://github.com/Heiamer/DotIsle/issues)
+[下载安装版](https://github.com/Heiamer/DotIsle/releases/download/v3.2.6/DotIsle-3.2.6-Setup.exe) · [下载便携版](https://github.com/Heiamer/DotIsle/releases/download/v3.2.6/DotIsle-3.2.6-Portable.zip) · [3.2.6 更新说明](https://github.com/Heiamer/DotIsle/releases/tag/v3.2.6) · [反馈问题](https://github.com/Heiamer/DotIsle/issues)
 
 Windows 10 / 11 · x64 · Rust 原生应用
 
@@ -51,15 +51,15 @@ Windows 10 / 11 · x64 · Rust 原生应用
 
 ## 下载与开始使用
 
-最新正式版：**[3.2.5](https://github.com/Heiamer/DotIsle/releases/tag/v3.2.5)**。发行包由 [GitHub Actions](https://github.com/Heiamer/DotIsle/actions/workflows/windows-release.yml) 编译，运行时不需要安装 Rust、Python 或 .NET。
+最新正式版：**[3.2.6](https://github.com/Heiamer/DotIsle/releases/tag/v3.2.6)**。发行包由 [GitHub Actions](https://github.com/Heiamer/DotIsle/actions/workflows/windows-release.yml) 编译，运行时不需要安装 Rust、Python 或 .NET。
 
 | 文件 | 用途 |
 | --- | --- |
-| [安装版 · Setup.exe](https://github.com/Heiamer/DotIsle/releases/download/v3.2.5/DotIsle-3.2.5-Setup.exe) | 推荐使用。标准安装向导，支持开始菜单与卸载。 |
-| [便携版 · Portable.zip](https://github.com/Heiamer/DotIsle/releases/download/v3.2.5/DotIsle-3.2.5-Portable.zip) | 免安装，完整解压后运行 `LyricIsland.exe`。 |
-| [完整源码 · Source.zip](https://github.com/Heiamer/DotIsle/releases/download/v3.2.5/DotIsle-3.2.5-Source.zip) | 对应发行构建的源码、资源与第三方许可。 |
-| [SHA256 校验清单](https://github.com/Heiamer/DotIsle/releases/download/v3.2.5/DotIsle-3.2.5-SHA256.txt) | 校验下载文件是否完整。 |
-| [验证记录 · Validation.zip](https://github.com/Heiamer/DotIsle/releases/download/v3.2.5/DotIsle-3.2.5-Validation.zip) | Actions 中的控制中心与主题渲染验收记录。 |
+| [安装版 · Setup.exe](https://github.com/Heiamer/DotIsle/releases/download/v3.2.6/DotIsle-3.2.6-Setup.exe) | 推荐使用。标准安装向导，支持开始菜单与卸载。 |
+| [便携版 · Portable.zip](https://github.com/Heiamer/DotIsle/releases/download/v3.2.6/DotIsle-3.2.6-Portable.zip) | 免安装，完整解压后运行 `LyricIsland.exe`。 |
+| [完整源码 · Source.zip](https://github.com/Heiamer/DotIsle/releases/download/v3.2.6/DotIsle-3.2.6-Source.zip) | 对应发行构建的源码、资源与第三方许可。 |
+| [SHA256 校验清单](https://github.com/Heiamer/DotIsle/releases/download/v3.2.6/DotIsle-3.2.6-SHA256.txt) | 校验下载文件是否完整。 |
+| [验证记录 · Validation.zip](https://github.com/Heiamer/DotIsle/releases/download/v3.2.6/DotIsle-3.2.6-Validation.zip) | Actions 中的控制中心与主题渲染验收记录。 |
 
 1. 安装，或把便携包**完整解压到可写目录**；不要在压缩包内直接启动 EXE。
 2. 运行点屿，从系统托盘打开控制中心。
@@ -72,7 +72,7 @@ Windows 10 / 11 · x64 · Rust 原生应用
 
 在“关于与更新”检查更新，或手动下载新包。手动迁移时先退出旧版，备份并复制原运行目录的 `Data` 到新目录；不要同时运行两个版本操作同一份数据。
 
-发行页中的 `LyricIsland-3.2.5-Portable.zip` 与对应 SHA256 文件供旧更新器识别，日常下载请使用上表的 DotIsle 包。国内镜像可能晚于 GitHub 更新。
+发行页中的 `LyricIsland-3.2.6-Portable.zip` 与对应 SHA256 文件供旧更新器识别，日常下载请使用上表的 DotIsle 包。国内镜像可能晚于 GitHub 更新。
 
 ## 能做什么
 
