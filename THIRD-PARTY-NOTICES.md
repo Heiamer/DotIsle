@@ -1,10 +1,10 @@
 # 第三方组件与许可
 
-本文件对应点屿 3.2.5 歌词与进度实现。项目自有源码的 MIT 许可见根目录 LICENSE，Copyright (c) 2026 Heiamer；以下依赖分别遵循各自许可。其他锁定依赖见 Rust/Cargo.lock。
+本文件对应点屿 3.2.6 歌词与进度实现。项目自有源码的 MIT 许可见根目录 LICENSE，Copyright (c) 2026 Heiamer；以下依赖分别遵循各自许可。其他锁定依赖见 Rust/Cargo.lock。
 
 ## 1. 当前歌词实现
 
-歌曲匹配、单时间轴模型、解析、缓存、本地歌词检索与在线适配器采用重新实现的代码。网易云自动进度独立实现只读进程内存读取，通过客户端自身类型信息定位音频对象，并使用受已验证客户端 SHA256 约束的私有字段偏移、指令位置偏移及机器码字节校验；本机页面通道为可选回退。替换范围、兼容差异及验证边界见 REWRITE.md 和 NETEASE-SEEKFIX.md。
+歌曲匹配、单时间轴模型、解析、缓存、本地歌词检索与在线适配器采用重新实现的代码。网易云自动进度独立实现只读进程内存读取，通过客户端自身类型信息、指令解码和参数流向自动推导 x86/x64 音频对象、字段和进度缓存，不按版本号或文件哈希设白名单；本机页面通道为可选回退。替换范围、兼容差异及验证边界见 REWRITE.md 和 NETEASE-SEEKFIX.md。
 
 ## 2. QQ 逐字歌词块解码器
 
@@ -87,3 +87,9 @@ https://github.com/androidx/androidx/tree/androidx-main/compose/material3/materi
 ## 重写构建依赖
 
 本轮锁定版本变化涉及 cc、find-msvc-tools、libc、portable-atomic、slab、toml_edit 和 winnow；所选 MIT 许可全文见 licenses/Rewrite-Rust-Licenses.txt。
+
+## iced-x86 与 lazy_static（客户端结构推导）
+
+iced-x86 1.22.0，https://github.com/icedland/iced ，MIT，Copyright (C) 2018-present iced project and contributors。使用其指令解码与信息接口分析本机客户端，完整许可见 licenses/iced-x86-MIT.txt。
+
+lazy_static 1.5.1，https://github.com/rust-lang-nursery/lazy-static.rs ，MIT OR Apache-2.0，为 iced-x86 的间接依赖；采用 MIT 许可副本，见 licenses/lazy_static-MIT.txt。

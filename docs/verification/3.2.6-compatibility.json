@@ -1,0 +1,211 @@
+{
+  "version": "3.2.6",
+  "date": "2026-11-09",
+  "success": true,
+  "implementation": {
+    "readOnlyProcessMemory": true,
+    "clientVersionAllowlist": false,
+    "clientImageHashAllowlist": false,
+    "fixedPrivateMemberOffsets": false,
+    "fixedInstructionOffsets": false,
+    "fixedAbsoluteClockAddress": false,
+    "clientTypeInformationAndInstructionFlow": true,
+    "nativeReadArchitectures": [
+      "x86",
+      "x64"
+    ],
+    "semanticFooterGeometry": true,
+    "legacyInstalledCssGeometry": true,
+    "specialClientLaunchArgumentsRequired": false,
+    "clientCodeOrResourcesRedistributed": false
+  },
+  "staticInspection": {
+    "count": 8,
+    "success": true,
+    "samples": [
+      {
+        "clientVersion": "2.10.13.202675",
+        "architecture": "x86",
+        "dllSha256": "2730b599d56bd37e2b68f61d232d76bac8754b680f577b2244e1fd2327a502e4",
+        "installerSha256": "45f8aa74a4bae7b253fe370a129f3fe22cedb8b24e3c06d04c772dd41486ffb2",
+        "installerSource": "https://d1.music.126.net/dmusic/NeteaseCloudMusic_Music_official_2.10.13.202675_32.exe",
+        "installerHashCheckedAgainstWingetManifest": true,
+        "structureDiscoveryPassed": true,
+        "resourceInspectionPassed": true,
+        "resourceCapability": "LegacyCssGeometry",
+        "runtimeTested": false,
+        "scope": "static structure/resource inspection; runtime validation is listed separately"
+      },
+      {
+        "clientVersion": "2.9.1.199099",
+        "architecture": "x86",
+        "dllSha256": "f2d74053191d0d28296c167abcc301d6964b7a742801bc7396cad422382ee215",
+        "installerSha256": "e4a71ed1385dd187d8b3a703f0d02bc151910361c52e281b82da93afef3e1d1d",
+        "installerSource": "https://d1.music.126.net/dmusic/cloudmusicsetup2.9.1.199099.exe",
+        "installerHashCheckedAgainstWingetManifest": true,
+        "structureDiscoveryPassed": true,
+        "resourceInspectionPassed": true,
+        "resourceCapability": "LegacyCssGeometry",
+        "runtimeTested": false,
+        "scope": "static structure/resource inspection; runtime validation is listed separately"
+      },
+      {
+        "clientVersion": "3.0.1.201499",
+        "architecture": "x64",
+        "dllSha256": "6d50a5f908b5a050ecf47e7af98ff4d06f178a12d51c55451b15addc9fe371ee",
+        "installerSha256": "1cc456115ceb0287199074b026b7d55616987325f8c7f3aa187297e4cdb641b2",
+        "installerSource": "https://d1.music.126.net/dmusic/NeteaseCloudMusic_Music_official_3.0.1.201499_64.exe",
+        "installerHashCheckedAgainstWingetManifest": true,
+        "structureDiscoveryPassed": true,
+        "resourceInspectionPassed": true,
+        "resourceCapability": "SemanticFooter",
+        "runtimeTested": false,
+        "scope": "static structure/resource inspection; runtime validation is listed separately"
+      },
+      {
+        "clientVersion": "3.0.19.203184",
+        "architecture": "x64",
+        "dllSha256": "0d7e59b3292e92ad622cf25453e181117c861e0629a4db7105e6dec9e8588895",
+        "installerSha256": "0e28f8851fc1cf438d3d8aeabd88e76d9d3381eb5c25b0acb02a355210f2225c",
+        "installerSource": "https://d1.music.126.net/dmusic/NeteaseCloudMusic_Music_official_3.0.19.203184_64.exe",
+        "installerHashCheckedAgainstWingetManifest": true,
+        "structureDiscoveryPassed": true,
+        "resourceInspectionPassed": true,
+        "resourceCapability": "SemanticFooter",
+        "runtimeTested": false,
+        "scope": "static structure/resource inspection; runtime validation is listed separately"
+      },
+      {
+        "clientVersion": "3.1.0.203271",
+        "architecture": "x64",
+        "dllSha256": "c282a0ea1872e7ff859029b72384d1e03cba914198c90ae9cd2f7a39300bcc3d",
+        "installerSha256": "cb031962c9a2c68f33fb717e63b4cf7be9530508f4769c9c159ee407f99cd073",
+        "installerSource": "https://d1.music.126.net/dmusic/NeteaseCloudMusic_Music_official_3.1.0.203271_64.exe",
+        "installerHashCheckedAgainstWingetManifest": true,
+        "structureDiscoveryPassed": true,
+        "resourceInspectionPassed": true,
+        "resourceCapability": "SemanticFooter",
+        "runtimeTested": false,
+        "scope": "static structure/resource inspection; runtime validation is listed separately"
+      },
+      {
+        "clientVersion": "3.1.20.204558",
+        "architecture": "x64",
+        "dllSha256": "3b0ef6b3135f094b6c76f60e42b91dd7f3b9f871c6ba2a904d15eb42a45efbec",
+        "installerSha256": "81053fcaad3773e1b877bde2e7a76997eacad3d8cdbe2c7e700d55b18cfd9ec2",
+        "installerSource": "https://d8.music.126.net/dmusic2/NeteaseCloudMusic_Music_official_3.1.20.204558_64.exe",
+        "installerHashCheckedAgainstWingetManifest": true,
+        "structureDiscoveryPassed": true,
+        "resourceInspectionPassed": true,
+        "resourceCapability": "SemanticFooter",
+        "runtimeTested": false,
+        "scope": "static structure/resource inspection; runtime validation is listed separately"
+      },
+      {
+        "clientVersion": "3.1.43.205627",
+        "architecture": "x86",
+        "dllSha256": "27d64bfaed22316af3f2cb7ad38b69f3d223142c1e3ee889e2b895bbd73c9a58",
+        "installerSha256": "b7f146f151b5a80112cc93d4826ecfaf733938d029fcdecc6089d52ab3f1693b",
+        "installerSource": "https://d8.music.126.net/dmusic2/NeteaseCloudMusic_Music_official_3.1.43.205627_32.exe",
+        "installerHashCheckedAgainstWingetManifest": true,
+        "structureDiscoveryPassed": true,
+        "resourceInspectionPassed": true,
+        "resourceCapability": "SemanticFooter",
+        "runtimeTested": false,
+        "scope": "static structure/resource inspection; runtime validation is listed separately"
+      },
+      {
+        "clientVersion": "3.1.43.205627",
+        "architecture": "x64",
+        "dllSha256": "48f4b79fc0eb7fbcb955835463a71cd866c81055b0a546990e8ab644e886b920",
+        "installerSha256": null,
+        "installerSource": "existing local installation",
+        "installerHashCheckedAgainstWingetManifest": false,
+        "structureDiscoveryPassed": true,
+        "resourceInspectionPassed": true,
+        "resourceCapability": "SemanticFooter",
+        "runtimeTested": true,
+        "scope": "static structure/resource inspection; runtime validation is listed separately"
+      }
+    ],
+    "doesNotEstablishOldClientRuntimeCompatibility": true
+  },
+  "runtimeAcceptance": {
+    "clientVersion": "3.1.43.205627",
+    "architecture": "x64",
+    "timelineRoute": "native-rtti",
+    "controlRoute": "NeteaseBackground",
+    "scenarios": {
+      "visibleBackground": {
+        "success": true,
+        "pausedSeeks": 11,
+        "boundarySeeks": 4,
+        "latestBurstConfirmed": true,
+        "pauseDriftSeconds": 0.0,
+        "playingAdvancedSeconds": 6.002222,
+        "realLyricReceived": true,
+        "restored": true,
+        "windowVisibilityMinimizationAndFocusPreserved": true
+      },
+      "tray": {
+        "success": true,
+        "pausedSeeks": 11,
+        "boundarySeeks": 4,
+        "latestBurstConfirmed": true,
+        "pauseDriftSeconds": 0.0,
+        "playingAdvancedSeconds": 5.984858400000007,
+        "realLyricReceived": true,
+        "restored": true,
+        "windowVisibilityMinimizationAndFocusPreserved": true
+      },
+      "minimized": {
+        "success": true,
+        "pausedSeeks": 11,
+        "boundarySeeks": 4,
+        "latestBurstConfirmed": true,
+        "pauseDriftSeconds": 0.0,
+        "playingAdvancedSeconds": 5.9855144,
+        "realLyricReceived": true,
+        "restored": true,
+        "windowVisibilityMinimizationAndFocusPreserved": true
+      }
+    }
+  },
+  "pausedSeekConfirmation": {
+    "count": 33,
+    "medianMs": 577,
+    "maximumMs": 640,
+    "maximumErrorSeconds": 0.5960759999999823
+  },
+  "packagedRuntime": {
+    "success": true,
+    "version": "3.2.6",
+    "pointerSeekConfirmed": true,
+    "playingAdvancedSeconds": 2.233803999999992,
+    "realNativeRendererCapturesInspected": true,
+    "isolatedApplicationData": true
+  },
+  "rustTestsPassed": 412,
+  "pageReaderTestsPassed": 9,
+  "renderAcceptance": {
+    "settings": {
+      "success": true
+    },
+    "themes": {
+      "success": true
+    },
+    "backgrounds": {
+      "success": true
+    },
+    "covers": {
+      "success": true
+    }
+  },
+  "limits": [
+    "Static inspection of a client is not a complete runtime acceptance test.",
+    "Unknown future builds can change private type names, code generation or interface structure.",
+    "Legacy mini-player and full-screen lyric variants were not run in this acceptance.",
+    "Historical tags and already published releases are preserved.",
+    "No old client was installed over the user installation; no user data migration was performed."
+  ]
+}

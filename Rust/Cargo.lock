@@ -516,7 +516,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-app"
-version = "3.2.5"
+version = "3.2.6"
 dependencies = [
  "base64",
  "dotisle-domain",
@@ -537,7 +537,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-domain"
-version = "3.2.5"
+version = "3.2.6"
 dependencies = [
  "lyric-backend",
  "lyric-core",
@@ -549,7 +549,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-render"
-version = "3.2.5"
+version = "3.2.6"
 dependencies = [
  "dotisle-scene",
  "fontique",
@@ -562,7 +562,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-scene"
-version = "3.2.5"
+version = "3.2.6"
 dependencies = [
  "glifo",
  "vello_common",
@@ -937,6 +937,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
+name = "iced-x86"
+version = "1.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c23ad4d19dca41180e835ef6fbd2c1ee655777eca086ad80dd517e0513322879"
+dependencies = [
+ "lazy_static",
+]
+
+[[package]]
 name = "icu_locid"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1140,6 +1149,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "lazy_static"
+version = "1.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
+
+[[package]]
 name = "lexical"
 version = "7.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1318,7 +1333,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-archive"
-version = "3.2.5"
+version = "3.2.6"
 dependencies = [
  "flate2",
  "sha2",
@@ -1326,10 +1341,12 @@ dependencies = [
 
 [[package]]
 name = "lyric-backend"
-version = "3.2.5"
+version = "3.2.6"
 dependencies = [
  "aes",
  "base64",
+ "iced-x86",
+ "lyric-archive",
  "lyric-core",
  "md-5",
  "regex",
@@ -1342,7 +1359,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-bootstrap"
-version = "3.2.5"
+version = "3.2.6"
 dependencies = [
  "dotisle-render",
  "dotisle-scene",
@@ -1357,7 +1374,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-core"
-version = "3.2.5"
+version = "3.2.6"
 dependencies = [
  "base64",
  "cc",
@@ -1373,7 +1390,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-native"
-version = "3.2.5"
+version = "3.2.6"
 dependencies = [
  "base64",
  "dotisle-domain",

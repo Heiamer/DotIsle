@@ -41,6 +41,7 @@ def verify(root, version):
         errors.append('License inventory differs from the reviewed source policy')
     for required in ['licenses/qq-lyric-codec-MIT.txt', 'licenses/NeteaseCloudMusicApi-MIT.txt',
                      'licenses/roxmltree-MIT.txt', 'licenses/Rewrite-Rust-Licenses.txt',
+                     'licenses/iced-x86-MIT.txt', 'licenses/lazy_static-MIT.txt',
                      'Rust/vendor/qq-lyric-codec/LICENSE']:
         if not (root / required).is_file():
             errors.append(f'Required dependency license is missing: {required}')

@@ -11,6 +11,7 @@ fn parse(v:&Value,now:i64)->Result<TimingSample,String>{
  Ok(TimingSample{song_id,title:text(v,"title"),artist:text(v,"artist"),album:text(v,"album"),position,duration,playing,control_ready:v["controlReady"].as_bool().unwrap_or(false),captured_ms,cover_url:(!cover.is_empty()).then_some(cover)})
 }
 type ReadResult=Result<(Target,TimingSample,&'static str),String>;
+pub fn inspect_native_image(path:&std::path::Path)->Result<Value,String>{crate::netease_native::inspect(path)}
 fn sample(port:u16)->ReadResult{
  let targets=players();let mut error="等待网易云开始播放，当前使用系统媒体会话".to_string();
  for target in &targets{if !target.background_available(){continue}match crate::netease_native::read(target){Ok(mut s)=>{if let Some((title,artist))=crate::netease_window::metadata(target){s.title=title;s.artist=artist;}return Ok((target.clone(),s,"native-rtti"))},Err(e)=>error=e}}
@@ -30,7 +31,7 @@ impl NeteaseTimeline{
  pub fn control_target(&self,track:&Track)->Option<Target>{if !self.matching(track)?.control_ready{return None}self.target.clone()}
 }
 fn metadata_matches(track:&Track,sample:&TimingSample)->bool{if identity::normalized(&track.title)!=identity::normalized(&sample.title){return false}let wanted=identity::artists(&track.artist);let actual=identity::artists(&sample.artist);wanted.iter().all(|a|actual.iter().any(|b|identity::normalized(a)==identity::normalized(b)))}
-pub fn timeline_diagnostics()->Value{let port=netease_cdp::DEFAULT_PORT;match sample(port){Ok((target,s,route))=>json!({"route":route,"pid":target.pid,"songId":s.song_id,"position":s.position,"duration":s.duration,"playing":s.playing,"capturedMs":s.captured_ms}),Err(e)=>json!({"route":"automatic","error":e})}}
+pub fn timeline_diagnostics()->Value{let port=netease_cdp::DEFAULT_PORT;match sample(port){Ok((target,s,route))=>json!({"route":route,"pid":target.pid,"songId":s.song_id,"position":s.position,"duration":s.duration,"playing":s.playing,"capturedMs":s.captured_ms,"native":crate::netease_native::diagnostics()}),Err(e)=>json!({"route":"automatic","error":e})}}
 pub fn track_detail(id:&str)->Result<Value,String>{if id.is_empty()||id.len()>32||!id.bytes().all(|b|b.is_ascii_digit()){return Err("歌曲 ID 无效".into())}let response=http::get(&format!("https://music.163.com/api/song/detail/?ids=%5B{id}%5D"),&RequestContext::new(Duration::from_secs(4)))?;response["songs"].as_array().and_then(|a|a.iter().find(|s|text(s,"id")==id)).cloned().ok_or("歌曲详情 ID 不匹配".into())}
 #[cfg(test)]mod tests{use super::*;
  #[test]fn short_page_gaps_hold_display_but_never_control(){

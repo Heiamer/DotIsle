@@ -82,3 +82,5 @@ pub fn players()->Vec<Target>{
 
 pub fn attention_diagnostics()->serde_json::Value{crate::netease_attention::diagnostics()}
 pub fn window_diagnostics()->serde_json::Value{serde_json::Value::Array(players().iter().filter(|t|t.background_available()).map(crate::netease_window::diagnostics).collect())}
+
+pub fn inspect_player_resources(path:&Path)->Result<serde_json::Value,String>{crate::netease_window::inspect_resources(path)}

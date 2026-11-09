@@ -8,6 +8,11 @@ fn wait(b:&Backend,check:impl Fn(&Value)->bool,seconds:u64)->Value{
  loop{let s=b.snapshot(u64::MAX);if check(&s){return s}if Instant::now()>=until{return json!({"timeout":true,"last":s})}std::thread::sleep(Duration::from_millis(30));}
 }
 fn compact(s:&Value)->Value{json!({"track":s["track"],"playing":s["isPlaying"],"position":s["positionSeconds"],"raw":s["rawSeconds"],"canSeek":s["canSeek"],"frame":s["frame"],"lyricSource":s["lyricSource"],"nativeStatus":s["nativeStatus"],"error":s["nativeError"]})}
+fn window_state(v:&Value)->Value{json!(v.as_array().map(|rows|rows.iter().map(|r|json!({"pid":r["pid"],"visible":r["visible"],"minimized":r["minimized"],"foreground":r["foreground"]})).collect::<Vec<_>>()))}
+fn windows_preserved(v:&Value)->bool{
+ if v["windowsBefore"].is_array()&&window_state(&v["windowsBefore"])!=window_state(&v["windowsAfter"]){return false}
+ match v{Value::Object(values)=>values.values().all(windows_preserved),Value::Array(values)=>values.iter().all(windows_preserved),_=>true}
+}
 fn seek(b:&Arc<Backend>,seconds:f64)->Value{
  let windows_before=lyric_backend::netease_control::window_diagnostics();let start=Instant::now();match b.enqueue("seek",seconds){Ok(id)=>{let s=wait(b,|s|s["mediaCommand"]["id"]==id&&matches!(s["mediaCommand"]["state"].as_str(),Some("confirmed"|"failed")),7);json!({"elapsedMs":start.elapsed().as_millis(),"command":s["mediaCommand"],"state":compact(&s),"windowsBefore":windows_before,"windowsAfter":lyric_backend::netease_control::window_diagnostics()})},Err(e)=>json!({"error":e})}
 }
@@ -56,6 +61,7 @@ fn main()->Result<(),Box<dyn std::error::Error>>{
  let report=json!({"success":success,"scope":"current real NetEase client; production backend, command queue, online lyrics and automatic native readback","before":compact(&before),"restoreTargetSeconds":original,"initialPause":paused,"pausedSeeks":rows,"burst":{"command":burst["mediaCommand"],"state":compact(&burst)},"pauseSamples":pause_samples,"pauseDriftSeconds":paused_drift,"play":playing,"advancedSeconds":advanced,"playingFrames":frames,"realLyricReceived":lyrics,"playingSeek":playing_seek,"pause":stopped,"restore":restored,"after":compact(&after),"attention":lyric_backend::netease_control::attention_diagnostics()});
  std::fs::write(out.join("report.json"),serde_json::to_vec_pretty(&report)?)?;
  let mut report=report;report["boundaries"]=json!(boundaries);report["windowsBefore"]=windows_before;report["windowsAfter"]=lyric_backend::netease_control::window_diagnostics();report["timeline"]=lyric_backend::netease::timeline_diagnostics();std::fs::write(out.join("report.json"),serde_json::to_vec_pretty(&report)?)?;
+ let window_preserved=windows_preserved(&report);let success=success&&window_preserved;report["windowStatePreserved"]=json!(window_preserved);report["success"]=json!(success);std::fs::write(out.join("report.json"),serde_json::to_vec_pretty(&report)?)?;
  println!("{}",json!({"success":success,"pausedSeeks":report["pausedSeeks"].as_array().map(Vec::len),"pauseDriftSeconds":paused_drift,"advancedSeconds":advanced,"realLyricReceived":lyrics,"restore":report["restore"]["success"]}));
  if !success{return Err("live acceptance failed; inspect report".into())}Ok(())
 }

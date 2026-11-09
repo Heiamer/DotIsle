@@ -82,10 +82,17 @@ pub struct Entry {
 pub struct ZipReader {
     file: File,
     entries: Vec<Entry>,
+    data_end: u64,
 }
 
 impl ZipReader {
-    pub fn open(path: &Path) -> Result<Self> {
+    pub fn open(path: &Path) -> Result<Self> { Self::open_at(path, false) }
+
+    /// Read a ZIP32 container after an opaque prefix, without extracting files.
+    /// Offsets are inferred from the central directory and still bounds checked.
+    pub fn open_embedded(path: &Path) -> Result<Self> { Self::open_at(path, true) }
+
+    fn open_at(path: &Path, embedded: bool) -> Result<Self> {
         let mut file = File::open(path)?;
         let length = file.metadata()?.len();
         if length < 22 { return Err(Error("ZIP 文件不完整".into())); }
@@ -104,7 +111,11 @@ impl ZipReader {
         let total = u16_at(&tail, eocd + 10)? as usize;
         let directory_size = u32_at(&tail, eocd + 12)? as u64;
         let directory_offset = u32_at(&tail, eocd + 16)? as u64;
-        if directory_offset + directory_size > length { return Err(Error("ZIP 目录越界".into())); }
+        let end_position = length - tail_length as u64 + eocd as u64;
+        if u16_at(&tail, eocd + 4)? != 0 || u16_at(&tail, eocd + 6)? != 0 || u16_at(&tail, eocd + 8)? as usize != total { return Err(Error("不支持分卷 ZIP".into())); }
+        let prefix = if embedded { end_position.checked_sub(directory_size + directory_offset).ok_or_else(|| Error("ZIP 目录越界".into()))? } else { 0 };
+        let directory_offset = directory_offset + prefix;
+        if directory_size > 64 * 1024 * 1024 || directory_offset + directory_size != end_position { return Err(Error("ZIP 目录越界".into())); }
         file.seek(SeekFrom::Start(directory_offset))?;
         let mut directory = vec![0u8; directory_size as usize];
         file.read_exact(&mut directory)?;
@@ -120,17 +131,20 @@ impl ZipReader {
             let name_length = u16_at(&directory, cursor + 28)? as usize;
             let extra_length = u16_at(&directory, cursor + 30)? as usize;
             let comment_length = u16_at(&directory, cursor + 32)? as usize;
-            let local_offset = u32_at(&directory, cursor + 42)? as u64;
+            let recorded_offset = u32_at(&directory, cursor + 42)? as u64;
+            let local_offset = recorded_offset + prefix;
             let name_start = cursor + 46;
             let name = String::from_utf8_lossy(directory.get(name_start..name_start + name_length).ok_or_else(|| Error("ZIP 名称被截断".into()))?).into_owned();
             if flags & 1 != 0 { return Err(Error(format!("ZIP 条目已加密：{name}"))); }
             if method != 0 && method != 8 { return Err(Error(format!("不支持的 ZIP 压缩方式：{name}"))); }
-            if compressed == u32::MAX as u64 || size == u32::MAX as u64 || local_offset == u32::MAX as u64 { return Err(Error("不支持 ZIP64 更新包".into())); }
+            if compressed == u32::MAX as u64 || size == u32::MAX as u64 || recorded_offset == u32::MAX as u64 { return Err(Error("不支持 ZIP64 更新包".into())); }
+            if local_offset + 30 + compressed > directory_offset { return Err(Error("ZIP 数据越界".into())); }
             entries.push(Entry { name: name.clone(), is_dir: name.ends_with('/'), size, compressed, method, crc, local_offset });
             cursor = name_start + name_length + extra_length + comment_length;
             if cursor > directory.len() { return Err(Error("ZIP 目录项越界".into())); }
         }
-        Ok(ZipReader { file, entries })
+        if cursor != directory.len() { return Err(Error("ZIP 目录长度不符".into())); }
+        Ok(ZipReader { file, entries, data_end: directory_offset })
     }
 
     pub fn entries(&self) -> &[Entry] { &self.entries }
@@ -144,14 +158,16 @@ impl ZipReader {
         if u32::from_le_bytes([header[0], header[1], header[2], header[3]]) != LOCAL { return Err(Error(format!("ZIP 本地头无效：{}", entry.name))); }
         let name_length = u16::from_le_bytes([header[26], header[27]]) as u64;
         let extra_length = u16::from_le_bytes([header[28], header[29]]) as u64;
-        self.file.seek(SeekFrom::Start(entry.local_offset + 30 + name_length + extra_length))?;
+        let data_offset = entry.local_offset + 30 + name_length + extra_length;
+        if data_offset + entry.compressed > self.data_end { return Err(Error("ZIP 数据越界".into())); }
+        self.file.seek(SeekFrom::Start(data_offset))?;
         let mut compressed = vec![0u8; entry.compressed as usize];
         self.file.read_exact(&mut compressed)?;
         let data = match entry.method {
             0 => compressed,
             8 => {
                 let mut decoded = Vec::with_capacity(entry.size as usize);
-                DeflateDecoder::new(compressed.as_slice()).read_to_end(&mut decoded)?;
+                DeflateDecoder::new(compressed.as_slice()).take(entry.size + 1).read_to_end(&mut decoded)?;
                 decoded
             }
             _ => unreachable!(),
@@ -334,6 +350,32 @@ mod tests {
         writer.finish().unwrap();
         let reader = ZipReader::open(&zip).unwrap();
         assert_eq!(reader.entries()[0].name, "LyricIsland-9.9/../escape");
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn embedded_archives_rebase_both_directory_and_local_entries() {
+        let directory = scratch("embedded");
+        let plain = directory.join("plain.zip");
+        let mut writer = ZipWriter::create(&plain).unwrap();
+        writer.add_bytes("pub/core.css", b".player{height:72px}").unwrap();
+        writer.finish().unwrap();
+        let original = std::fs::read(&plain).unwrap();
+        for prefix_length in [0, 100, 4097] {
+            let path = directory.join(format!("prefix-{prefix_length}.ntpk"));
+            let mut data = vec![0x7f; prefix_length];
+            data.extend_from_slice(&original);
+            std::fs::write(&path, &data).unwrap();
+            let mut reader = ZipReader::open_embedded(&path).unwrap();
+            assert_eq!(reader.entries()[0].name, "pub/core.css");
+            assert_eq!(reader.read(0).unwrap(), b".player{height:72px}");
+            if prefix_length != 0 { assert!(ZipReader::open(&path).is_err()); }
+        }
+        let mut corrupt = original;
+        let eocd = corrupt.len() - 22;
+        corrupt[eocd + 12..eocd + 16].copy_from_slice(&u32::MAX.to_le_bytes());
+        std::fs::write(&plain, &corrupt).unwrap();
+        assert!(ZipReader::open_embedded(&plain).is_err());
         std::fs::remove_dir_all(directory).unwrap();
     }
 
