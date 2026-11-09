@@ -181,9 +181,17 @@
     "success": true,
     "version": "3.2.6",
     "pointerSeekConfirmed": true,
-    "playingAdvancedSeconds": 2.233803999999992,
+    "playingAdvancedSeconds": 2.409072800000004,
     "realNativeRendererCapturesInspected": true,
-    "isolatedApplicationData": true
+    "isolatedApplicationData": true,
+    "pausedSeekRepaint": true,
+    "unchangedInstrumentalFrameRegression": {
+      "success": true,
+      "fixture": "local instrumental lyric in isolated application data; actual player song unchanged",
+      "pausedLyricFrameUnchanged": true,
+      "renderFramesIncreased": true,
+      "sceneElapsedMatchesActualPosition": true
+    }
   },
   "rustTestsPassed": 412,
   "pageReaderTestsPassed": 9,

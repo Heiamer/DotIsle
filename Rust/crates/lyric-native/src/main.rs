@@ -419,7 +419,8 @@ impl App {
                 else{self.held=false;self.retarget(false);if !self.banner.visible(){self.hide_at=Some(Instant::now()+Duration::from_millis(if self.flag("Animation",true){220}else{0}));}}
             }
         }
-        self.dirty |= previous["track"]!=self.snapshot["track"] || previous["isPlaying"]!=self.snapshot["isPlaying"] || previous["frame"]!=self.snapshot["frame"] || previous["coverVersion"]!=self.snapshot["coverVersion"];
+        // A paused instrumental track keeps the same lyric frame after a seek.
+        self.dirty |= previous["track"]!=self.snapshot["track"] || previous["isPlaying"]!=self.snapshot["isPlaying"] || previous["frame"]!=self.snapshot["frame"] || previous["coverVersion"]!=self.snapshot["coverVersion"] || (self.snapshot["isPlaying"]!=true&&previous["positionSeconds"]!=self.snapshot["positionSeconds"]);
     }
     fn music_controls_visible(&self)->bool{self.music_mix<3.999||((self.cursor_inside||self.seeking||self.pressed>0)&&self.music_controls.value>0.08)}
     fn hit(&self,x:f64,y:f64)->i32{
