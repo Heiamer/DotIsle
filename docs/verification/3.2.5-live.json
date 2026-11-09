@@ -1,0 +1,114 @@
+{
+  "version": "3.2.5",
+  "date": "2026-11-09",
+  "success": true,
+  "client": "NetEase Windows x64 3.1.43.205627",
+  "verifiedCloudMusicDllSha256": "48f4b79fc0eb7fbcb955835463a71cd866c81055b0a546990e8ab644e886b920",
+  "ordinaryLaunch": true,
+  "debugArgumentsRequired": false,
+  "timelineRoute": "native-rtti",
+  "controlRoute": "NeteaseBackground",
+  "implementation": {
+    "readOnlyProcessMemory": true,
+    "usesPrivateFieldOffsets": true,
+    "usesInstructionOffsetsAndByteChecks": true,
+    "fixedAbsoluteClockAddress": false,
+    "imageHashGated": true
+  },
+  "rustTestsPassed": 403,
+  "pageReaderTestsPassed": 9,
+  "scenarios": {
+    "minimized": {
+      "success": true,
+      "pausedSeeks": 11,
+      "pauseDriftSeconds": 0.0,
+      "advancedSeconds": 6.033774000000022,
+      "realLyricReceived": true,
+      "restoreSuccess": true,
+      "windowVisibilityAndMinimizationPreserved": true
+    },
+    "tray": {
+      "success": true,
+      "pausedSeeks": 11,
+      "pauseDriftSeconds": 0.0,
+      "advancedSeconds": 5.9664562999999475,
+      "realLyricReceived": true,
+      "restoreSuccess": true,
+      "windowVisibilityAndMinimizationPreserved": true
+    },
+    "visibleBackground": {
+      "success": true,
+      "pausedSeeks": 11,
+      "pauseDriftSeconds": 0.0,
+      "advancedSeconds": 5.975657400000003,
+      "realLyricReceived": true,
+      "restoreSuccess": true,
+      "windowVisibilityAndMinimizationPreserved": true
+    }
+  },
+  "trayBoundarySeeks": [
+    {
+      "requestedSeconds": 0.0,
+      "actualSeconds": 0.593,
+      "confirmed": true,
+      "focusPreserved": true
+    },
+    {
+      "requestedSeconds": 0.8,
+      "actualSeconds": 0.981,
+      "confirmed": true,
+      "focusPreserved": true
+    },
+    {
+      "requestedSeconds": 326.2,
+      "actualSeconds": 326.019,
+      "confirmed": true,
+      "focusPreserved": true
+    },
+    {
+      "requestedSeconds": 326.95,
+      "actualSeconds": 326.673,
+      "confirmed": true,
+      "focusPreserved": true
+    }
+  ],
+  "pausedSeeks": {
+    "count": 33,
+    "medianConfirmationMs": 334,
+    "maximumConfirmationMs": 1218,
+    "maximumReadbackErrorSeconds": 0.3713328000000047
+  },
+  "packagedRuntime": {
+    "success": true,
+    "version": "3.2.5",
+    "pointerSeekConfirmed": true,
+    "playingPositionAdvancedSeconds": 2.2965671000000043,
+    "nativeScreenshotsInspected": true,
+    "ordinaryClientRestart": true,
+    "oldClientProcessExited": true,
+    "newClientProcessObserved": true,
+    "sameDotIsleProcessAcrossClientRestart": true,
+    "trackChangeAndRestoreSuccess": true,
+    "restartEvidenceScope": "The independently verified PID lifecycle run preceded the final slider-edge-only fix; final packaged controls and rendering were tested again."
+  },
+  "renderAcceptance": {
+    "settings": {
+      "success": true
+    },
+    "themes": {
+      "success": true
+    },
+    "backgrounds": {
+      "success": true
+    },
+    "covers": {
+      "success": true
+    }
+  },
+  "limits": [
+    "Only the listed client image is enabled for native process reading. Other builds fall back to system media.",
+    "The restart experiment includes a manual normal launch and starting the restored track; it is not a startup latency benchmark.",
+    "No real replacement install or uninstall of the user installation was performed.",
+    "Historical tags and previously published releases are unchanged."
+  ]
+}

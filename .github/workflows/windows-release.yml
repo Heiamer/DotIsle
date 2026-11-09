@@ -9,7 +9,7 @@ on:
       version:
         description: Release version without the leading v
         required: true
-        default: "3.2.4"
+        default: "3.2.5"
       publish:
         description: Publish the release instead of leaving a draft
         type: boolean

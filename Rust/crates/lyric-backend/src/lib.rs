@@ -8,6 +8,7 @@ pub mod netease_control;
 mod netease_window;
 mod netease_attention;
 mod netease_cdp;
+mod netease_native;
 mod media_commands;
 pub mod clock;
 pub mod io;

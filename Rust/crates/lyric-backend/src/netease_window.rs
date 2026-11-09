@@ -46,7 +46,7 @@ struct NoActivate{pid:u32,widget:HWND,added:bool}
 impl NoActivate{fn enter(pid:u32,host:HWND,widget:HWND)->Result<Self,String>{unsafe{
  if !owned(widget,pid)||!class(widget,"Chrome_WidgetWin_0")||!IsChild(host,widget).as_bool(){return Err("网易云后台控件层级已变化，已取消进度操作".into())}
  // Refuse a hung browser before making any temporary property change.
- let mut result=0;SendMessageTimeoutW(widget,WM_NULL,WPARAM(0),LPARAM(0),SMTO_ABORTIFHUNG|SMTO_BLOCK,150,Some(&mut result)).0.ne(&0).then_some(()).ok_or("网易云正在忙，已取消后台操作")?;
+ let mut result=0;SendMessageTimeoutW(widget,WM_NULL,WPARAM(0),LPARAM(0),SMTO_ABORTIFHUNG|SMTO_BLOCK,600,Some(&mut result)).0.ne(&0).then_some(()).ok_or("网易云正在忙，已取消后台操作")?;
  let old=GetWindowLongPtrW(widget,GWL_EXSTYLE);let added=old&WS_EX_NOACTIVATE.0 as isize==0;
  let guard=Self{pid,widget,added};
  if added{SetWindowLongPtrW(widget,GWL_EXSTYLE,old|WS_EX_NOACTIVATE.0 as isize);if GetWindowLongPtrW(widget,GWL_EXSTYLE)&WS_EX_NOACTIVATE.0 as isize==0{return Err("无法保护网易云后台焦点，已取消进度操作".into())}}
@@ -62,7 +62,10 @@ fn bounds(width:i32,height:i32,dpi:u32,fraction:f64)->Option<(i32,i32)>{
  let x=(fraction*width as f64).round().clamp(1.,(width-2)as f64)as i32;
  Some((x,(height as f64-81.5*scale).round()as i32))
 }
+fn drag_start(x:i32,width:i32,dpi:u32)->i32{let inset=(16.*dpi as f64/96.).ceil()as i32;x.clamp(inset,width-inset)}
 pub fn available(target:&Target)->bool{target.available()&&windows(target.pid).is_some()}
+pub fn diagnostics(target:&Target)->serde_json::Value{unsafe{match windows(target.pid){Some((root,_,_,_))=>serde_json::json!({"pid":target.pid,"visible":IsWindowVisible(root).as_bool(),"minimized":IsIconic(root).as_bool(),"foreground":GetForegroundWindow()==root}),None=>serde_json::json!({"pid":target.pid,"available":false})}}}
+pub fn metadata(target:&Target)->Option<(String,String)>{let(root,_,_,_)=windows(target.pid)?;let mut text=[0u16;1024];let n=unsafe{GetWindowTextW(root,&mut text)};if n<=0{return None}let title=String::from_utf16_lossy(&text[..n as usize]);let(song,artist)=title.rsplit_once(" - ")?;let(song,artist)=(song.trim(),artist.trim());if song.is_empty()||artist.is_empty(){return None}Some((song.into(),artist.into()))}
 
 pub fn seek(target:&Target,seconds:f64,duration:f64,valid:&dyn Fn()->bool)->Result<f64,String>{
  let seconds=crate::netease_control::bounded_target(seconds,duration)?;
@@ -94,20 +97,27 @@ pub fn seek(target:&Target,seconds:f64,duration:f64,valid:&dyn Fn()->bool)->Resu
  let mut rect=RECT::default();unsafe{GetClientRect(renderer,&mut rect)}.map_err(|e|e.to_string())?;
  let (x,y)=bounds(rect.right,rect.bottom,unsafe{GetDpiForWindow(root)}.max(96),seconds/duration).ok_or("网易云进度控件尺寸不受支持")?;
  let pos=LPARAM(((y as u32)<<16|x as u32)as isize);
+ // The rounded edge does not accept a new mouse-down. Capture inside the
+ // bar, then drag to an edge target before releasing the same gesture.
+ let start_x=drag_start(x,rect.right,unsafe{GetDpiForWindow(root)}.max(96));let start=LPARAM(((y as u32)<<16|start_x as u32)as isize);
  if !valid(){return Err("歌曲已变化，已取消后台进度操作".into())}
  let focus_after_resize=NoActivate::enter(target.pid,host,widget)?;
  crate::netease_attention::arm(root,target.pid)?;
  unsafe{
-  PostMessageW(Some(renderer),WM_MOUSEMOVE,WPARAM(0),pos).map_err(|e|e.to_string())?;
-  let down=PostMessageW(Some(renderer),WM_LBUTTONDOWN,WPARAM(1),pos);
+  PostMessageW(Some(renderer),WM_MOUSEMOVE,WPARAM(0),start).map_err(|e|e.to_string())?;
+  let down=PostMessageW(Some(renderer),WM_LBUTTONDOWN,WPARAM(1),start);
+  let moved=if start_x!=x{PostMessageW(Some(renderer),WM_MOUSEMOVE,WPARAM(1),pos)}else{Ok(())};
   let up=PostMessageW(Some(renderer),WM_LBUTTONUP,WPARAM(0),pos);
-  down.map_err(|e|e.to_string())?;up.map_err(|e|e.to_string())?;
+  down.map_err(|e|e.to_string())?;moved.map_err(|e|e.to_string())?;up.map_err(|e|e.to_string())?;
  }
  // CEF consumes the complete posted click under NOACTIVATE before cleanup.
  std::thread::sleep(Duration::from_millis(180));
- let resized=resize.is_some();drop(resize);if resized{std::thread::sleep(Duration::from_millis(120));}drop(focus_after_resize);drop(focus);Ok(x as f64/rect.right as f64*duration)
+ let restored_size=resize.as_ref().map(|r|(r.width,r.height));drop(resize);
+ if let Some((width,height))=restored_size{let until=Instant::now()+Duration::from_millis(900);while Instant::now()<until{let mut r=RECT::default();if !owned(host,target.pid)||unsafe{GetClientRect(host,&mut r)}.is_err()||r.right==width&&r.bottom==height{break}std::thread::sleep(Duration::from_millis(20));}}
+ drop(focus_after_resize);drop(focus);Ok(x as f64/rect.right as f64*duration)
 }
 #[cfg(test)]mod tests{use super::*;
+ #[test]fn edge_drags_begin_inside_the_bar_at_each_scale(){for dpi in [96,144,192]{let width=1056*dpi as i32/96;let inset=(16.*dpi as f64/96.).ceil()as i32;assert_eq!(drag_start(1,width,dpi),inset);assert_eq!(drag_start(width-2,width,dpi),width-inset);assert_eq!(drag_start(width/2,width,dpi),width/2);}}
  #[test]fn physical_slider_coordinates_follow_dpi_and_client_size(){assert_eq!(bounds(1056,752,96,0.5),Some((528,671)));assert_eq!(bounds(1584,1128,144,0.5),Some((792,1006)));assert_eq!(bounds(1056,752,96,0.),Some((1,671)));assert_eq!(bounds(1056,752,96,1.),Some((1054,671)));}
  #[test]fn invalid_or_mini_player_geometry_never_produces_input(){for(w,h,d,f)in[(0,0,96,0.5),(300,100,96,0.5),(1000,30,96,0.5),(1000,800,96,f64::NAN),(1000,800,96,-0.1)]{assert!(bounds(w,h,d,f).is_none());}}
 }

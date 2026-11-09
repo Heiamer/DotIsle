@@ -77,13 +77,13 @@ impl Backend{
             if !sent{if let Some(session)=session.as_ref(){if session.GetPlaybackInfo().and_then(|p|p.Controls()).and_then(|c|c.IsPlaybackPositionEnabled()).unwrap_or(false){sent=Media::command(session,"seek",seconds).unwrap_or(false);}}}
             if !sent{return Err("当前播放器没有可用的进度控制通道".into())}
             if let Some(id)=id{self.command_state(id,"pending",Some(route),None);}
-            io::log(&self.logs,"MEDIA_CMD",&format!("seek target={seconds:.3}; route={route}; awaiting real player position"));
+            io::log(&self.logs,"MEDIA_CMD",&format!("seek target={seconds:.3}; dispatched={dispatched_target:.3}; route={route}; awaiting real player position"));
             let until=Instant::now()+Duration::from_millis(2600);
             while Instant::now()<until{
                 if self.closed.load(Ordering::Acquire){return Ok(false)}
                 {let s=self.state.lock().map_err(|_|"backend lock")?;if s.track_key!=key{return Err("歌曲已切换，已取消进度确认".into())}
                     if id.is_some_and(|id|s.media_command["id"].as_u64()!=Some(id)){return Ok(false)}
-                    if native.is_some()&&s.netease_target.as_ref()==native.as_ref(){if let Some(sample)=s.netease_sample.as_ref(){if crate::netease_control::acknowledged(dispatched_target,sample.position,sample.playing,sent_ms,sample.captured_ms,unix_ms()){return Ok(true)}}}
+                    if native.is_some()&&s.netease_target.as_ref()==native.as_ref(){if let Some(sample)=s.netease_sample.as_ref(){if crate::netease_control::seek_acknowledged(seconds,dispatched_target,sample.position,sample.playing,sent_ms,sample.captured_ms,unix_ms()){return Ok(true)}}}
                 }
                 if route=="SMTC"{if let Some(session)=session.as_ref(){if let Ok(t)=session.GetTimelineProperties(){if let (Ok(position),Ok(updated))=(t.Position(),t.LastUpdatedTime()){let captured=updated.UniversalTime/10000-11644473600000;if crate::netease_control::acknowledged(seconds,position.Duration as f64/10000000.,before,sent_ms,captured,unix_ms()){return Ok(true)}}}}}
                 std::thread::sleep(Duration::from_millis(40));
@@ -94,14 +94,21 @@ impl Backend{
             Err("播放器未确认进度跳转，请重试；不会用本地计时冒充成功".into())
         }else{
             let Some(session)=session else{return Ok(false)};
-            if !Media::command(&session,action,seconds).map_err(|e|e.to_string())?{return Ok(false)}
+            let sent_ms=unix_ms();let dispatched=Media::command(&session,action,seconds).map_err(|e|e.to_string())?;
             if matches!(action,"toggle"|"play"|"pause"){
+                if !dispatched&&native.is_none(){return Ok(false)}
                 let until=Instant::now()+Duration::from_millis(1200);
-                while Instant::now()<until{if self.closed.load(Ordering::Acquire){return Ok(false)}if self.state.lock().map_err(|_|"backend lock")?.track_key!=key{return Ok(false)}
+                while Instant::now()<until{if self.closed.load(Ordering::Acquire){return Ok(false)}
+                    {let s=self.state.lock().map_err(|_|"backend lock")?;if s.track_key!=key||id.is_some_and(|id|s.media_command["id"].as_u64()!=Some(id)){return Ok(false)}
+                        if native.is_some(){if s.netease_target.as_ref()==native.as_ref()&&s.netease_sample.as_ref().is_some_and(|sample|sample.song_id==song_id&&crate::netease_control::playback_acknowledged(action,before,sample.playing,sent_ms,sample.captured_ms,unix_ms())){return Ok(true)}}
+                    }
+                    // A native timeline is authoritative; an old SMTC state must
+                    // neither reject a real change nor confirm a stale one.
+                    if native.is_some(){std::thread::sleep(Duration::from_millis(40));continue}
                     let playing=session.GetPlaybackInfo().and_then(|p|p.PlaybackStatus()).map_err(|e|e.to_string())?==windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
                     if match action{"toggle"=>playing!=before,"play"=>playing,"pause"=>!playing,_=>true}{return Ok(true)}std::thread::sleep(Duration::from_millis(40));}
                 return Ok(false)
-            }Ok(true)
+            }Ok(dispatched)
         }
     }
     /// Probe control capability independently from media sampling.

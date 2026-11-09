@@ -509,12 +509,12 @@ impl App {
     fn update_seek(&mut self,x:f64){let (shape,_)=self.shape();let scale=(shape.w/self.layout.card.w).min(shape.h/self.layout.card.h);let tx=shape.x+(shape.w-self.layout.card.w*scale)/2.;let g=self.music_geometry();self.seek_fraction=((x-tx-g.track.x*scale)/(g.track.w*scale)).clamp(0.,1.);self.dirty=true;}
     /// NetEase reports a live timeline but the silent seek channel is not connected.
     fn seek_offer(&self)->bool{!self.demo&&self.snapshot["track"].is_object()&&self.snapshot["track"]["songId"].as_str().is_some_and(|s|!s.is_empty())&&self.snapshot["canSeek"]==false&&self.snapshot["sourceId"].as_str().is_some_and(|s|s.eq_ignore_ascii_case("cloudmusic.exe"))}
-    /// Show explicit opt-in instructions; the app never restarts the music player.
+    /// Explain automatic connection without changing the running music player.
     fn enable_netease_silent(&mut self){
         self.seek_confirm=false;self.last_poll=Instant::now()-Duration::from_secs(1);self.dirty=true;
         if !self.demo{std::thread::spawn(||unsafe{
-            let body="新版进度读取使用网易云本机通道。\r\n\r\n1. 从网易云托盘菜单完全退出播放器。\r\n2. 运行点屿目录中的 Start-NetEase-SilentControl.cmd。\r\n3. 在网易云中播放歌曲，点屿会自动检测。\r\n\r\n当前仍使用系统媒体会话；可用功能取决于播放器提供的信息。".encode_utf16().chain(Some(0)).collect::<Vec<_>>();
-            MessageBoxW(None,PCWSTR(body.as_ptr()),windows::core::w!("网易云进度连接说明"),MB_OK|MB_ICONINFORMATION|MB_SETFOREGROUND);
+            let body="正常启动网易云并播放歌曲，点屿会自动连接进度。\r\n\r\n无需脚本、特殊启动参数或重启。后台、最小化和托盘状态均可操作。\r\n\r\n尚未连接时请稍候，并保持两款应用的运行权限一致；未适配的客户端版本继续使用系统媒体会话。".encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+            MessageBoxW(None,PCWSTR(body.as_ptr()),windows::core::w!("网易云自动连接状态"),MB_OK|MB_ICONINFORMATION|MB_SETFOREGROUND);
         });}
     }
     fn progress_value(&self)->f64{self.progress.fraction(self.start.elapsed().as_secs_f64())}
@@ -799,7 +799,7 @@ impl App {
             "showUpdate"=>{self.refresh_components();if self.updates.selectable(){self.select_component("update",1);self.held=true;self.retarget(true);self.user_hidden=false;self.fade(1.);json!({"success":true})}else{json!({"success":false,"message":"当前没有更新任务，请先检查更新。"})}},
             "openInstaller"=>{match std::process::Command::new(self.base.join("DotIsle.Setup.exe")).arg(format!("/MIGRATEDATA={}",self.data.display())).spawn(){Ok(_)=>json!({"success":true}),Err(e)=>json!({"success":false,"message":e.to_string()})}},
             "checkUpdate"=>{self.updates.check(true);json!({"success":true,"message":"正在检查双源更新…"})},
-            "neteaseEnableSilent"=>{self.enable_netease_silent();json!({"success":true,"message":"已显示网易云本机通道连接说明。"})},
+            "neteaseEnableSilent"=>{self.enable_netease_silent();json!({"success":true,"message":"已显示网易云自动连接状态。"})},
             "updateDownload"|"installUpdate"=>{let pipe=std::env::var("LYRICISLAND_TEST_PIPE").unwrap_or_else(|_|"LyricIsland.Native.Settings.v1".into());match self.updates.begin(&self.base,&self.data,&pipe){Ok(())=>{if self.selected!="update"{self.update_return=self.selected.clone();}self.refresh_components();self.select_component("update",1);self.held=true;self.retarget(true);self.user_hidden=false;self.fade(1.);json!({"success":true,"message":"开始下载；校验后等待你确认安装。"})},Err(e)=>json!({"success":false,"message":e})}},
             "updateApply"=>{if self.updates.phase()!="ready"{json!({"success":false,"message":"更新尚未就绪"})}else{self.updates.ask_apply();self.export_update_appearance();json!({"success":true})}},
             "updateCancel"=>{match self.updates.cancel(){Ok(())=>json!({"success":true}),Err(e)=>json!({"success":false,"message":e})}},

@@ -21,7 +21,6 @@ impl Target{
     pub fn seek(&self,port:u16,seconds:f64,duration:f64,song_id:&str,valid:&dyn Fn()->bool)->Result<(&'static str,f64),String>{
         if !self.available(){return Err("网易云已退出或重启，请等待重新连接".into())}
         if !valid(){return Err("有更新的进度请求，已取消旧操作".into())}
-        if crate::netease_cdp::available(self.pid,port){crate::netease_cdp::seek(self.pid,port,song_id,seconds)?;return Ok(("NeteaseCDP",seconds))}
         if self.background_available(){return crate::netease_window::seek(self,seconds,duration,valid).map(|actual|("NeteaseBackground",actual))}
         if !valid(){return Err("歌曲已变化，已取消进度操作".into())}
         crate::netease_cdp::seek(self.pid,port,song_id,seconds)?;Ok(("NeteaseCDP",seconds))
@@ -50,7 +49,15 @@ pub fn acknowledged(target:f64,position:f64,playing:bool,sent_ms:i64,captured_ms
     let advanced=if playing{((captured_ms-sent_ms)as f64/1000.).clamp(0.,5.)}else{0.};
     (position-target).abs()<=0.8||(position-target-advanced).abs()<=0.8
 }
+pub fn playback_acknowledged(action:&str,before:bool,playing:bool,sent_ms:i64,captured_ms:i64,now_ms:i64)->bool{
+    captured_ms>=sent_ms&&(0..800).contains(&(now_ms-captured_ms))&&match action{"toggle"=>playing!=before,"play"=>playing,"pause"=>!playing,_=>false}
+}
+pub fn seek_acknowledged(requested:f64,dispatched:f64,position:f64,playing:bool,sent_ms:i64,captured_ms:i64,now_ms:i64)->bool{
+    acknowledged(requested,position,playing,sent_ms,captured_ms,now_ms)||acknowledged(dispatched,position,playing,sent_ms,captured_ms,now_ms)
+}
 #[cfg(test)]mod tests{use super::*;
+ #[test]fn edge_rounding_does_not_reject_a_readback_within_the_requested_tolerance(){assert!(seek_acknowledged(269.968,270.05,269.19,false,1000,1100,1200));assert!(!seek_acknowledged(269.968,270.05,268.9,false,1000,1100,1200));assert!(!seek_acknowledged(269.968,270.05,269.19,false,1000,999,1200));}
+ #[test]fn playback_acknowledgement_needs_a_fresh_post_command_change(){assert!(playback_acknowledged("toggle",true,false,1000,1100,1200));assert!(playback_acknowledged("play",false,true,1000,1100,1200));assert!(playback_acknowledged("pause",true,false,1000,1100,1200));assert!(!playback_acknowledged("toggle",true,true,1000,1100,1200));assert!(!playback_acknowledged("pause",true,false,1000,999,1200));assert!(!playback_acknowledged("pause",true,false,1000,1100,1900));assert!(!playback_acknowledged("pause",true,false,1000,1300,1200));assert!(!playback_acknowledged("seek",true,false,1000,1100,1200));}
  #[test]fn protocol_uses_absolute_seconds_and_numeric_json(){for seconds in [0.,0.01,61.26,86399.]{let uri=seek_uri(seconds).unwrap();let data=STANDARD.decode(uri.strip_prefix("orpheus://").unwrap()).unwrap();let json:serde_json::Value=serde_json::from_slice(&data).unwrap();assert_eq!(json["cmd"],"seek");assert_eq!(json["value"].as_f64(),Some(seconds));assert_eq!(json.as_object().unwrap().len(),2);}}
  #[test]fn launch_guard_receives_one_registered_switch(){let arg=seek_argument(12.5).unwrap();assert!(arg.starts_with("--webcmd=orpheus://"));assert!(!arg.contains([' ','"','\n','\r']));let data=STANDARD.decode(arg.strip_prefix("--webcmd=orpheus://").unwrap()).unwrap();assert_eq!(serde_json::from_slice::<serde_json::Value>(&data).unwrap()["value"],12.5);}
  #[test]fn malformed_targets_never_produce_commands(){for seconds in [f64::NAN,f64::INFINITY,f64::NEG_INFINITY,-1.,86401.]{assert!(seek_uri(seconds).is_err());}for duration in [0.,-1.,f64::NAN,f64::INFINITY,86401.]{assert!(bounded_target(10.,duration).is_err());}assert!(bounded_target(-1.,180.).is_err());assert!(bounded_target(f64::NAN,180.).is_err());assert_eq!(bounded_target(500.,180.).unwrap(),179.95);}
@@ -74,3 +81,4 @@ pub fn players()->Vec<Target>{
 }
 
 pub fn attention_diagnostics()->serde_json::Value{crate::netease_attention::diagnostics()}
+pub fn window_diagnostics()->serde_json::Value{serde_json::Value::Array(players().iter().filter(|t|t.background_available()).map(crate::netease_window::diagnostics).collect())}
