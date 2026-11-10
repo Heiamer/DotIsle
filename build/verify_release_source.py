@@ -27,7 +27,16 @@ def verify(root, version):
     if f'#define AppVersion "{version}"' not in installer or 'AppPublisher=Heiamer' not in installer:
         errors.append('Installer author or default version differs')
     manifest = json.loads((root / 'Assets/UpdateManifest.json').read_text(encoding='utf-8'))
-    if manifest['tag_name'] != f'v{version}':
+    if '-rc' in version:
+        stable_tag = manifest.get('tag_name', '')
+        stable_version = stable_tag.removeprefix('v')
+        stable = re.fullmatch(r'\d+\.\d+\.\d+', stable_version)
+        if (not stable or manifest.get('published') is not True or
+                manifest.get('draft') is not False or manifest.get('prerelease') is not False):
+            errors.append('RC builds must preserve a published stable update manifest')
+        elif tuple(map(int, stable_version.split('.'))) > tuple(map(int, version.split('-')[0].split('.'))):
+            errors.append('Stable update manifest is newer than the RC base version')
+    elif manifest['tag_name'] != f'v{version}':
         errors.append('Update manifest version differs')
     if not (root / f'release-notes/DotIsle-{version}-Notes.md').is_file():
         errors.append('Release notes are missing')
@@ -56,8 +65,8 @@ def main():
     parser.add_argument('--version', required=True)
     parser.add_argument('--report', type=Path, required=True)
     args = parser.parse_args()
-    if not re.fullmatch(r'\d+\.\d+\.\d+', args.version):
-        parser.error('A stable three-part version is required')
+    if not re.fullmatch(r'\d+\.\d+\.\d+(?:-rc[1-9]\d*)?', args.version):
+        parser.error('Use a three-part version, optionally followed by -rcN (N >= 1)')
     result = verify(Path(__file__).resolve().parents[1], args.version)
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')

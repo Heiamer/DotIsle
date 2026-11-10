@@ -10,6 +10,7 @@ impl Spring {
 pub struct Banner {pub notice:Option<Notice>,motion:[Spring;6],pub open:bool,deadline:f64,changed:f64,compact:bool}
 impl Default for Banner {fn default()->Self{Self{notice:None,motion:[Spring::default();6],open:false,deadline:0.,changed:0.,compact:false}}}
 impl Banner {
+    pub fn hold_until(&mut self,deadline:f64){self.deadline=deadline;}
     pub fn visible(&self)->bool{self.notice.is_some()}
     /// Whether the hold has run out. The shell asks this so a queued message can take
     /// over the open surface instead of closing it and opening it again.

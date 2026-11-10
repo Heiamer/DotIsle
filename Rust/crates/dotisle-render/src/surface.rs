@@ -1,5 +1,5 @@
 //! CPU path preparation and GPU rasterization, presented with premultiplied alpha.
-use std::{path::Path,cell::RefCell};
+use std::{path::Path,cell::RefCell,rc::{Rc,Weak},collections::HashMap};
 use windows::{core::Interface,Win32::{Foundation::HWND,Graphics::DirectComposition::*}};
 use vello::{Scene,Renderer,wgpu};
 
@@ -34,10 +34,20 @@ fn save_texture(device:&wgpu::Device,queue:&wgpu::Queue,texture:&wgpu::Texture,p
     drop(mapped);buffer.unmap();image::save_buffer(path,&pixels,w,h,image::ColorType::Rgba8).map_err(|e|e.to_string())
 }
 
+// Every control-centre/desktop window on this event thread shares one device,
+// renderer and glyph/image atlas. The weak cache never keeps an idle GPU alive.
+struct SharedContext{instance:wgpu::Instance,adapter:wgpu::Adapter,device:wgpu::Device,queue:wgpu::Queue,renderers:RefCell<HashMap<wgpu::TextureFormat,Rc<RefCell<Renderer>>>>}
+thread_local!{static SHARED_CONTEXT:RefCell<Weak<SharedContext>>=RefCell::new(Weak::new());}
+fn shared_context()->Result<Rc<SharedContext>,String>{SHARED_CONTEXT.with(|slot|{
+ if let Some(context)=slot.borrow().upgrade(){return Ok(context)}
+ let instance=composition_instance();let(adapter,device,queue)=device(&instance,None)?;
+ let context=Rc::new(SharedContext{instance,adapter,device,queue,renderers:RefCell::new(HashMap::new())});
+ *slot.borrow_mut()=Rc::downgrade(&context);Ok(context)
+})}
 pub struct Surface {
     surface:wgpu::Surface<'static>,config:wgpu::SurfaceConfiguration,
     target_texture:RefCell<Option<wgpu::Texture>>,last_scene:Option<(Scene,f64)>,
-    renderer:RefCell<Renderer>,device:wgpu::Device,queue:wgpu::Queue,startup_cleanup:bool,
+    renderer:Rc<RefCell<Renderer>>,device:wgpu::Device,queue:wgpu::Queue,startup_cleanup:bool,_shared:Rc<SharedContext>,
     _instance:wgpu::Instance,_composition:IDCompositionDevice,_target:IDCompositionTarget,_visual:IDCompositionVisual,
 }
 impl Surface {
@@ -46,18 +56,18 @@ impl Surface {
         let composition:IDCompositionDevice=DCompositionCreateDevice2(None::<&windows::core::IUnknown>).map_err(|e|e.to_string())?;
         let target=composition.CreateTargetForHwnd(hwnd,true).map_err(|e|e.to_string())?;
         let visual=composition.CreateVisual().map_err(|e|e.to_string())?;target.SetRoot(&visual).map_err(|e|e.to_string())?;
-        let instance=composition_instance();
+        let shared=shared_context()?;let instance=shared.instance.clone();let device=shared.device.clone();let queue=shared.queue.clone();
         let raw=instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CompositionVisual(visual.as_raw())).map_err(|e|e.to_string())?;
-        let(adapter,device,queue)=device(&instance,Some(&raw))?;
-        let caps=raw.get_capabilities(&adapter);
+        let caps=raw.get_capabilities(&shared.adapter);
         let format=caps.formats.into_iter().find(|f|matches!(f,wgpu::TextureFormat::Rgba8Unorm|wgpu::TextureFormat::Bgra8Unorm)).ok_or("unsupported composition format")?;
         let config=wgpu::SurfaceConfiguration{usage:wgpu::TextureUsages::RENDER_ATTACHMENT,format,width:width.max(1),height:height.max(1),present_mode:wgpu::PresentMode::AutoVsync,desired_maximum_frame_latency:1,alpha_mode:wgpu::CompositeAlphaMode::PreMultiplied,view_formats:vec![]};
         raw.configure(&device,&config);
-        let renderer=RefCell::new(Renderer::new(&device,format,config.width,config.height));
+        let renderer=shared.renderers.borrow_mut().entry(format).or_insert_with(||Rc::new(RefCell::new(Renderer::new(&device,format,config.width,config.height)))).clone();
         composition.Commit().map_err(|e|e.to_string())?;
         if std::env::var_os("DOTISLE_TRACE_GPU").is_some(){eprintln!("hybrid surface initialized {:?}",phase.elapsed());}
-        Ok(Self{surface:raw,config,target_texture:RefCell::new(None),last_scene:None,renderer,device,queue,startup_cleanup:true,_instance:instance,_composition:composition,_target:target,_visual:visual})
+        Ok(Self{surface:raw,config,target_texture:RefCell::new(None),last_scene:None,renderer,device,queue,startup_cleanup:true,_shared:shared,_instance:instance,_composition:composition,_target:target,_visual:visual})
     }
+    pub fn context_id(&self)->usize{Rc::as_ptr(&self._shared)as usize}
     pub fn wait_idle(&self){let _=self.device.poll(wgpu::PollType::wait_indefinitely());}
     pub fn resize(&mut self,width:u32,height:u32){
         let width=width.max(1);let height=height.max(1);if width==self.config.width&&height==self.config.height{return}
@@ -80,11 +90,11 @@ impl Surface {
         if let Some(frame)=frame{
             // Render straight into the transparent swapchain. Verification allocates
             // its own target lazily instead of keeping a duplicate full-window plane.
-            self.renderer.get_mut().render(&self.device,&self.queue,&mut encoder,scene,scale,self.config.width,self.config.height,&frame.texture.create_view(&Default::default()))?;
+            self.renderer.borrow_mut().render(&self.device,&self.queue,&mut encoder,scene,scale,self.config.width,self.config.height,&frame.texture.create_view(&Default::default()))?;
             self.queue.submit([encoder.finish()]);frame.present();unsafe{self._composition.Commit().map_err(|e|e.to_string())?;}
         }else{
             let target=self.target_texture.get_mut().get_or_insert_with(||texture(&self.device,self.config.width,self.config.height,self.config.format));
-            self.renderer.get_mut().render(&self.device,&self.queue,&mut encoder,scene,scale,self.config.width,self.config.height,&target.create_view(&Default::default()))?;
+            self.renderer.borrow_mut().render(&self.device,&self.queue,&mut encoder,scene,scale,self.config.width,self.config.height,&target.create_view(&Default::default()))?;
             self.queue.submit([encoder.finish()]);
         }
         if self.startup_cleanup{

@@ -33,7 +33,7 @@ fn music_layout_choices(ui:&mut Ui,m:&Model,x:f64,y:&mut f64,w:f64){
  }*y+=options.len().div_ceil(cols)as f64*158.+20.;
 }
 const MATERIALS:[(&str,&str);2]=[("亚克力","Acrylic"),("玻璃","Glass")];
-pub fn render(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64,state:&ViewState)->f64{let s=ui.s;let tw=(w-52.)/7.;for(i,label)in ["尺寸与排版","材质与取色","交互与提示","动效与圆角","播放器来源","进度条","播放主题"].iter().enumerate(){ui.chip(rect(x+i as f64*(tw+8.),y,tw,42.),label,m.island_tab as usize==i,Action::IslandTab(i as u8));}let mut cy=y+68.;match m.island_tab{
+pub fn render(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64,state:&ViewState)->f64{let s=ui.s;let mut cy=y;match m.island_tab{
  0=>{toggles(ui,m,x,&mut cy,w,&[("随歌词调整灵动岛宽度","根据当前歌词和译文自动伸缩；关闭后使用固定宽度。","AutoCompactWidth",true)]);heading(ui,"显示模式",x,&mut cy,w);choices(ui,m,x,&mut cy,w,"收起时样式 · 展开卡片共用","IslandSizeMode","Classic",&[("经典","Classic"),("迷你","Mini")]);music_layout_choices(ui,m,x,&mut cy,w);heading(ui,"胶囊尺寸",x,&mut cy,w);range(ui,m,x,&mut cy,w,"基础宽度","CompactWidth",260.,140.,480.,"px");range(ui,m,x,&mut cy,w,"自适应宽度上限","AutoCompactMaxWidth",420.,140.,480.,"px");range(ui,m,x,&mut cy,w,"歌词字号","FontSize",14.,11.,20.,"px");ui.button(rect(x,cy,220.,44.),"应用 V3 推荐字号 · 14",None,Action::NativeEdit("FontSize",json!(14.)),true,true);cy+=64.;
 heading(ui,"字体",x,&mut cy,w);
 let family=m.setting("IslandFontFamily").as_str().unwrap_or("Noto Sans SC").to_owned();let preview_family=if family=="Noto Sans SC"{"Google Sans Flex".to_owned()}else{family.clone()};let family_label=if family=="Noto Sans SC"{"默认字体".to_owned()}else{family.clone()};

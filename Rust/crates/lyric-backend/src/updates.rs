@@ -13,7 +13,7 @@ pub fn describe(release:&Value,current:&str)->Result<Value,String>{
     if release["draft"]==true||release["prerelease"]==true{return Err("未找到正式更新".into())}
     let tag=release["tag_name"].as_str().ok_or("更新响应缺少版本号")?;
     let latest=version(tag).ok_or("更新版本号格式无效")?;
-    let (installed,preview)=if let Some((base,sequence))=current.split_once("-preview."){
+    let (installed,preview)=if let Some((base,sequence))=current.split_once("-preview.").or_else(||current.split_once("-rc")){
         if sequence.is_empty()||!sequence.bytes().all(|b|b.is_ascii_digit()){return Err("当前版本号无效".into())}
         (version(base).ok_or("当前版本号无效")?,true)
     }else{(version(current).ok_or("当前版本号无效")?,false)};
@@ -97,6 +97,12 @@ pub fn install()->Result<Value,String>{
         for (tag,newer) in [("v3.2.3",false),("v3.2.4",true),("v3.2.5",true)]{assert_eq!(describe(&json!({"tag_name":tag}),"3.2.4-preview.1").unwrap()["newer"],newer);}
         for current in ["3.2.4-preview.","3.2.4-preview.1/evil","3.2.4-beta"]{assert!(describe(&json!({"tag_name":"v3.2.4"}),current).is_err());}
         assert!(describe(&json!({"tag_name":"v3.2.4-preview.1"}),"3.2.3").is_err());
+    }
+    #[test]fn installed_rc_can_upgrade_to_stable_without_downgrading(){
+        for (tag,newer) in [("v3.2.7",false),("v3.5.0",true),("v3.5.1",true)]{assert_eq!(describe(&json!({"tag_name":tag}),"3.5.0-rc1").unwrap()["newer"],newer);}
+        for current in ["3.5.0-rc","3.5.0-rc1/evil","3.5.0-rcx"]{assert!(describe(&json!({"tag_name":"v3.5.0"}),current).is_err());}
+        assert!(describe(&json!({"tag_name":"v3.5.0-rc1","prerelease":true}),"3.2.7").is_err());
+        assert!(describe(&json!({"tag_name":"v3.5.0-rc1"}),"3.2.7").is_err());
     }
     #[test]fn rejects_untrusted_tags_and_preview_releases(){for tag in ["latest","v1.3-beta","v1.3/evil"]{assert!(describe(&json!({"tag_name":tag}),"1.2.0").is_err());}assert!(describe(&json!({"tag_name":"v2.0","prerelease":true}),"1.2.0").is_err());}
     #[test]fn fallback_reads_only_canonical_repository_metadata(){assert_eq!(page_release(r#"<meta property="og:url" content="/Heiamer/DotIsle/releases/tag/v1.2" />"#).unwrap()["tag_name"],"v1.2");assert!(page_release(r#"<meta property="og:url" content="/other/project/releases/tag/v9.0" />"#).is_err());}

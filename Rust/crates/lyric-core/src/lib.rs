@@ -9,6 +9,7 @@ pub mod resolution;
 pub mod sync;
 pub mod hotkey;
 pub mod music_layout;
+pub mod custom_layout;
 pub mod motion_curve;
 pub mod shared_motion;
 pub mod island_layout;

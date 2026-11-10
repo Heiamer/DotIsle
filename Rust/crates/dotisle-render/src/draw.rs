@@ -53,9 +53,9 @@ pub struct Text{
 impl Text{
     /// No bundled fonts: callers that must not depend on the executable's folder register their own.
     pub fn empty()->Self{Self{system_fonts:false,registered:vec![],family:"Google Sans Flex".into(),fonts:FontContext{collection:fontique::Collection::new(fontique::CollectionOptions{system_fonts:false,..Default::default()}),source_cache:Default::default()},context:LayoutContext::new(),cache:HashMap::new(),face_cache:HashMap::new(),resources:HashMap::new(),ink_cache:HashMap::new(),japanese:None}}
-    pub fn new()->Self{let mut text=Self::empty();let dir=Self::font_dir().join("Assets/Fonts");for name in LATIN_FONTS.iter().chain(["NotoSansSC.ttf","NotoSansJP.ttf","SpaceGrotesk.ttf","SpaceMono-Regular.ttf","Doto.ttf","FusionPixel12.ttf"].iter()){let _=text.register(&dir.join(name));}text}
+    pub fn new()->Self{let mut text=Self::empty();let dir=Self::font_dir().join("Assets/Fonts");for name in LATIN_FONTS.iter().chain(["NotoSansSC.ttf","NotoSansJP.ttf","SpaceGrotesk.ttf","SpaceMono-Regular.ttf","Doto.ttf","FusionPixel12.ttf","SourceSerif4.ttf","NotoSerifSC.ttf"].iter()){let _=text.register(&dir.join(name));}text}
     /// Register the primary fonts now; layout registers Japanese on first use.
-    pub fn new_lazy_japanese()->Self{let mut text=Self::empty();let base=Self::font_dir();for name in LATIN_FONTS.iter().chain(["NotoSansSC.ttf","SpaceGrotesk.ttf","SpaceMono-Regular.ttf","Doto.ttf","FusionPixel12.ttf"].iter()){let _=text.register(&base.join("Assets/Fonts").join(name));}text.japanese=Some(base.join("Assets/Fonts/NotoSansJP.ttf"));text}
+    pub fn new_lazy_japanese()->Self{let mut text=Self::empty();let base=Self::font_dir();for name in LATIN_FONTS.iter().chain(["NotoSansSC.ttf","SpaceGrotesk.ttf","SpaceMono-Regular.ttf","Doto.ttf","FusionPixel12.ttf","SourceSerif4.ttf","NotoSerifSC.ttf"].iter()){let _=text.register(&base.join("Assets/Fonts").join(name));}text.japanese=Some(base.join("Assets/Fonts/NotoSansJP.ttf"));text}
     fn font_dir()->std::path::PathBuf{std::env::current_exe().ok().and_then(|p|p.parent().map(std::path::Path::to_path_buf)).filter(|p|p.join("Assets/Fonts").is_dir()).unwrap_or_else(||std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."))}
     /// Load the deferred Japanese fallback. Safe to call repeatedly; a missing file
     /// only leaves the system-font fallback in place.
@@ -209,11 +209,18 @@ impl Text{
         self.draw(scene,text,r.x0+(r.width()-width.min(r.width()-8.))/2.,r.y0+(r.height()-size as f64*1.35)/2.,size,rgb,bold,r.width()-8.);
     }
 }
-pub fn fill(scene:&mut Scene,r:Rect,radius:f64,rgb:u32){scene.fill(Fill::NonZero,Affine::IDENTITY,color(rgb),None,&RoundedRect::from_rect(r,radius));}
-pub fn outline(scene:&mut Scene,r:Rect,radius:f64,rgb:u32,width:f64){scene.stroke(&Stroke::new(width),Affine::IDENTITY,color(rgb),None,&RoundedRect::from_rect(r,radius));}
+/// G2 continuous corners meet the straight edge with zero curvature.
+pub fn continuous_rect(r:Rect,radius:f64)->BezPath{
+ let radius=if radius.is_finite(){radius.max(0.).min(r.width().max(0.)/2.).min(r.height().max(0.)/2.)}else{0.};let mut p=BezPath::new();
+ if radius<=0.001{p.move_to((r.x0,r.y0));p.line_to((r.x1,r.y0));p.line_to((r.x1,r.y1));p.line_to((r.x0,r.y1));p.close_path();return p}
+ let a=radius;let corner=|p:&mut BezPath,cx:f64,cy:f64,xx:f64,xy:f64,yx:f64,yy:f64|{let pt=|x:f64,y:f64|(cx+(xx*x+yx*y)*a,cy+(xy*x+yy*y)*a);p.curve_to(pt(0.62,0.),pt(0.40,0.),pt(0.20,0.20));p.curve_to(pt(0.,0.40),pt(0.,0.62),pt(0.,1.));};
+ p.move_to((r.x1-a,r.y0));corner(&mut p,r.x1,r.y0,-1.,0.,0.,1.);p.line_to((r.x1,r.y1-a));corner(&mut p,r.x1,r.y1,0.,-1.,-1.,0.);p.line_to((r.x0+a,r.y1));corner(&mut p,r.x0,r.y1,1.,0.,0.,-1.);p.line_to((r.x0,r.y0+a));corner(&mut p,r.x0,r.y0,0.,1.,1.,0.);p.close_path();p
+}
+pub fn fill(scene:&mut Scene,r:Rect,radius:f64,rgb:u32){scene.fill(Fill::NonZero,Affine::IDENTITY,color(rgb),None,&continuous_rect(r,radius));}
+pub fn outline(scene:&mut Scene,r:Rect,radius:f64,rgb:u32,width:f64){scene.stroke(&Stroke::new(width),Affine::IDENTITY,color(rgb),None,&continuous_rect(r,radius));}
 pub fn circle(scene:&mut Scene,x:f64,y:f64,r:f64,rgb:u32){scene.fill(Fill::NonZero,Affine::IDENTITY,color(rgb),None,&Circle::new((x,y),r));}
 pub fn line(scene:&mut Scene,a:(f64,f64),b:(f64,f64),rgb:u32,width:f64){scene.stroke(&Stroke::new(width),Affine::IDENTITY,color(rgb),None,&Line::new(a,b));}
-pub fn image(scene:&mut Scene,img:&ImageData,r:Rect,radius:f64){scene.push_clip_layer(Affine::IDENTITY,&RoundedRect::from_rect(r,radius));let scale=(r.width()/img.width as f64).max(r.height()/img.height as f64);let tr=Affine::translate((r.center().x-img.width as f64*scale/2.,r.center().y-img.height as f64*scale/2.))*Affine::scale(scale);scene.draw_image(&vello::peniko::ImageBrush::from(img.clone()),tr);scene.pop_layer();}
+pub fn image(scene:&mut Scene,img:&ImageData,r:Rect,radius:f64){scene.push_clip_layer(Affine::IDENTITY,&continuous_rect(r,radius));let scale=(r.width()/img.width as f64).max(r.height()/img.height as f64);let tr=Affine::translate((r.center().x-img.width as f64*scale/2.,r.center().y-img.height as f64*scale/2.))*Affine::scale(scale);scene.draw_image(&vello::peniko::ImageBrush::from(img.clone()),tr);scene.pop_layer();}
 pub fn ring(scene:&mut Scene,c:(f64,f64),radius:f64,progress:f64,rgb:u32,width:f64){
     let mut p=BezPath::new();let n=(progress.clamp(0.,1.)*180.).ceil()as usize;if n==0{return}
     for i in 0..=n{let a=-std::f64::consts::FRAC_PI_2+progress*std::f64::consts::TAU*i as f64/n as f64;let pt=(c.0+a.cos()*radius,c.1+a.sin()*radius);if i==0{p.move_to(pt)}else{p.line_to(pt)}}
@@ -262,4 +269,9 @@ fn legacy_icon(scene:&mut Scene,kind:Icon,x:f64,y:f64,size:f64,rgb:u32){
     scene.stroke(&Stroke::new(1.8).with_caps(vello::kurbo::Cap::Round).with_join(vello::kurbo::Join::Round),tr,color(rgb),None,&p);
     let mut round=|cx,cy,r|scene.stroke(&Stroke::new(1.8),tr,color(rgb),None,&Circle::new((cx,cy),r));
     match kind{Icon::Music=>{round(6.5,17.5,3.5);round(16.5,15.5,3.5)},Icon::Focus=>round(12.,14.,8.),Icon::Sun=>round(12.,12.,4.),Icon::Settings=>round(12.,12.,3.4),Icon::Search=>round(10.5,10.5,6.5),_=>{}}
+}
+
+#[cfg(test)]mod continuous_tests{use super::*;use vello::kurbo::{PathEl,Shape};
+ #[test]fn corners_have_straight_tangents_and_match_curvature_at_midpoint(){let p=continuous_rect(rect(0.,0.,200.,100.),24.);let els=p.elements();let(PathEl::MoveTo(a),PathEl::CurveTo(b,c,d),PathEl::CurveTo(e,f,g))=(els[0],els[1],els[2])else{panic!("expected two cubic segments per corner")};assert_eq!(a.y,b.y);assert_eq!(b.y,c.y);assert_eq!(e.x,f.x);assert_eq!(f.x,g.x);let v1=d-c;let v2=e-d;assert!((v1-v2).hypot()<1e-9);let k1=v1.cross((d-c)-(c-b))/v1.hypot().powi(3);let k2=v2.cross((f-e)-(e-d))/v2.hypot().powi(3);assert!((k1-k2).abs()<1e-9);assert_eq!(p.bounding_box(),rect(0.,0.,200.,100.));}
+ #[test]fn radius_clamps_to_small_edges_and_invalid_input_is_square(){for radius in [0.,4.,200.,f64::NAN]{let p=continuous_rect(rect(4.,6.,20.,12.),radius);let b=p.bounding_box();assert_eq!(b,rect(4.,6.,20.,12.));assert!(p.elements().iter().all(|e|match e{PathEl::MoveTo(p)|PathEl::LineTo(p)=>p.x.is_finite()&&p.y.is_finite(),PathEl::CurveTo(a,b,c)=>[a,b,c].iter().all(|p|p.x.is_finite()&&p.y.is_finite()),_=>true}));}}
 }

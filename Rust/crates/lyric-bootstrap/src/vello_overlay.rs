@@ -264,7 +264,7 @@ fn compose(scene: &mut Scene, text: &mut Text, look: &Look, state: &OverlayState
         let (centre, radius) = if card_h < 180. { update_card::ring_center(card_h) } else { ((card_w / 2., 72.), 24.) };
         draw::icon(&mut content, Icon::Check, centre.0 - radius * 0.42, centre.1 - radius * 0.42, radius * 0.84, 0x9bd5ae);
     }
-    let shape = RoundedRect::from_rect(vello::kurbo::Rect::new(card_x, card_y, card_x + card_w, card_y + card_h), look.radius);
+    let shape = draw::continuous_rect(vello::kurbo::Rect::new(card_x, card_y, card_x + card_w, card_y + card_h), look.radius);
     scene.push_layer(Mix::Normal, 1., Affine::IDENTITY, &shape);
     scene.append(&content, Some(Affine::translate((card_x, card_y))));
     scene.pop_layer();
@@ -281,11 +281,12 @@ fn paint_background(scene: &mut Scene, look: &Look) {
     let card = vello::kurbo::Rect::new(card_x, card_y, card_x + card_w, card_y + card_h);
     scene.draw_blurred_rounded_rect(Affine::translate((0., 5.)), card, draw::color(0x38000000), look.radius, 22. / 3.);
     let gradient = Gradient::new_linear((card_x, card_y), (card_x, card_y + card_h)).with_stops([draw::color(0xff1b1f25), draw::color(0xff0c0f14)]);
-    scene.fill(vello::peniko::Fill::NonZero, Affine::IDENTITY, &gradient, None, &RoundedRect::from_rect(card, look.radius));
+    scene.fill(vello::peniko::Fill::NonZero, Affine::IDENTITY, &gradient, None, &draw::continuous_rect(card, look.radius));
     let frost = Gradient::new_linear((card_x, card_y), (card_x, card_y + card_h)).with_stops([draw::alpha(0xffffff, 15. / 255.), draw::alpha(0xffffff, 0.)]);
-    scene.fill(vello::peniko::Fill::NonZero, Affine::IDENTITY, &frost, None, &RoundedRect::from_rect(card, look.radius));
+    scene.fill(vello::peniko::Fill::NonZero, Affine::IDENTITY, &frost, None, &draw::continuous_rect(card, look.radius));
     let edge = vello::kurbo::Rect::new(card_x + 0.5, card_y + 0.5, card_x + card_w - 1., card_y + card_h - 1.);
-    draw::outline(scene, edge, (look.radius - 0.5).max(0.), 0x12ffffff, 0.8);
+    // The acrylic island has no bright perimeter; the exported plane supplies glass edges.
+    let _ = edge;
     let _ = logical_w;
     let _ = logical_h;
 }

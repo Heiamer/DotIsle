@@ -1,4 +1,6 @@
 //! UI-independent application services. Persistence errors are surfaced to callers.
+pub mod desktop_widgets;
+pub mod card_ring;
 pub mod todos;
 pub mod timers;
 pub mod preferences;

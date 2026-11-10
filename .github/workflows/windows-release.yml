@@ -9,7 +9,7 @@ on:
       version:
         description: Release version without the leading v
         required: true
-        default: "3.2.7"
+        default: "3.5.0-rc1"
       publish:
         description: Publish the release instead of leaving a draft
         type: boolean
@@ -48,8 +48,9 @@ jobs:
         run: |
           $version='${{ inputs.version }}'
           if(-not $version){$version='${{ github.ref_name }}'.TrimStart('v')}
-          if($version -notmatch '^\d+\.\d+\.\d+$'){throw "Invalid version $version"}
+          if($version -notmatch '^\d+\.\d+\.\d+(-rc[1-9]\d*)?$'){throw "Invalid version $version"}
           "VERSION=$version" >> $env:GITHUB_ENV
+          "PRERELEASE=$($version.Contains('-rc').ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
 
       - name: Verify release source, version and licenses
         run: python build/verify_release_source.py --version $env:VERSION --report validation/source/report.json
@@ -149,7 +150,9 @@ jobs:
           $tag="v$env:VERSION"
           gh release view $tag --json isDraft,isPrerelease,assets 2>$null
           if($LASTEXITCODE -eq 0){throw "Release $tag already exists; inspect it before replacement"}
-          gh release create $tag --target $env:GITHUB_SHA --draft --title "点屿 DotIsle $env:VERSION" --notes-file "release-notes/DotIsle-$env:VERSION-Notes.md"
+          $releaseArgs=@('release','create',$tag,'--target',$env:GITHUB_SHA,'--draft','--title',"点屿 DotIsle $env:VERSION",'--notes-file',"release-notes/DotIsle-$env:VERSION-Notes.md")
+          if($env:PRERELEASE -eq 'true'){$releaseArgs+='--prerelease'}
+          gh @releaseArgs
           if($LASTEXITCODE -ne 0){throw 'Draft release creation failed'}
           $files=@(Get-ChildItem 'publish/release-output' -File | ForEach-Object FullName)
           gh release upload $tag @files
@@ -161,7 +164,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag="v$env:VERSION"
-          gh release edit $tag --draft=false --latest
+          if($env:PRERELEASE -eq 'true'){
+            gh release edit $tag --draft=false --prerelease=true --latest=false
+          }else{
+            gh release edit $tag --draft=false --prerelease=false --latest
+          }
           if($LASTEXITCODE -ne 0){throw 'Release publish failed'}
 
       - name: Save packages and verification for inspection
