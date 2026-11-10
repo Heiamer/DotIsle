@@ -50,6 +50,7 @@ impl Model{
     }
     fn connect(&mut self){self.remote=Some(crate::remote::Remote::new(self.data.clone()));}
     pub fn native_command(&self,name:&str,value:Value){if let Some(r)=&self.remote{r.command(name,value);}}
+    pub(crate) fn timer_action_value(&self,id:&str,action:&str)->Option<Value>{self.timers.items.iter().find(|t|t.id==id).map(|t|json!({"id":id,"action":action,"revision":t.revision}))}
     pub(crate) fn native_update(&self,key:&str,value:Value){self.native_command("update",json!({"key":key,"value":value}));}
     fn native_tick(&mut self)->bool{
         let packets=self.remote.as_ref().map(|r|r.recv.try_iter().collect::<Vec<_>>()).unwrap_or_default();let changed=!packets.is_empty();
@@ -74,7 +75,7 @@ impl Model{
     fn remote_action(&mut self,a:&Action)->bool{
         match a{
             Action::SourceToggle(id)=>{let mut ignored=self.native_state["settings"]["IgnoredSources"].as_array().cloned().unwrap_or_else(||vec![json!("Browser")]);if ignored.iter().any(|v|v==id){ignored.retain(|v|v!=id);}else{ignored.push(json!(id));}self.native_update("IgnoredSources",json!(ignored));},Action::NativeEdit(key,value)=>self.native_update(key,value.clone()),Action::NativeCommand(name,value)=>{if *name=="soundSelect"{self.details[..3].fill(false);self.scroll=0.;}self.native_command(name,value.clone());},
-            Action::Media(name)=>self.native_command("media",json!({"action":name})),Action::Timer(id,action)=>self.native_command("timerAction",json!({"id":id,"action":action})),
+            Action::Media(name)=>self.native_command("media",json!({"action":name})),Action::Timer(id,action)=>{if let Some(value)=self.timer_action_value(id,action){self.native_command("timerAction",value);}},
             Action::StartTimer=>{if self.mode==3{self.start_workflow();}else{let mode=["pomodoro","countdown","stopwatch"][self.mode.min(2)as usize];self.native_command("timerCreate",json!({"mode":mode,"duration":self.timer_seconds.unwrap_or(self.minutes*60),"focus":self.timer_seconds.unwrap_or(self.minutes*60),"rest":self.rest_seconds,"rounds":self.timer_rounds}));}},
             Action::ToggleTodo(id)=>{let done=self.todos.items.iter().find(|t|&t.id==id).is_some_and(|t|t.done(&todos::Now::local()));self.native_command("todoComplete",json!({"id":id,"completed":!done}));},Action::DeleteTodo(id)=>{self.undo=self.todos.items.iter().find(|t|&t.id==id).cloned();self.native_command("todoDelete",json!({"id":id}));},Action::Undo=>{if let Some(t)=self.undo.take(){self.native_command("todoRestore",json!(t));}},
             Action::CloudExpand=>self.native_command("expand",Value::Null),Action::CloudTab(tab)=>self.native_command("islandSelect",json!(if *tab==0{"music"}else{"todos"})),

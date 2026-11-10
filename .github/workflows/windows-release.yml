@@ -14,6 +14,10 @@ on:
         description: Publish the release instead of leaving a draft
         type: boolean
         default: false
+      verify_only:
+        description: Build and verify artifacts without creating a release
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -94,7 +98,11 @@ jobs:
         run: |
           $out=Join-Path $pwd 'publish/release-output'
           New-Item -ItemType Directory -Force $out | Out-Null
+          if ('${{ inputs.verify_only }}' -eq 'true') {
+            Copy-Item release-notes/DotIsle-Pomodoro-Fix-Notes.md "$out/DotIsle-$env:VERSION-Notes.md"
+          } else {
           Copy-Item "release-notes/DotIsle-$env:VERSION-Notes.md" $out
+          }
           python build/package_release.py --binary-dir "$pwd/target/release" --output $out --work-dir "$env:RUNNER_TEMP/package" --iscc $env:INNO_SETUP_COMPILER --version $env:VERSION --shader-cache "$pwd/Assets/ShaderCache/Hybrid29"
           if($LASTEXITCODE -ne 0){throw 'Packaging failed'}
           git archive --format=zip --prefix="DotIsle-$env:VERSION-Source/" -o "$out/DotIsle-$env:VERSION-Source.zip" HEAD
@@ -134,6 +142,7 @@ jobs:
           }
 
       - name: Create draft release and upload artifacts
+        if: ${{ !inputs.verify_only }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -147,7 +156,7 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Release upload failed'}
 
       - name: Publish release when requested
-        if: ${{ github.event_name == 'push' || inputs.publish }}
+        if: ${{ !inputs.verify_only && (github.event_name == 'push' || inputs.publish) }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

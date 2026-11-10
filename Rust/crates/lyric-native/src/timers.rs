@@ -45,9 +45,15 @@ impl Timer{
    if self.elapsed_ms>=limit{self.elapsed_ms=limit;self.running=false;if let Some(w)=&mut self.workflow{w.waiting=true;}self.revision+=1;return true}
    return false
   }
-  self.elapsed_ms=self.elapsed_ms.saturating_add(ms);if self.mode=="stopwatch"{return false}let mut changed=false;
-  while self.elapsed_ms>=self.limit_ms(){let limit=self.limit_ms();self.elapsed_ms-=limit;changed=true;if self.mode!="pomodoro"||(self.phase=="focus"&&self.round>=self.rounds){self.running=false;self.finished=true;self.elapsed_ms=limit;break}if self.phase=="focus"{self.phase="rest".into()}else{self.phase="focus".into();self.round+=1;}}
-  if changed{self.revision+=1;}changed
+  self.elapsed_ms=self.elapsed_ms.saturating_add(ms);if self.mode=="stopwatch"{return false}
+  let limit=self.limit_ms();if self.elapsed_ms<limit{return false}
+  if self.mode!="pomodoro"||(self.phase=="focus"&&self.round>=self.rounds){self.running=false;self.finished=true;self.elapsed_ms=limit;}
+  else{
+   // Only the phase that was running can finish. Start the next phase now,
+   // with its full duration; a delayed tick must never consume an unseen rest.
+   self.elapsed_ms=0;if self.phase=="focus"{self.phase="rest".into()}else{self.phase="focus".into();self.round+=1;}
+  }
+  self.revision+=1;true
  }
  fn finish_workflow(&mut self){self.finished=true;self.running=false;self.pause_reason=None;if let Some(w)=&mut self.workflow{w.waiting=false;}self.elapsed_ms=self.limit_ms();self.revision+=1}
 }
@@ -168,7 +174,13 @@ impl Templates{
  fn store()->Store{Store::new(PathBuf::new())}
  fn stages()->Value{json!([{"name":"整理","seconds":600},{"name":"学习","seconds":1500},{"name":"休息","seconds":300}])}
  #[test]fn pause_resume_and_countdown_complete_exactly_once(){let mut s=store();let id=s.create(&json!({"mode":"countdown","duration":2})).unwrap();s.advance(900);s.action(&id,"toggle").unwrap();s.advance(5000);assert_eq!(s.items[0].clock(),"00:02");s.action(&id,"toggle").unwrap();assert_eq!(s.advance(1100).len(),1);assert!(s.advance(5000).is_empty());assert_eq!(s.items[0].clock(),"00:00");}
- #[test]fn pomodoro_handles_a_sleep_sized_gap_without_alert_flood(){let mut s=store();s.create(&json!({"mode":"pomodoro","focus":2,"rest":1,"rounds":3})).unwrap();assert_eq!(s.advance(7000).len(),1);assert_eq!(s.items[0].round,3);assert_eq!(s.items[0].phase,"focus");assert!(!s.items[0].finished);assert_eq!(s.advance(1000).len(),1);assert!(s.items[0].finished);}
+ #[test]fn pomodoro_sleep_gap_starts_a_full_rest_instead_of_skipping_it(){
+  let mut s=store();s.create(&json!({"mode":"pomodoro","focus":2,"rest":1,"rounds":3})).unwrap();
+  let events=s.advance(7000);assert_eq!(events.len(),1);assert_eq!(events[0].phase,"rest");
+  assert_eq!(s.items[0].round,1);assert_eq!(s.items[0].elapsed_ms,0);assert_eq!(s.items[0].clock(),"00:01");assert!(s.items[0].running&&!s.items[0].finished);
+  assert!(s.advance(999).is_empty());assert_eq!(s.items[0].phase,"rest");
+  assert_eq!(s.advance(1).len(),1);assert_eq!(s.items[0].phase,"focus");assert_eq!(s.items[0].round,2);assert_eq!(s.items[0].elapsed_ms,0);
+ }
  #[test]fn concurrent_clocks_keep_independent_state_and_validate_input(){let mut s=store();let id=s.create(&json!({"mode":"stopwatch"})).unwrap();s.create(&json!({"duration":5})).unwrap();s.advance(5000);assert_eq!(s.items[0].clock(),"00:05");assert!(s.items[1].finished);s.action(&id,"reset").unwrap();assert_eq!(s.items[0].clock(),"00:00");assert!(s.create(&json!({"duration":0})).is_err());assert!(s.create(&json!({"rounds":17})).is_err());}
  #[test]fn todo_link_persists_and_invalid_ids_are_rejected(){let p=std::env::temp_dir().join(format!("LyricIsland.TimerLink.{}.{}.json",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));let mut s=Store::new(p.clone());let id=s.create(&json!({"mode":"pomodoro","focus":2,"name":"整理产品方案","todoId":"todo-123"})).unwrap();assert!(s.create(&json!({"todoId":"bad id!"})).is_err());let s=Store::new(p.clone());assert_eq!(s.items.iter().find(|t|t.id==id).and_then(|t|t.todo_id.as_deref()),Some("todo-123"));let _=std::fs::remove_file(p);}
  #[test]fn workflow_waits_after_each_stage_even_across_a_sleep_gap(){let mut s=store();let id=s.create(&json!({"mode":"workflow","name":"学习流程","stages":stages()})).unwrap();assert_eq!(s.items[0].clock(),"10:00");assert!(s.advance(599000).is_empty());assert_eq!(s.advance(1000).len(),1);assert!(s.items[0].workflow.as_ref().unwrap().waiting);assert!(!s.items[0].running);assert_eq!(s.items[0].clock(),"00:00");assert!(s.advance(24*60*60*1000).is_empty());assert_eq!(s.items[0].workflow.as_ref().unwrap().stage_index,0);let revision=s.items[0].revision;s.act(&id,"next",Some(revision)).unwrap();assert_eq!(s.items[0].workflow.as_ref().unwrap().stage_index,1);assert_eq!(s.items[0].clock(),"25:00");assert!(s.items[0].running);}
@@ -191,4 +203,31 @@ impl Templates{
 #[cfg(test)]mod island_presentation_tests{use super::*;
 #[test]fn island_actions_match_finished_and_waiting_states(){let mut s=Store::new(PathBuf::new());let id=s.create(&json!({"duration":1})).unwrap();s.advance(1000);assert_eq!(s.items[0].primary_action(),"restart");s.action(&id,"restart").unwrap();assert!(s.items[0].running&&!s.items[0].finished);assert_eq!(s.items[0].elapsed_ms,0);let flow=s.create(&json!({"mode":"workflow","stages":[{"name":"a","seconds":60},{"name":"b","seconds":60}]})).unwrap();s.advance(60000);assert_eq!(s.items[1].primary_action(),"next");s.action(&flow,"next").unwrap();assert_eq!(s.items[1].workflow.as_ref().unwrap().stage_index,1);}
 #[test]fn stopwatch_expansion_shares_a_single_fractional_readout(){let mut s=Store::new(PathBuf::new());s.create(&json!({"mode":"stopwatch"})).unwrap();s.advance(3830);let panel=s.items[0].panel();assert_eq!(panel.value,"00:03");let detail=panel.timer.unwrap();assert_eq!(detail.expanded_value,"00:03.83");assert!(detail.indefinite);assert_eq!(detail.primary,"暂停");}
+}
+
+#[cfg(test)]mod phase_regression_tests{use super::*;
+ #[test]fn delayed_rest_cannot_consume_the_next_focus(){
+  let mut s=Store::new(PathBuf::new());s.create(&json!({"mode":"pomodoro","focus":2,"rest":1,"rounds":3})).unwrap();s.advance(2000);
+  let events=s.advance(u64::MAX);assert_eq!(events.len(),1);assert_eq!(events[0].phase,"focus");assert_eq!(s.items[0].round,2);assert_eq!(s.items[0].elapsed_ms,0);assert_eq!(s.items[0].clock(),"00:02");assert!(!s.items[0].finished);
+ }
+ #[test]fn all_rounds_keep_their_full_phases_and_finish_once(){
+  for count_up in [false,true]{let mut s=Store::new(PathBuf::new());s.create(&json!({"mode":"pomodoro","focus":2,"rest":1,"rounds":4,"countUp":count_up})).unwrap();
+   for round in 1..=4{assert_eq!(s.items[0].round,round);assert_eq!(s.items[0].phase,"focus");assert_eq!(s.items[0].elapsed_ms,0);assert!(s.advance(1999).is_empty());assert_eq!(s.advance(1).len(),1);
+    if round<4{assert_eq!(s.items[0].phase,"rest");assert_eq!(s.items[0].round,round);assert_eq!(s.items[0].elapsed_ms,0);assert!(s.advance(999).is_empty());assert_eq!(s.advance(1).len(),1);}
+   }assert!(s.items[0].finished&&!s.items[0].running);assert_eq!(s.items[0].elapsed_ms,2000);assert!(s.advance(u64::MAX).is_empty());
+  }
+ }
+ #[test]fn late_tick_does_not_shorten_rest_or_other_clocks(){
+  let mut s=Store::new(PathBuf::new());s.create(&json!({"mode":"pomodoro","focus":2,"rest":1})).unwrap();s.create(&json!({"mode":"countdown","duration":10})).unwrap();s.create(&json!({"mode":"stopwatch"})).unwrap();
+  assert_eq!(s.advance(2450).len(),1);assert_eq!(s.items[0].phase,"rest");assert_eq!(s.items[0].elapsed_ms,0);assert_eq!(s.items[1].elapsed_ms,2450);assert_eq!(s.items[2].elapsed_ms,2450);
+  assert!(s.advance(999).is_empty());assert_eq!(s.items[0].phase,"rest");assert_eq!(s.advance(1).len(),1);assert_eq!(s.items[0].round,2);
+ }
+ #[test]fn rest_pause_and_display_direction_preserve_the_phase(){
+  let mut s=Store::new(PathBuf::new());let id=s.create(&json!({"mode":"pomodoro","focus":2,"rest":1})).unwrap();s.advance(7000);s.advance(400);s.action(&id,"pause").unwrap();assert!(s.advance(u64::MAX).is_empty());s.set_direction(&id,true,None).unwrap();s.action(&id,"resume").unwrap();
+  assert_eq!(s.items[0].phase,"rest");assert_eq!(s.items[0].elapsed_ms,400);assert!(s.advance(599).is_empty());assert_eq!(s.advance(1).len(),1);assert_eq!(s.items[0].round,2);assert_eq!(s.items[0].elapsed_ms,0);
+ }
+ #[test]fn duplicate_skip_cannot_skip_the_new_rest_stage(){
+  let mut s=Store::new(PathBuf::new());let id=s.create(&json!({"mode":"workflow","stages":[{"name":"学习","seconds":60},{"name":"休息","seconds":60},{"name":"学习","seconds":60}]})).unwrap();let revision=s.items[0].revision;
+  s.act(&id,"skip",Some(revision)).unwrap();assert!(s.act(&id,"skip",Some(revision)).is_err());assert_eq!(s.items[0].workflow.as_ref().unwrap().stage_index,1);assert_eq!(s.items[0].elapsed_ms,0);assert_eq!(s.items[0].clock(),"01:00");
+ }
 }

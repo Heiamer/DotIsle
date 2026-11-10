@@ -72,7 +72,7 @@ struct App {
     compact_size:compact::Resize,compact_key:String,last_compact:Instant,todos:todos::Store,todo_now:todos::Now,last_schedule:Instant,history:history::Store,last_history_prune:Instant,queue:std::collections::VecDeque<Queued>,pending_page:Option<String>,
     updates:update_activity::Hub,update_return:String,update_until:Option<Instant>,
     devices:devices::Hub,
-    timers:timers::Store,selected:String,components:Vec<String>,panel:Option<activities::Panel>,previous_panel:Option<activities::Panel>,drag_panel:Option<activities::Panel>,drag_target:String,slide_outgoing:bool,switching:bool,slide:activities::Spring,slide_direction:f64,swipe:Option<activities::Swipe>,hide_drag:Option<gestures::HideDrag>,dismiss_offset:activities::Spring,last_timer:Instant,timer_fraction:u128,last_checkpoint:Instant,
+    timers:timers::Store,selected:String,components:Vec<String>,panel:Option<activities::Panel>,previous_panel:Option<activities::Panel>,drag_panel:Option<activities::Panel>,drag_target:String,slide_outgoing:bool,switching:bool,slide:activities::Spring,slide_direction:f64,swipe:Option<activities::Swipe>,hide_drag:Option<gestures::HideDrag>,dismiss_offset:activities::Spring,last_timer:Instant,last_tick:Instant,timer_fraction:u128,last_checkpoint:Instant,
     cursor_inside:bool,leave_at:Option<Instant>,last_left:bool,user_hidden:bool,display_wanted:bool,missing_since:Option<Instant>,manual_until:Option<Instant>,
     opacity:f64,fade_from:f64,fade_to:f64,fade_start:Instant,hide_at:Option<Instant>,dirty:bool,
     /// When the steady playback loop last drew. See `frame_pacing::CONTINUOUS_FPS`.
@@ -115,7 +115,7 @@ impl App {
         let music_mix=layout::MusicLayout::from_setting(settings["MusicExpandedLayout"].as_str().unwrap_or("")).position();
         let mut layout=Layout::new(settings["CompactWidth"].as_f64().unwrap_or(260.));layout.card.h=layout::music_height(music_mix,settings["FontSize"].as_f64().unwrap_or(12.5));
         let updates=update_activity::Hub::new(&data);
-        Self{mini_contrast:Default::default(),bottom_osd:bottom_osd::Overlay::new(),updates,update_return:"music".into(),update_until:None,banner:banner::Banner::default(),osd_banner:banner::Banner::default(),osd:osd::Hub::default(),pending_osd:0,notification_preview:false,banner_todo:None,notification_listener,notification_state:json!({"access":"disabled","message":"通知提醒已关闭","apps":[]}),hwnd:HWND::default(),visual_hwnd:HWND::default(),input_region:None,dragging:None,renderer:None,base,data,layout,settings,backend,_server:None,snapshot,cover_rx:None,cover_version:0,demo,frame:Frame::hidden(options),transition:None,transition_start:now,sampled_ms:0.,music_controls:lyric_core::shared_motion::Spring::new(0.),play_shape:lyric_core::shared_motion::Spring::new(0.),feedback:[lyric_core::shared_motion::Spring::new(0.);64],feedback_moving:false,last_dynamic_system:None,expanded:false,held:false,hover_since:now,tooltip_visible:false,hover:0,pressed:0,seeking:false,seek_fraction:0.,seek_track:String::new(),seek_confirm:false,command_busy:Arc::new(std::sync::atomic::AtomicBool::new(false)),start:now,last_poll:now-Duration::from_secs(1),last_visible:now,lyric:"打开播放器，开始一首音乐".into(),previous_lyric:String::new(),compact_secondary:String::new(),previous_compact_secondary:String::new(),lyric_start:now-Duration::from_secs(2),compact_size,compact_key:String::new(),last_compact:now,todos,todo_now,last_schedule:now,history,last_history_prune:now,queue:std::collections::VecDeque::new(),pending_page:None,devices:devices::Hub::default(),timers,selected:"music".into(),components:vec!["music".into()],panel:None,previous_panel:None,drag_panel:None,drag_target:String::new(),slide_outgoing:false,switching:false,slide:activities::Spring::default(),slide_direction:1.,swipe:None,hide_drag:None,dismiss_offset:activities::Spring::default(),last_timer:now,timer_fraction:0,last_checkpoint:now,cursor_inside:false,leave_at:None,last_left:false,user_hidden:false,display_wanted:demo,missing_since:None,manual_until:None,opacity:if demo{1.}else{0.},fade_from:0.,fade_to:if demo{1.}else{0.},fade_start:now,hide_at:None,dirty:true,continuous_last:now-Duration::from_secs(1),settings_process:None,renderer_generation:0,render_frames:0,error:None,transparent:false,activity:motion::Activity::new(),cover_start:now-Duration::from_secs(1),progress:progress::PlaybackProgress::default(),outgoing_opacity:1.,outgoing_y:0.,music_mix,music_from:music_mix,music_start:now,last_notice:None,acrylic_preview:json!({}),compact_stability:compact::Stability::default(),quick:vec![],quick_commits:vec![],pending_action:None,templates,rules,foreground,usage_date,last_awake:awake_ms(),last_rules_checkpoint:now,lock_generation:0,session_locked:false,focus_resume:None}
+        Self{mini_contrast:Default::default(),bottom_osd:bottom_osd::Overlay::new(),updates,update_return:"music".into(),update_until:None,banner:banner::Banner::default(),osd_banner:banner::Banner::default(),osd:osd::Hub::default(),pending_osd:0,notification_preview:false,banner_todo:None,notification_listener,notification_state:json!({"access":"disabled","message":"通知提醒已关闭","apps":[]}),hwnd:HWND::default(),visual_hwnd:HWND::default(),input_region:None,dragging:None,renderer:None,base,data,layout,settings,backend,_server:None,snapshot,cover_rx:None,cover_version:0,demo,frame:Frame::hidden(options),transition:None,transition_start:now,sampled_ms:0.,music_controls:lyric_core::shared_motion::Spring::new(0.),play_shape:lyric_core::shared_motion::Spring::new(0.),feedback:[lyric_core::shared_motion::Spring::new(0.);64],feedback_moving:false,last_dynamic_system:None,expanded:false,held:false,hover_since:now,tooltip_visible:false,hover:0,pressed:0,seeking:false,seek_fraction:0.,seek_track:String::new(),seek_confirm:false,command_busy:Arc::new(std::sync::atomic::AtomicBool::new(false)),start:now,last_poll:now-Duration::from_secs(1),last_visible:now,lyric:"打开播放器，开始一首音乐".into(),previous_lyric:String::new(),compact_secondary:String::new(),previous_compact_secondary:String::new(),lyric_start:now-Duration::from_secs(2),compact_size,compact_key:String::new(),last_compact:now,todos,todo_now,last_schedule:now,history,last_history_prune:now,queue:std::collections::VecDeque::new(),pending_page:None,devices:devices::Hub::default(),timers,selected:"music".into(),components:vec!["music".into()],panel:None,previous_panel:None,drag_panel:None,drag_target:String::new(),slide_outgoing:false,switching:false,slide:activities::Spring::default(),slide_direction:1.,swipe:None,hide_drag:None,dismiss_offset:activities::Spring::default(),last_timer:now,last_tick:now,timer_fraction:0,last_checkpoint:now,cursor_inside:false,leave_at:None,last_left:false,user_hidden:false,display_wanted:demo,missing_since:None,manual_until:None,opacity:if demo{1.}else{0.},fade_from:0.,fade_to:if demo{1.}else{0.},fade_start:now,hide_at:None,dirty:true,continuous_last:now-Duration::from_secs(1),settings_process:None,renderer_generation:0,render_frames:0,error:None,transparent:false,activity:motion::Activity::new(),cover_start:now-Duration::from_secs(1),progress:progress::PlaybackProgress::default(),outgoing_opacity:1.,outgoing_y:0.,music_mix,music_from:music_mix,music_start:now,last_notice:None,acrylic_preview:json!({}),compact_stability:compact::Stability::default(),quick:vec![],quick_commits:vec![],pending_action:None,templates,rules,foreground,usage_date,last_awake:awake_ms(),last_rules_checkpoint:now,lock_generation:0,session_locked:false,focus_resume:None}
     }
     fn refresh_components(&mut self){
         let mut components=vec![];if self.updates.selectable(){components.push("update".into());}if self.demo||self.snapshot["track"].is_object(){components.push("music".to_string());}
@@ -149,7 +149,11 @@ impl App {
         else{self.slide.release(if self.flag("Animation",true){offset}else{0.},swipe.velocity);self.slide_outgoing=false;self.switching=self.flag("Animation",true);}
         self.drag_target.clear();self.drag_panel=None;self.pressed=0;self.dirty=true;true
     }
-    fn active_timer_action(&mut self,action:&str){if let Some(id)=self.selected.strip_prefix("timer:"){let action=if action=="toggle"{self.timers.items.iter().find(|t|t.id==id).map(|t|t.primary_action()).unwrap_or(action)}else{action};if let Err(e)=self.timers.action(id,action){self.error=Some(e);}self.refresh_components();self.dirty=true;}}
+    fn active_timer_action(&mut self,action:&str){
+        let Some(id)=self.selected.strip_prefix("timer:").map(str::to_owned)else{return};
+        let Some(t)=self.timers.items.iter().find(|t|t.id==id)else{return};let revision=t.revision;let action=if action=="toggle"{t.primary_action()}else{action};
+        self.advance_timers(Instant::now());if let Err(e)=self.timers.act(&id,action,Some(revision)){self.error=Some(e);}self.refresh_components();self.dirty=true;
+    }
     fn flag(&self,k:&str,default:bool)->bool{self.settings[k].as_bool().unwrap_or(default)}
     /// Prefer the single-file launcher when one extracted this copy: a versioned runtime folder
     /// changes on every update, so registering it would break login startup after the next release.
@@ -273,6 +277,7 @@ impl App {
     }
     fn on_lock(&mut self){
         if !self.flag("FocusPauseOnLock",false)||self.session_locked{return}
+        self.advance_timers(Instant::now());
         self.session_locked=true;self.lock_generation=self.lock_generation.wrapping_add(1);
         match self.timers.pause_for_lock(self.lock_generation){
             Ok(ids)if !ids.is_empty()=>self.focus_resume=Some(FocusResume{generation:self.lock_generation,ids,prompted:false}),
@@ -640,6 +645,15 @@ impl App {
             if self.osd_banner.visible(){let now=self.start.elapsed().as_secs_f64();let (r,rad)=self.shape();self.osd_banner.dismiss(r,rad,now,false);}
         }
     }
+    // Settle the old state before any clock mutation. The message queue runs
+    // before tick(), so applying its whole gap after resume/next would charge
+    // paused time to the new phase (or time before creation to a new timer).
+    fn advance_timers(&mut self,now:Instant){
+        let dt=now.saturating_duration_since(self.last_timer);self.last_timer=now;
+        let nanos=dt.as_nanos()+self.timer_fraction;self.timer_fraction=nanos%1_000_000;
+        let events=self.timers.advance((nanos/1_000_000).min(u64::MAX as u128)as u64);
+        if !events.is_empty(){for t in events{let notice=notifications::Notice{app_id:"LyricIsland.Timer".into(),app_name:"计时器".into(),title:t.name.clone(),body:if t.finished{"计时已完成".into()}else{t.subtitle()},icon:None};self.enqueue(Queued{notice:notice.clone(),todo:Some(format!("timer:{}",t.id)),chime:true});self.record_history("timer",&notice,None);}if let Err(e)=self.timers.persist(){self.error=Some(e);}}
+    }
     unsafe fn tick(&mut self)->Result<()> {
         if self.opacity>0.001{self.last_visible=Instant::now();}
         // Nothing has been on screen for ten minutes: return the whole wgpu +
@@ -658,7 +672,7 @@ impl App {
         let gates=devices::Gates{master:self.flag("DeviceRemindersEnabled",true)&&!self.flag("PauseNotifications",false),disconnect:self.flag("DeviceDisconnectRemindersEnabled",true),headphones:self.flag("HeadphoneConnectionRemindersEnabled",true),speaker:self.flag("SpeakerConnectionRemindersEnabled",true),gamepad:self.flag("GamepadConnectionRemindersEnabled",true),mouse:self.flag("MouseConnectionRemindersEnabled",true),keyboard:self.flag("KeyboardConnectionRemindersEnabled",true)};
         for event in self.devices.poll(&gates){let notice=event.notice();self.enqueue(Queued{notice:notice.clone(),todo:Some(format!("device:{}",event.key)),chime:true});self.record_history("device",&notice,None);}
         if self.flag("SystemStateHintsEnabled",true)&&!self.flag("PauseNotifications",false){for hint in self.osd.poll(true,true){self.show_osd(hint,false);}}else{self.osd.poll(false,false);}
-        let now=Instant::now();let dt=now.duration_since(self.last_timer);self.last_timer=now;
+        let now=Instant::now();let dt=now.duration_since(self.last_tick);self.last_tick=now;
         let adaptive=self.mini()&&self.settings["MiniMaterial"].as_str()==Some("Glass")&&self.flag("MiniAutoContrast",true);
         if !adaptive{self.mini_contrast.reset();}else if self.frame.card_reveal<0.05&&self.opacity>0.8&&!self.banner.visible()&&!self.osd_banner.visible(){self.mini_contrast.refresh(self.hwnd,self.layout.capsule);}
         if self.mini_contrast.tick(dt.as_secs_f64(),self.flag("Animation",true)){self.dirty=true;}
@@ -666,9 +680,7 @@ impl App {
         let before=self.dismiss_offset.value;
         if self.hide_drag.is_none(){if self.user_hidden&&self.opacity>0.001&&before<0.{self.dismiss_offset.set((before-dt.as_secs_f64()*180.).max(-150.));}else{self.dismiss_offset.tick(dt.as_secs_f64());}}
         if (before-self.dismiss_offset.value).abs()>0.01||self.hide_drag.is_some_and(|d|d.active){let mut rect=RECT::default();GetWindowRect(self.hwnd,&mut rect)?;let scale=GetDpiForWindow(self.hwnd).max(96)as f64/96.;SetWindowPos(self.visual_hwnd,None,rect.left,rect.top+(self.dismiss_offset.value*scale).round()as i32,0,0,SWP_NOACTIVATE|SWP_NOZORDER|SWP_NOSIZE)?;self.dirty=true;}
-        let nanos=dt.as_nanos()+self.timer_fraction;self.timer_fraction=nanos%1_000_000;
-        let events=self.timers.advance((nanos/1_000_000).min(u64::MAX as u128)as u64);
-        if !events.is_empty(){for t in events{let notice=notifications::Notice{app_id:"LyricIsland.Timer".into(),app_name:"计时器".into(),title:t.name.clone(),body:if t.finished{"计时已完成".into()}else{t.subtitle()},icon:None};self.enqueue(Queued{notice:notice.clone(),todo:Some(format!("timer:{}",t.id)),chime:true});self.record_history("timer",&notice,None);}if let Err(e)=self.timers.persist(){self.error=Some(e);}}
+        self.advance_timers(Instant::now());
         if self.last_checkpoint.elapsed()>=Duration::from_secs(15){if self.timers.items.iter().any(|t|t.running){let _=self.timers.persist();}self.last_checkpoint=Instant::now();}
         if self.last_history_prune.elapsed()>=Duration::from_secs(3600){self.last_history_prune=Instant::now();self.history.prune(self.settings["NotificationHistoryDays"].as_u64().unwrap_or(7).clamp(1,30)as u32,std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()as i64);}
         if let Some((version,result))=self.cover_rx.as_ref().and_then(|rx|rx.try_recv().ok()){
@@ -779,6 +791,7 @@ impl App {
     }
     unsafe fn request(&mut self,r:Value)->Value {
         if r["version"]!=1{return json!({"success":false,"message":"请求版本无效"})}let command=r["command"].as_str().unwrap_or("");
+        if matches!(command,"state"|"timerCreate"|"timerAction"|"focusResume"){self.advance_timers(Instant::now());}
         match command {
             "media"=>{let name=r["value"]["action"].as_str().unwrap_or("");if !["toggle","previous","next","seek"].contains(&name){return json!({"success":false,"message":"无效的播放操作"})}let seconds=r["value"]["seconds"].as_f64().unwrap_or(if name=="seek"{f64::NAN}else{0.});if !seconds.is_finite()||seconds<0.{return json!({"success":false,"message":"播放进度无效"})}if self.demo{if name=="seek"{self.snapshot["positionSeconds"]=json!(seconds);}return json!({"success":true})}match self.backend.as_ref().ok_or_else(||"播放服务尚未就绪".to_string()).and_then(|backend|backend.enqueue(name,seconds)){Ok(id)=>json!({"success":true,"commandId":id,"pending":true}),Err(message)=>json!({"success":false,"message":message})}},
             "todoRestore"=>{match self.todos.restore(&r["value"]){Ok(())=>json!({"success":true,"message":"已恢复待办"}),Err(e)=>json!({"success":false,"message":e})}},
@@ -1503,4 +1516,14 @@ fn island_presence_follows_need_not_switches(){assert!(island_needed(true,true,t
     let reply=a.request(json!({"version":1,"command":"media","value":{"action":"seek","seconds":72.5}}));assert_eq!(reply["success"],true);assert_eq!(a.snapshot["positionSeconds"],72.5);
     a.demo=false;assert_eq!(a.request(json!({"version":1,"command":"media","value":{"action":"seek","seconds":12.}}))["success"],false);
  }}
+}
+
+#[cfg(test)]mod timer_boundary_tests{use super::*;
+ fn app()->App{App::new(PathBuf::new(),PathBuf::new(),true)}
+ fn flow()->Value{json!({"mode":"workflow","stages":[{"name":"学习","seconds":60},{"name":"休息","seconds":60},{"name":"学习","seconds":60}]})}
+ #[test]fn resume_settles_paused_time_without_resetting_other_clocks(){let mut a=app();let id=a.timers.create(&flow()).unwrap();a.timers.action(&id,"pause").unwrap();a.timers.create(&json!({"mode":"stopwatch"})).unwrap();a.last_timer=Instant::now()-Duration::from_secs(300);unsafe{assert_eq!(a.request(json!({"version":1,"command":"timerAction","value":{"id":id,"action":"resume","revision":2}}))["success"],true);}assert_eq!(a.timers.items[0].elapsed_ms,0);assert!(a.timers.items[1].elapsed_ms>=300_000);let now=a.last_timer+Duration::from_secs(1);a.advance_timers(now);assert!((1000..=1001).contains(&a.timers.items[0].elapsed_ms));assert_eq!(a.timers.items[0].workflow.as_ref().unwrap().stage_index,0);}
+ #[test]fn next_does_not_inherit_time_spent_waiting(){let mut a=app();let id=a.timers.create(&flow()).unwrap();a.timers.advance(60_000);let revision=a.timers.items[0].revision;a.last_timer=Instant::now()-Duration::from_secs(600);unsafe{assert_eq!(a.request(json!({"version":1,"command":"timerAction","value":{"id":id,"action":"next","revision":revision}}))["success"],true);}assert_eq!(a.timers.items[0].workflow.as_ref().unwrap().stage_index,1);assert_eq!(a.timers.items[0].elapsed_ms,0);let now=a.last_timer+Duration::from_secs(1);a.advance_timers(now);assert!(a.timers.items[0].running);assert!(!a.timers.items[0].workflow.as_ref().unwrap().waiting);assert!((1000..=1001).contains(&a.timers.items[0].elapsed_ms));}
+ #[test]fn new_timer_does_not_inherit_the_previous_idle_gap(){let mut a=app();a.last_timer=Instant::now()-Duration::from_secs(600);unsafe{assert_eq!(a.request(json!({"version":1,"command":"timerCreate","value":{"mode":"pomodoro","focus":2,"rest":1,"rounds":3}}))["success"],true);}let now=a.last_timer+Duration::from_millis(500);a.advance_timers(now);assert_eq!(a.timers.items[0].phase,"focus");assert!((500..=501).contains(&a.timers.items[0].elapsed_ms));assert_eq!(a.timers.items[0].round,1);}
+ #[test]fn native_duplicate_skip_is_rejected(){let mut a=app();let id=a.timers.create(&flow()).unwrap();let command=json!({"version":1,"command":"timerAction","value":{"id":id,"action":"skip","revision":1}});unsafe{assert_eq!(a.request(command.clone())["success"],true);assert_eq!(a.request(command)["success"],false);}assert_eq!(a.timers.items[0].workflow.as_ref().unwrap().stage_index,1);assert_eq!(a.timers.items[0].clock(),"01:00");}
+ #[test]fn primary_button_cannot_turn_a_stale_pause_into_next(){let mut a=app();let id=a.timers.create(&flow()).unwrap();a.selected=format!("timer:{id}");a.last_timer=Instant::now()-Duration::from_secs(120);a.active_timer_action("toggle");let t=&a.timers.items[0];assert_eq!(t.workflow.as_ref().unwrap().stage_index,0);assert!(t.workflow.as_ref().unwrap().waiting);assert!(!t.running);assert!(a.error.is_some());}
 }
