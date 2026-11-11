@@ -113,18 +113,11 @@ jobs:
           }
           $lines | Set-Content "$out/DotIsle-$env:VERSION-SHA256.txt" -Encoding ascii
 
-      - name: Verify packaged settings app (best effort on runner GPU)
-        continue-on-error: true
+      - name: Verify packaged settings app
         env:
           DOTISLE_LAYOUT_AUDIT: "1"
-        run: |
-          $app="$pwd/publish/release-output/DotIsle-$env:VERSION/LyricIsland.Settings.exe"
-          $verification=Start-Process $app -ArgumentList @('--verify',"$pwd/validation/settings") -WindowStyle Hidden -Wait -PassThru
-          if($verification.ExitCode -ne 0){throw 'Settings verification failed'}
-          $themes=Start-Process $app -ArgumentList @('--theme-capture',"$pwd/validation/themes") -WindowStyle Hidden -Wait -PassThru
-          if($themes.ExitCode -ne 0){throw 'Theme verification failed'}
-          $covers=Start-Process $app -ArgumentList @('--cover-capture',"$pwd/validation/covers") -WindowStyle Hidden -Wait -PassThru
-          if($covers.ExitCode -ne 0){throw 'Cover and progress verification failed'}
+          DOTISLE_LAYOUT_AUDIT_CAPTURE: "0"
+        run: python build/verify_packaged_ui.py --runtime "publish/release-output/DotIsle-${{ env.VERSION }}" --output validation
 
       - name: Package validation evidence
         if: always()

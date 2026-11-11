@@ -16,7 +16,6 @@ pub fn render(ui:&mut Ui,m:&Model,x:f64,_y:f64,w:f64,state:&ViewState,backdrop:&
   ui.hit(rect(0.,0.,w,h),"上下拖动浏览卡片",Action::OverviewDrag,true);
   let fg=ui.s.on_surface;let body=(1.-d.abs()*1.2).clamp(0.,1.);
   let hy=if d<0.{20.-4.*d.abs().min(1.)}else{20.+d.abs().min(1.)*16.};ui.label(TITLES[i],24.,hy,18.,fg,true,w-48.);
-  if i==0&&body>0.001{ui.scene.push_layer(Mix::Normal,body as f32,Affine::IDENTITY,&rect(0.,0.,w,60.));ui.button(rect(w-198.,14.,174.,34.),"布局与播放组件",Some(Icon::Settings),Action::LayoutOpen,true,true);ui.scene.pop_layer();}
   if body>0.001{ui.scene.push_layer(Mix::Normal,body as f32,Affine::IDENTITY,&rect(0.,60.,w,h-60.));content(ui,m,i,w,h,state);ui.scene.pop_layer();}ui.s=s;
   let card=std::mem::replace(ui.scene,old);ui.clip=clip;ui.pointer=pointer;
   let softness=if m.prefs.reduced_motion{0.}else{state.scroll_blur.min(1.5)};if softness>0.05{ui.scene.push_gaussian_layer(Affine::IDENTITY,&clip,softness);}

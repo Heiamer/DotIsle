@@ -118,7 +118,8 @@ pub fn run(out: &Path, text: &mut Text, gpu: &mut Gpu) -> Result<(), String> {
         for dark in [false, true] {
             m.prefs.dark = dark;
             for (w, h) in [(900., 680.), (1200., 800.)] {
-                let capture = theme == "Original";
+                let capture = theme == "Original"
+                    && std::env::var("DOTISLE_LAYOUT_AUDIT_CAPTURE").as_deref() != Ok("0");
                 for page in Page::ALL {
                     m.page = page;
                     let cases: Vec<(u8, u8)> = match page {
