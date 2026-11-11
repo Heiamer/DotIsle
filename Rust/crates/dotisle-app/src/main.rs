@@ -3,9 +3,10 @@ mod tutorial;mod tutorial_checks;
 mod expressive_checks;mod polish_checks;
 mod hybrid_checks;mod preferences_ui;mod appearance;mod island_settings;mod remote;mod draw;mod widgets;mod software_update;
 mod cover_art;mod cover_checks;mod timer_surface;mod tool_preferences;
-mod layout_editor;mod settings_hub;mod notification_center;mod desktop_cards;mod desktop_host;mod overview;mod widget_checks;
-mod timeline;mod font_picker;
-mod views;mod model;mod gpu;mod platform;mod motion;mod gestures;mod verify;mod shell;mod workflow;mod picker;mod nothing;mod miuix;mod swiss;mod nocturne;mod terminal;mod pixel;mod theme_icons;mod theme_regression;mod background;mod theme_checks;
+mod acrylic;mod layout_editor;mod settings_hub;mod notification_center;mod desktop_cards;mod desktop_host;mod overview;mod widget_checks;
+mod layout_checks;mod music_card;
+mod settings_slider;mod timeline;mod font_picker;mod native_sync;
+mod views;mod model;mod gpu;mod platform;mod motion;mod gestures;mod verify;mod shell;mod workflow;mod picker;mod nothing;mod miuix;mod swiss;mod terminal;mod pixel;mod theme_icons;mod theme_regression;mod background;mod theme_checks;
 use std::path::PathBuf;
 pub static STARTED:std::sync::OnceLock<std::time::Instant>=std::sync::OnceLock::new();
 fn main(){STARTED.get_or_init(std::time::Instant::now);let args=std::env::args().collect::<Vec<_>>();if let Some(i)=args.iter().position(|a|a=="--350-capture"){let out=PathBuf::from(args.get(i+1).expect("capture directory"));let _=std::fs::create_dir_all(&out);let result=widget_checks::run(&out,&mut draw::Text::new(),&mut gpu::Gpu::new());let success=result.is_ok();let report=match result{Ok(captures)=>serde_json::json!({"success":true,"captures":captures}),Err(error)=>serde_json::json!({"success":false,"error":error})};let _=std::fs::write(out.join("350-report.json"),report.to_string());if !success{std::process::exit(1)}return}if let Some(i)=args.iter().position(|a|a=="--theme-capture"){let path=args.get(i+1).map(PathBuf::from).unwrap_or_else(||PathBuf::from("theme-capture"));let _=std::fs::create_dir_all(&path);let panic_path=path.join("panic.txt");std::panic::set_hook(Box::new(move|info|{let _=std::fs::write(&panic_path,format!("{info}\n{}",std::backtrace::Backtrace::force_capture()));}));if let Err(e)=theme_regression::run(&path){let _=std::fs::create_dir_all(&path);let _=std::fs::write(path.join("failure.txt"),e);std::process::exit(1);}return}if let Some(i)=args.iter().position(|a|a=="--verify"){let path=args.get(i+1).map(PathBuf::from).unwrap_or_else(||PathBuf::from("verification"));if let Err(e)=verify::run(&path){let _=std::fs::create_dir_all(&path);let _=std::fs::write(path.join("failure.txt"),e);std::process::exit(1);}return}

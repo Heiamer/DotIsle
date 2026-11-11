@@ -43,6 +43,8 @@ def main():
     shutil.copy2(root/'build/e_sqlite3.dll',runtime/'e_sqlite3.dll')
     for doc in ['README.md','GESTURE-TUTORIAL.md','NETEASE-SEEKFIX.md','CHANGELOG.md','LICENSE','FONT-NOTICE.md','THIRD-PARTY-NOTICES.md','REWRITE.md']:
         shutil.copy2(root/doc,runtime/doc)
+    # Preserve relative wordmark references in the bundled README.
+    shutil.copytree(root/'docs/brand',runtime/'docs/brand')
     shutil.copy2(out/(name+'-Notes.md'),runtime/'发布说明.md')
     installer_stage=scratch/'installer-stage'
     shutil.copytree(runtime,installer_stage)

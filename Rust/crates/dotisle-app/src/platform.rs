@@ -17,7 +17,7 @@ pub fn set_theme_icon(window:&winit::window::Window,theme:u8){
  use windows::Win32::{Foundation::{HWND,WPARAM,LPARAM},UI::WindowsAndMessaging::{LoadImageW,SendMessageW,IMAGE_ICON,LR_LOADFROMFILE}};
  let Ok(handle)=window.window_handle()else{return};let RawWindowHandle::Win32(h)=handle.as_raw()else{return};let hwnd=HWND(h.hwnd.get()as _);
  let base=std::env::current_exe().ok().and_then(|p|p.parent().map(std::path::Path::to_path_buf)).unwrap_or_default();
- let path=base.join(match theme{1=>"Assets/Themes/Nothing.ico",2=>"Assets/Themes/Miuix.ico",3=>"Assets/Themes/Terminal.ico",4=>"Assets/Themes/Pixel.ico",5=>"Assets/Themes/Gallery.ico",6=>"Assets/Themes/Nocturne.ico",_=>"Assets/LyricIsland-v3.ico"});if !path.is_file(){return}
+ let path=base.join(match theme{1=>"Assets/Themes/Nothing.ico",2=>"Assets/Themes/Miuix.ico",3=>"Assets/Themes/Terminal.ico",4=>"Assets/Themes/Pixel.ico",5=>"Assets/Themes/Gallery.ico",_=>"Assets/LyricIsland-v3.ico"});if !path.is_file(){return}
  let wide:Vec<u16>=path.as_os_str().encode_wide().chain(Some(0)).collect();
  unsafe{
   if let Ok(big)=LoadImageW(None,PCWSTR(wide.as_ptr()),IMAGE_ICON,64,64,LR_LOADFROMFILE){SendMessageW(hwnd,0x0080,Some(WPARAM(1)),Some(LPARAM(big.0 as isize)));}

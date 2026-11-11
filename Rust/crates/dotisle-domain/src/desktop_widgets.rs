@@ -21,8 +21,12 @@ impl Size{
  pub fn label(self)->&'static str{match self{Self::Small=>"小",Self::Medium=>"中",Self::Large=>"大"}}
  pub fn dimensions(self)->(f64,f64){match self{Self::Small=>(176.,176.),Self::Medium=>(352.,176.),Self::Large=>(352.,352.)}}
 }
+#[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize,Default)]
+#[serde(rename_all="camelCase")]
+pub enum Style{#[default]Original,Nothing,Miuix,Terminal,Pixel,Gallery}
+impl Style{pub const ALL:[Self;6]=[Self::Original,Self::Nothing,Self::Miuix,Self::Terminal,Self::Pixel,Self::Gallery];pub fn label(self)->&'static str{match self{Self::Original=>"默认",Self::Nothing=>"Nothing",Self::Miuix=>"MIUIX",Self::Terminal=>"终端",Self::Pixel=>"像素",Self::Gallery=>"留白"}}}
 #[derive(Clone,Debug,PartialEq,Serialize,Deserialize)]#[serde(rename_all="camelCase")]
-pub struct Placement{pub id:String,pub kind:Kind,#[serde(default)]pub size:Size,pub x:i32,pub y:i32,#[serde(default="initial_revision")]pub revision:u64}
+pub struct Placement{pub id:String,pub kind:Kind,#[serde(default)]pub size:Size,#[serde(default)]pub style:Style,pub x:i32,pub y:i32,#[serde(default="initial_revision")]pub revision:u64}
 fn initial_revision()->u64{1}
 fn coordinate(v:&Value,key:&str,default:i32)->Result<i32,String>{match v.get(key){None=>Ok(default),Some(v)=>v.as_i64().filter(|n|(-131072..=131072).contains(n)).map(|n|n as i32).ok_or_else(||"组件位置无效".into())}}
 fn valid(p:&Placement)->bool{!p.id.is_empty()&&p.id.len()<=96&&p.id.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'-')&&(-131072..=131072).contains(&p.x)&&(-131072..=131072).contains(&p.y)}
@@ -42,16 +46,18 @@ impl Store{
   if self.items.len()>=Self::LIMIT{return Err("最多同时放置 16 个桌面组件，请先移除不用的组件".into())}
   let kind=serde_json::from_value(value["kind"].clone()).map_err(|_|"组件类型无效")?;
   let size=match value.get("size"){None=>Kind::default_size(kind),Some(v)=>serde_json::from_value(v.clone()).map_err(|_|"组件尺寸无效")?};
+  let style=match value.get("style"){None=>Style::default(),Some(v)=>serde_json::from_value(v.clone()).map_err(|_|"组件风格无效")?};
   let x=coordinate(value,"x",64+self.items.len()as i32*24)?;let y=coordinate(value,"y",80+self.items.len()as i32*24)?;
   self.serial=self.serial.wrapping_add(1);let stamp=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();let id=format!("widget-{stamp}-{}",self.serial);
-  self.items.push(Placement{id:id.clone(),kind,size,x,y,revision:1});if let Err(e)=self.persist(){self.items.pop();return Err(e)}Ok(id)
+  self.items.push(Placement{id:id.clone(),kind,size,style,x,y,revision:1});if let Err(e)=self.persist(){self.items.pop();return Err(e)}Ok(id)
  }
  pub fn update(&mut self,value:&Value)->Result<(),String>{
   let id=value["id"].as_str().ok_or("组件不存在")?;let index=self.items.iter().position(|p|p.id==id).ok_or("组件不存在")?;
   let old=self.items[index].clone();let x=coordinate(value,"x",old.x)?;let y=coordinate(value,"y",old.y)?;
   let size=match value.get("size"){None=>old.size,Some(v)=>serde_json::from_value(v.clone()).map_err(|_|"组件尺寸无效")?};
-  if old.x==x&&old.y==y&&old.size==size{return Ok(())}
-  let p=&mut self.items[index];p.x=x;p.y=y;p.size=size;p.revision=p.revision.saturating_add(1);
+  let style=match value.get("style"){None=>old.style,Some(v)=>serde_json::from_value(v.clone()).map_err(|_|"组件风格无效")?};
+  if old.x==x&&old.y==y&&old.size==size&&old.style==style{return Ok(())}
+  let p=&mut self.items[index];p.x=x;p.y=y;p.size=size;p.style=style;p.revision=p.revision.saturating_add(1);
   if let Err(e)=self.persist(){self.items[index]=old;return Err(e)}Ok(())
  }
  pub fn remove(&mut self,id:&str)->Result<(),String>{
@@ -80,7 +86,7 @@ impl Date{
 #[cfg(test)]mod tests{use super::*;
  fn temporary(name:&str)->PathBuf{std::env::temp_dir().join(format!("DotIsle.Widgets.{name}.{}.{}.json",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()))}
  #[test]fn all_six_kinds_and_sizes_roundtrip_at_negative_monitor_positions(){let path=temporary("roundtrip");let mut s=Store::new(path.clone());for kind in Kind::ALL{let id=s.add(&json!({"kind":kind,"size":Size::Medium,"x":-1600,"y":120})).unwrap();s.update(&json!({"id":id,"size":"large","x":-1200})).unwrap();}let restored=Store::new(path.clone());assert_eq!(s.items,restored.items);assert!(restored.error.is_none());let _=std::fs::remove_file(path);}
- #[test]fn malformed_updates_never_mutate_a_placement(){let mut s=Store::new(PathBuf::new());let id=s.add(&json!({"kind":"clock"})).unwrap();let old=s.items.clone();for value in [json!({"id":id,"x":1.5}),json!({"id":id,"y":999999999}),json!({"id":id,"size":"enormous"})]{assert!(s.update(&value).is_err());assert_eq!(s.items,old);}assert!(s.add(&json!({"kind":"weather"})).is_err());}
+ #[test]fn malformed_updates_never_mutate_a_placement(){let mut s=Store::new(PathBuf::new());let id=s.add(&json!({"kind":"clock"})).unwrap();let old=s.items.clone();for value in [json!({"id":id,"x":1.5}),json!({"id":id,"y":999999999}),json!({"id":id,"size":"enormous"}),json!({"id":id,"style":"unknown"})]{assert!(s.update(&value).is_err());assert_eq!(s.items,old);}assert!(s.add(&json!({"kind":"weather"})).is_err());}
  #[test]fn failed_writes_roll_back_add_move_resize_and_remove(){let parent=temporary("blocked");std::fs::write(&parent,b"blocked").unwrap();let mut s=Store::new(PathBuf::new());let id=s.add(&json!({"kind":"todos"})).unwrap();s.path=parent.join("widgets.json");let old=s.items.clone();assert!(s.add(&json!({"kind":"clock"})).is_err());assert!(s.update(&json!({"id":id,"x":500,"size":"large"})).is_err());assert!(s.remove(&id).is_err());assert_eq!(s.items,old);let _=std::fs::remove_file(parent);}
  #[test]fn damaged_data_is_retained_and_cannot_be_overwritten(){let path=temporary("damaged");std::fs::write(&path,b"invalid").unwrap();let mut s=Store::new(path.clone());assert!(s.error.is_some());assert!(s.add(&json!({"kind":"clock"})).is_err());assert_eq!(std::fs::read(&path).unwrap(),b"invalid");let _=std::fs::remove_file(path);}
  #[test]fn capacity_and_duplicate_ids_are_checked(){let mut s=Store::new(PathBuf::new());for _ in 0..Store::LIMIT{s.add(&json!({"kind":"clock"})).unwrap();}assert!(s.add(&json!({"kind":"clock"})).is_err());let path=temporary("duplicate");std::fs::write(&path,serde_json::to_vec(&vec![s.items[0].clone(),s.items[0].clone()]).unwrap()).unwrap();assert!(Store::new(path.clone()).error.is_some());let _=std::fs::remove_file(path);}
@@ -89,3 +95,8 @@ impl Date{
 }
 
 pub fn host_key(data:&std::path::Path)->String{use std::hash::{Hash,Hasher};let mut h=std::collections::hash_map::DefaultHasher::new();data.to_string_lossy().to_lowercase().hash(&mut h);std::env::var("LYRICISLAND_TEST_PIPE").unwrap_or_else(|_|"LyricIsland.Native.Settings.v1".into()).hash(&mut h);format!("Local\\DotIsle.DesktopHost.{:016x}",h.finish())}
+
+#[cfg(test)]mod style_tests{use super::*;
+ #[test]fn independent_styles_roundtrip_and_invalid_style_is_atomic(){let path=std::env::temp_dir().join(format!("dotisle-widget-styles-{}.json",std::process::id()));let mut store=Store::new(path.clone());for style in Style::ALL{store.add(&json!({"kind":"music","style":style})).unwrap();}assert_eq!(Store::new(path.clone()).items,store.items);let before=store.items.clone();assert!(store.add(&json!({"kind":"clock","style":"unknown"})).is_err());assert!(store.update(&json!({"id":before[0].id,"x":800,"style":"unknown"})).is_err());assert_eq!(store.items,before);store.update(&json!({"id":before[0].id,"size":"large"})).unwrap();assert_eq!(store.items[0].style,Style::Original);std::fs::remove_file(path).unwrap();}
+ #[test]fn existing_placements_get_a_fixed_default(){let p:Placement=serde_json::from_value(json!({"id":"old","kind":"clock","x":30,"y":40})).unwrap();assert_eq!(p.style,Style::Original);assert_eq!(p.revision,1);}
+}

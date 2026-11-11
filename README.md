@@ -1,6 +1,9 @@
 <div align="center">
 
-<img src="Assets/LyricIsland-v3.png" width="88" alt="点屿 DotIsle">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/dotisle-wordmark-light.svg">
+  <img src="docs/brand/dotisle-wordmark.svg" width="440" alt="点屿 · Dotisle 手写字标">
+</picture>
 
 # 点屿 · DotIsle
 

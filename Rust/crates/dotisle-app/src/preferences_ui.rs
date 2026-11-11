@@ -1,16 +1,16 @@
 //! Original settings, grouped by purpose. All actions use the native validation contract.
 use crate::{widgets::Ui,model::{Model,Action},draw::{self,rect,Icon}};
 use serde_json::{Value,json};
-fn heading(ui:&mut Ui,title:&str,x:f64,y:&mut f64,w:f64){ui.label(title,x+4.,*y+4.,21.,ui.s.on_surface,true,w-8.);*y+=46.;}
+fn heading(ui:&mut Ui,title:&str,x:f64,y:&mut f64,w:f64){ui.label(title,x,*y,21.,ui.s.on_surface,true,w);*y+=44.;}
 fn toggles(ui:&mut Ui,m:&Model,x:f64,y:&mut f64,w:f64,rows:&[(&str,&str,&'static str,bool)]){let s=ui.s;ui.panel(rect(x,*y,w,rows.len()as f64*76.+12.),s.container);for(i,(title,detail,key,default))in rows.iter().enumerate(){let on=m.setting(key).as_bool().unwrap_or(*default);ui.toggle(rect(x+24.,*y+6.+i as f64*76.,w-48.,70.),title,detail,on,Action::NativeEdit(key,json!(!on)));}*y+=rows.len()as f64*76.+28.;}
-pub fn range(ui:&mut Ui,m:&Model,x:f64,y:&mut f64,w:f64,title:&str,key:&'static str,default:f64,min:f64,max:f64,unit:&str){let s=ui.s;let v=m.preview_values.get(key).and_then(|v|v.as_f64()).unwrap_or_else(||m.setting(key).as_f64().unwrap_or(default));ui.panel(rect(x,*y,w,96.),s.container);ui.label(title,x+24.,*y+14.,15.,s.on_surface,false,w-160.);ui.label(&format!("{v:.1} {unit}"),x+w-132.,*y+14.,13.,s.primary,true,108.);let r=rect(x+28.,*y+52.,w-56.,28.);let p=((v-min)/(max-min)).clamp(0.,1.);draw::fill(ui.scene,rect(r.x0,r.center().y-4.,r.width(),8.),4.,if ui.nothing||ui.miuix||ui.terminal||ui.pixel||ui.swiss||ui.nocturne{s.outline_variant}else{s.secondary_container});if p>0.{draw::fill(ui.scene,rect(r.x0,r.center().y-4.,r.width()*p,8.),4.,s.primary);}draw::fill(ui.scene,rect(r.x0+r.width()*p-2.,r.y0,4.,28.),2.,s.primary);ui.hit(r.inflate(8.,8.),title,Action::RangeHandle(key,min,max,[r.x0,r.y0,r.width(),r.height()]),true);*y+=108.;}
+pub fn range(ui:&mut Ui,m:&Model,x:f64,y:&mut f64,w:f64,title:&str,key:&'static str,default:f64,min:f64,max:f64,unit:&str){let s=ui.s;let v=m.preview_values.get(key).and_then(|v|v.as_f64()).unwrap_or_else(||m.setting(key).as_f64().unwrap_or(default));ui.panel(rect(x,*y,w,96.),s.container);ui.label(title,x+24.,*y+14.,15.,s.on_surface,false,w-160.);ui.trailing_label(&format!("{v:.1} {unit}"),x+w-24.,*y+14.,13.,s.primary,true,108.);let r=rect(x+24.,*y+52.,w-48.,28.);crate::settings_slider::render(ui,r,title,key,v,min,max);*y+=112.;}
 fn choices(ui:&mut Ui,m:&Model,x:f64,y:&mut f64,w:f64,title:&str,key:&'static str,default:&str,options:&[(&str,&str)]){let s=ui.s;ui.panel(rect(x,*y,w,108.),s.container);ui.label(title,x+24.,*y+14.,16.,s.on_surface,true,w-48.);let v=m.setting(key);let v=v.as_str().unwrap_or(default);let cw=(w-48.-(options.len()-1)as f64*8.)/options.len()as f64;for(i,(label,value))in options.iter().enumerate(){ui.chip(rect(x+24.+i as f64*(cw+8.),*y+52.,cw,38.),label,v==*value,Action::NativeEdit(key,json!(value)));}*y+=124.;}
 fn action(ui:&mut Ui,x:f64,y:&mut f64,w:f64,title:&str,detail:&str,label:&str,a:Action){let s=ui.s;ui.panel(rect(x,*y,w,96.),s.container);ui.label(title,x+24.,*y+16.,16.,s.on_surface,true,w-222.);ui.label(detail,x+24.,*y+48.,12.,s.on_surface_variant,false,w-222.);ui.button(rect(x+w-176.,*y+26.,152.,44.),label,None,a,true,true);*y+=112.;}
 pub fn theme_options(ui:&mut Ui,m:&Model,x:f64,y:&mut f64,w:f64){
  let s=ui.s;let current=crate::nothing::slot(m);let pos=crate::nothing::position(current);
  ui.panel(rect(x,*y,w,156.),s.container);
  ui.label("控制中心主题",x+24.,*y+14.,16.,s.on_surface,true,w-48.);
- ui.label("点击选项切换 · 也可拖动选中块 · 七套主题独立呈现",x+24.,*y+42.,12.,s.on_surface_variant,false,w-48.);
+ ui.label("点击选项切换 · 也可拖动选中块 · 六套主题独立呈现",x+24.,*y+42.,12.,s.on_surface_variant,false,w-48.);
  let track=rect(x+24.,*y+76.,w-48.,60.);let cw=track.width()/crate::nothing::SLOTS.len()as f64;
  draw::fill(ui.scene,track,if ui.terminal||ui.pixel||ui.swiss{0.}else if ui.nothing{8.}else{30.},s.high);
  let preview=m.preview_values.get("ControlCenterThemeSlot").and_then(|v|v.as_f64());
@@ -22,7 +22,7 @@ pub fn theme_options(ui:&mut Ui,m:&Model,x:f64,y:&mut f64,w:f64){
   let hit=ui.hit(r,crate::nothing::label(i),Action::ThemeHandle([track.x0+cw/2.,track.y0,track.width()-cw,60.]),true);
   ui.state(r,if ui.terminal||ui.pixel||ui.swiss{0.}else if ui.nothing{8.}else{30.},hit,s.on_surface);
   let fg=crate::nothing::mix(s.on_surface_variant,s.on_primary,(1.-(pos-i as f64).abs()).clamp(0.,1.));
-  if i==6{draw::icon(ui.scene,Icon::Island,r.x0+18.,r.center().y-10.,20.,fg);}else if i==5{crate::swiss::icon(ui.scene,Icon::Island,r.x0+18.,r.center().y-10.,20.,fg);}else if i==4{crate::pixel::icon(ui.scene,Icon::Island,r.x0+18.,r.center().y-10.,20.,fg);}else if i==3{crate::terminal::icon(ui.scene,ui.text,Icon::Island,r.x0+18.,r.center().y-10.,20.,fg);}else if i==0{draw::icon(ui.scene,Icon::Island,r.x0+18.,r.center().y-10.,20.,fg);}else{crate::theme_icons::icon(ui.scene,Icon::Island,r.x0+18.,r.center().y-10.,20.,fg,i==2);}
+  if i==5{crate::swiss::icon(ui.scene,Icon::Island,r.x0+18.,r.center().y-10.,20.,fg);}else if i==4{crate::pixel::icon(ui.scene,Icon::Island,r.x0+18.,r.center().y-10.,20.,fg);}else if i==3{crate::terminal::icon(ui.scene,ui.text,Icon::Island,r.x0+18.,r.center().y-10.,20.,fg);}else if i==0{draw::icon(ui.scene,Icon::Island,r.x0+18.,r.center().y-10.,20.,fg);}else{crate::theme_icons::icon(ui.scene,Icon::Island,r.x0+18.,r.center().y-10.,20.,fg,i==2);}
   ui.center(crate::nothing::label(i),rect(r.x0+28.,r.y0,r.width()-28.,r.height()),14.,fg,selected==i);
  }
  *y+=172.;
@@ -69,7 +69,7 @@ pub fn extra(ui:&mut Ui,m:&Model,x:f64,mut y:f64,w:f64,tab:u8)->f64{
    action(ui,x,&mut y,w,"系统状态提示","大小写、小键盘、麦克风和触控板状态。","前往设置",Action::IslandSettings(2));
   },
   6=>{let s=ui.s;
-   ui.label("12 款原创短音 · 柔和起落、统一音量",x+4.,y+4.,13.,s.on_surface_variant,false,w-210.);
+   ui.label("12 款原创短音 · 柔和起落、统一音量",x,y+4.,13.,s.on_surface_variant,false,w-210.);
    ui.button(rect(x+w-190.,y-4.,190.,40.),"恢复推荐音色",None,Action::NativeCommand("resetBuiltinSounds",Value::Null),true,true);y+=56.;
    for(index,title,prefix,enabled,kind,volume,path,level)in [
     (0,"应用通知","Notification","NotificationSoundEnabled","NotificationSound","NotificationVolume","NotificationSoundPath",35.),
@@ -92,8 +92,8 @@ fn sound_section(ui:&mut Ui,m:&Model,x:f64,mut y:f64,w:f64,index:u8,title:&str,p
  let cue=dotisle_domain::sound_catalog::find(current).unwrap_or(&dotisle_domain::sound_catalog::CUES[0]);
  let header=rect(x,y,w,76.);ui.panel(header,if open{s.secondary_container}else{s.container});
  let hit=ui.hit(rect(x,y,w-100.,76.),title,Action::Details(index),true);ui.state(rect(x,y,w-100.,76.),24.,hit,if open{s.on_secondary_container}else{s.on_surface});
- ui.label(title,x+22.,y+11.,17.,if open{s.on_secondary_container}else{s.on_surface},true,w-250.);
- ui.label(&format!("{} · {}%",if custom{"自定义 WAV"}else{cue.name},m.setting(volume).as_f64().unwrap_or(level).round()as u32),x+22.,y+40.,12.,if open{s.on_secondary_container}else{s.on_surface_variant},false,w-250.);
+ ui.label(title,x+24.,y+11.,17.,if open{s.on_secondary_container}else{s.on_surface},true,w-250.);
+ ui.label(&format!("{} · {}%",if custom{"自定义 WAV"}else{cue.name},m.setting(volume).as_f64().unwrap_or(level).round()as u32),x+24.,y+40.,12.,if open{s.on_secondary_container}else{s.on_surface_variant},false,w-250.);
  ui.label(if open{"收起 ∧"}else{"展开 ∨"},x+w-190.,y+26.,12.,if open{s.on_secondary_container}else{s.on_surface_variant},false,80.);
  let preview=if prefix=="Device"{"deviceSoundPreview"}else{"soundPreview"};
  ui.button(rect(x+w-90.,y+18.,70.,40.),"试听",None,Action::NativeCommand(preview,json!({"todo":prefix=="Todo"})),true,!m.demo);y+=88.;

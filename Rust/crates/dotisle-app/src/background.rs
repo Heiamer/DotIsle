@@ -86,9 +86,8 @@ pub fn settings(ui:&mut Ui,m:&Model,x:f64,y:&mut f64,w:f64){
  ui.toggle(rect(x+24.,*y+120.,w-48.,70.),"使用图片背景","关闭后保留图片与参数",bg.enabled,Action::BackgroundEnable(!bg.enabled));
  let cw=(w-56.)/2.;for (i,(label,contain))in [("填满 · 居中裁切",false),("适应 · 完整显示",true)].iter().enumerate(){ui.chip(rect(x+24.+i as f64*(cw+8.),*y+200.,cw,40.),label,(bg.mode=="Contain")==*contain,Action::BackgroundMode(*contain));}
  for (i,(title,key,v,max,unit))in [("图片透明度","BackgroundOpacity",bg.opacity*100.,100.,"%"),("图片明暗","BackgroundBrightness",bg.brightness*100.,200.,"%"),("图片磨砂度","BackgroundBlur",bg.blur,40.,"")].iter().enumerate(){
-  let yy=*y+256.+i as f64*72.;let v=value(m,key,*v);ui.label(title,x+24.,yy,14.,s.on_surface,false,w-200.);ui.label(&format!("{v:.0}{unit}"),x+w-112.,yy,12.,s.on_surface_variant,false,88.);
-  let r=rect(x+32.,yy+30.,w-64.,28.);let f=(v/max).clamp(0.,1.);draw::fill(ui.scene,rect(r.x0,r.center().y-3.,r.width(),6.),3.,s.outline_variant);draw::fill(ui.scene,rect(r.x0,r.center().y-3.,r.width()*f,6.),3.,s.primary);if ui.pixel{draw::fill(ui.scene,rect(r.x0+r.width()*f-6.,r.center().y-6.,12.,12.),0.,s.primary);}else{draw::circle(ui.scene,r.x0+r.width()*f,r.center().y,8.,s.primary);}
-  ui.hit(r.inflate(8.,8.),title,Action::RangeHandle(key,0.,*max,[r.x0,r.y0,r.width(),r.height()]),true);
+  let yy=*y+256.+i as f64*72.;let v=value(m,key,*v);ui.label(title,x+24.,yy,14.,s.on_surface,false,w-200.);ui.trailing_label(&format!("{v:.0}{unit}"),x+w-24.,yy,12.,s.on_surface_variant,false,88.);
+  let r=rect(x+24.,yy+30.,w-48.,28.);crate::settings_slider::render(ui,r,title,key,v,0.,*max);
  }
  *y+=504.;
 }

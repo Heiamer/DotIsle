@@ -9,7 +9,7 @@ on:
       version:
         description: Release version without the leading v
         required: true
-        default: "3.5.0-rc1"
+        default: "3.5.0"
       publish:
         description: Publish the release instead of leaving a draft
         type: boolean
@@ -115,6 +115,8 @@ jobs:
 
       - name: Verify packaged settings app (best effort on runner GPU)
         continue-on-error: true
+        env:
+          DOTISLE_LAYOUT_AUDIT: "1"
         run: |
           $app="$pwd/publish/release-output/DotIsle-$env:VERSION/LyricIsland.Settings.exe"
           $verification=Start-Process $app -ArgumentList @('--verify',"$pwd/validation/settings") -WindowStyle Hidden -Wait -PassThru
@@ -137,7 +139,7 @@ jobs:
 
       - name: Require successful acceptance reports
         run: |
-          foreach($report in @('validation/source/report.json','validation/settings/report.json','validation/themes/report.json','validation/themes/background-report.json','validation/covers/report.json')){
+          foreach($report in @('validation/source/report.json','validation/settings/report.json','validation/settings/layout-audit/report.json','validation/themes/report.json','validation/themes/background-report.json','validation/covers/report.json')){
             if(-not(Test-Path -LiteralPath $report)){throw "Missing acceptance report: $report"}
             if((Get-Content -LiteralPath $report -Raw | ConvertFrom-Json).success -ne $true){throw "Acceptance failed: $report"}
           }

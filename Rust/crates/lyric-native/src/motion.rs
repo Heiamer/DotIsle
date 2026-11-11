@@ -74,7 +74,7 @@ impl Transition{
         (frame(values),frame(rates))
     }
     fn channels(&self,p:f64,v:f64)->([f64;8],[f64;8]){
-        let q=p.clamp(0.,1.);let (opacity,d_opacity)=step(q,0.16,0.72);let (text,d_text)=step(q,0.58,0.985);
+        let q=p.clamp(0.,1.);let (opacity,d_opacity)=step(q,0.16,0.72);let (text,d_text)=step(q,0.24,0.90);
         let (size,d_size)=step(q,0.,0.76);let (focus,d_focus)=step(q,0.10,0.82);let lift=self.options.gap+10.;
         ([1.,p.clamp(0.,1.035),lift*(q-1.),opacity,FLUID_SCALE_FLOOR+(1.-FLUID_SCALE_FLOOR)*size,6.*(1.-focus),text,6.*(1.-text)],
          [0.,v,lift*v,d_opacity*v,(1.-FLUID_SCALE_FLOOR)*d_size*v,-6.*d_focus*v,d_text*v,-6.*d_text*v])
@@ -103,6 +103,8 @@ pub fn content_softness(reveal:f64,animate:bool)->(f64,f64){
     let visible=|sigma:f64|if sigma<0.015{0.}else{sigma};
     (visible(1.35*envelope),visible(0.9*envelope))
 }
+/// Complementary weights keep one presentation readable throughout a reversible morph.
+pub fn content_weights(frame:Frame)->(f64,f64){let expanded=frame.content_opacity.clamp(0.,1.);(expanded,1.-expanded)}
 pub fn blend(p:f64,start:f64,end:f64)->f64 {let t=((p-start)/(end-start)).clamp(0.,1.);t*t*(3.-2.*t)}
 pub fn sine(t:f64)->f64{(1.-(std::f64::consts::PI*t.clamp(0.,1.)).cos())/2.}
 pub fn cubic_out(t:f64)->f64{1.-(1.-t.clamp(0.,1.)).powi(3)}
@@ -209,5 +211,15 @@ impl Activity {
  #[test]fn interrupted_shape_uses_the_same_softness_in_both_directions(){
   let o=Options::default();let opening=Transition::new(true,Frame::hidden(o),o,Frame::default(),false);
   for at in [40.,120.,240.]{let from=opening.sample(at);let v=opening.velocity(at);let closing=Transition::new(false,from,o,v,false);let p=closing.sample(0.);assert_eq!(content_softness(from.card_reveal,true),content_softness(p.card_reveal,true));}
+ }
+}
+
+#[cfg(test)]mod content_handoff_tests{
+ use super::*;
+ #[test]fn every_forward_reverse_and_interrupted_frame_has_visible_content(){
+  let o=Options::default();let open=Transition::new(true,Frame::hidden(o),o,Frame::default(),false);
+  for transition in [open,Transition::new(false,Frame::expanded(),o,Frame::default(),false),Transition::new(false,open.sample(140.),o,open.velocity(140.),false)]{
+   for i in 0..=1000{let f=transition.sample(transition.duration_ms*i as f64/1000.);let(a,b)=content_weights(f);assert!((a+b-1.).abs()<1e-9);assert!(a.max(b)>=0.5);}
+  }
  }
 }

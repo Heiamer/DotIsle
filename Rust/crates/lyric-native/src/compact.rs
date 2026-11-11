@@ -25,6 +25,12 @@ impl Stability{
   now-self.since>=if shrinking{shrink}else{grow}
  }
 }
+/// A whitespace-only lyric is missing content, not a visible line.
+pub fn primary(snapshot:&Value)->&str{
+ snapshot["frame"]["currentLine"].as_str().map(str::trim).filter(|s|!s.is_empty())
+  .or_else(||snapshot["track"]["title"].as_str().map(str::trim).filter(|s|!s.is_empty()))
+  .unwrap_or("打开播放器，开始一首音乐")
+}
 pub fn mini_font_size(font:f64)->f64{(font*0.80).clamp(9.,11.)}
 
 pub fn secondary<'a>(snapshot:&'a Value,translation:bool,chinese_next:bool)->&'a str{
@@ -135,4 +141,14 @@ pub fn capsule_height(font_size:f64,line_spacing:f64,scale:f64,double:bool)->f64
 #[cfg(test)]mod responsive_tests{use super::*;
  #[test]fn contraction_is_smooth_monotonic_and_nearly_settled_in_300ms(){let mut r=Resize::new(460.,40.);r.target(180.,40.,true);let mut previous=r.width;for _ in 0..36{r.tick(1./120.,480.);assert!(r.width<=previous&&r.width>=180.);previous=r.width;}assert!((r.width-180.).abs()<4.,"{}",r.width);}
  #[test]fn stable_short_lyrics_confirm_promptly_but_single_bad_samples_do_not(){let mut s=Stability::default();assert!(!s.ready_within("short",(180.,40.),(460.,40.),0.,false,0.10,0.04));assert!(!s.ready_within("short",(180.,40.),(460.,40.),0.05,false,0.10,0.04));assert!(s.ready_within("short",(180.,40.),(460.,40.),0.11,false,0.10,0.04));}
+}
+
+#[cfg(test)]mod primary_content_tests{
+ use super::*;use serde_json::json;
+ #[test]fn blank_lyrics_keep_a_readable_song_or_idle_label(){
+  for line in [""," ","\n\t","　"]{let snapshot=json!({"track":{"title":"海边来信"},"frame":{"currentLine":line}});assert_eq!(primary(&snapshot),"海边来信");}
+  assert_eq!(primary(&json!({"track":null})),"打开播放器，开始一首音乐");
+  assert_eq!(primary(&json!({"track":{"title":" "},"frame":{"currentLine":" "}})),"打开播放器，开始一首音乐");
+  assert_eq!(primary(&json!({"frame":{"currentLine":"此刻的旋律"}})),"此刻的旋律");
+ }
 }

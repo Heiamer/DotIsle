@@ -291,14 +291,14 @@ fn editor_full(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64)->f64{
         ui.icon_button(rect(x+w-28.-44.,cy,44.,44.),Icon::Reset,"重置编排",Action::WorkflowDraftReset,false,true);
     }
     let mut cy=y+hero_h+18.;
-    ui.label("流程阶段",x+4.,cy,16.,s.on_surface,true,120.);
+    ui.label("流程阶段",x,cy,16.,s.on_surface,true,120.);
     ui.label(&format!("{} / {}",stages.len(),STAGE_MAX),x+88.,cy+2.,12.,s.on_surface_variant,false,86.);
     ui.button(rect(x+w-152.,cy-8.,152.,38.),"管理模块库",Some(Icon::Settings),Action::WorkflowModules,true,true);
     ui.label("点阶段名称可改名称与时长",x+186.,cy+2.,11.,s.on_surface_variant,false,w-350.);
     cy+=30.;
     for(index,stage)in stages.iter().enumerate(){stage_row_full(ui,index,stage,stages.len(),x,cy,w);cy+=ROW_H+8.;}
     cy+=6.;
-    ui.label("快速添加",x+4.,cy,15.,s.on_surface,true,100.);
+    ui.label("快速添加",x,cy,15.,s.on_surface,true,100.);
     ui.label("点一下追加到流程末尾",x+82.,cy+2.,11.,s.on_surface_variant,false,180.);
     cy+=26.;
     let cols=if w>=880.{4}else{3};let gap=8.;let cw=(w-gap*(cols as f64-1.))/cols as f64;

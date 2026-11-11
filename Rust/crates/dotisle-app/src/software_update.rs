@@ -9,7 +9,7 @@ pub fn render(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64)->f64{
  let s=ui.s;let top=y;
  ui.panel(rect(x,top,w,300.),s.high);
  dotisle_render::brand_signature::draw(ui.scene,rect(x+(w-310.)/2.,top+12.,310.,96.),1.,draw::color(s.on_surface));
- ui.center(&format!("版本 {} · 开发预览",env!("CARGO_PKG_VERSION")),rect(x,top+114.,w,24.),13.,s.on_surface_variant,false);
+ ui.center(&format!("版本 {}",env!("CARGO_PKG_VERSION")),rect(x,top+114.,w,24.),13.,s.on_surface_variant,false);
  let u=&m.native_state["softwareUpdate"];let phase=u["phase"].as_str().unwrap_or("idle");
  let status=match phase{"checking"=>"正在检查更新…","available"=>"发现新版本","downloading"=>"正在下载更新","switching"=>"正在切换更新源","verifying"=>"正在校验更新包","ready"=>"更新已就绪","applying"=>"正在安装更新","restarting"=>"正在重启点屿","completed"=>"更新已完成","failed"=>"更新未完成","cancelled"=>"已取消更新","skipped"=>"已跳过此次更新",_=>"当前已是最新版本"};
  let green=s.primary;

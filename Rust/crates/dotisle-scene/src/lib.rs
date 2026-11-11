@@ -1,18 +1,23 @@
 //! Retained drawing commands replayed into Vello Hybrid at the physical viewport size.
 //! Keeping commands independent of a GPU lets UI layout and text shaping stay unchanged.
-use std::{collections::HashMap, sync::Arc};
-pub use vello_common::{kurbo, peniko};
-pub use wgpu;
 pub use glifo::Glyph;
 use kurbo::{Affine, BezPath, Rect, Shape, Stroke};
 use peniko::{BlendMode, Brush, BrushRef, Fill, FontData, ImageBrush, ImageBrushRef};
+use std::{collections::HashMap, sync::Arc};
 use vello_common::paint::{ImageSource, PaintType};
+pub use vello_common::{kurbo, peniko};
+pub use wgpu;
 
 #[derive(Clone, Debug)]
-enum Geometry { Rect(Rect), Path(BezPath) }
+enum Geometry {
+    Rect(Rect),
+    Path(BezPath),
+}
 impl Geometry {
     fn new(shape: &impl Shape) -> Self {
-        shape.as_rect().map_or_else(||Self::Path(shape.to_path(0.1)),Self::Rect)
+        shape
+            .as_rect()
+            .map_or_else(|| Self::Path(shape.to_path(0.1)), Self::Rect)
     }
 }
 #[derive(Clone, Debug)]
@@ -21,169 +26,583 @@ enum Command {
     Stroke(Stroke, Affine, Brush, Option<Affine>, BezPath),
     Layer(BlendMode, f32, Affine, BezPath),
     SoftLayer(Affine, BezPath, f32),
+    ClipGroup(Affine, BezPath),
     Pop,
     Append(Scene, Affine),
     Blur(Affine, Rect, peniko::Color, f64, f64),
-    Glyphs { font:FontData,size:f32,coords:Vec<i16>,transform:Affine,brush:Brush,fill:Fill,glyphs:Vec<Glyph> },
+    Glyphs {
+        font: FontData,
+        size: f32,
+        coords: Vec<i16>,
+        transform: Affine,
+        brush: Brush,
+        fill: Fill,
+        glyphs: Vec<Glyph>,
+    },
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct Scene { commands:Arc<Vec<Command>> }
+pub struct Scene {
+    commands: Arc<Vec<Command>>,
+}
 impl Scene {
-    pub fn new() -> Self { Self::default() }
-    fn push(&mut self, c:Command) { Arc::make_mut(&mut self.commands).push(c); }
-    pub fn reset(&mut self) { Arc::make_mut(&mut self.commands).clear(); }
-    pub fn is_empty(&self) -> bool { self.commands.is_empty() }
-    pub fn fill<'a>(&mut self,fill:Fill,transform:Affine,brush:impl Into<BrushRef<'a>>,brush_transform:Option<Affine>,shape:&impl Shape) {
-        self.push(Command::Fill(fill,transform,brush.into().to_owned(),brush_transform,Geometry::new(shape)));
+    pub fn new() -> Self {
+        Self::default()
     }
-    pub fn stroke<'a>(&mut self,stroke:&Stroke,transform:Affine,brush:impl Into<BrushRef<'a>>,brush_transform:Option<Affine>,shape:&impl Shape) {
-        self.push(Command::Stroke(stroke.clone(),transform,brush.into().to_owned(),brush_transform,shape.to_path(0.1)));
+    fn push(&mut self, c: Command) {
+        Arc::make_mut(&mut self.commands).push(c);
     }
-    pub fn push_layer(&mut self,blend:impl Into<BlendMode>,alpha:f32,transform:Affine,shape:&impl Shape) {
-        self.push(Command::Layer(blend.into(),alpha.clamp(0.,1.),transform,shape.to_path(0.1)));
+    pub fn reset(&mut self) {
+        // A presented frame can still own these commands for diagnostics. Detach
+        // before clearing instead of cloning every glyph/path just to drop it.
+        if let Some(commands) = Arc::get_mut(&mut self.commands) {
+            commands.clear();
+        } else {
+            self.commands = Arc::new(Vec::new());
+        }
     }
-    pub fn push_clip_layer(&mut self,transform:Affine,shape:&impl Shape) { self.push_layer(BlendMode::default(),1.,transform,shape); }
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty()
+    }
+    pub fn fill<'a>(
+        &mut self,
+        fill: Fill,
+        transform: Affine,
+        brush: impl Into<BrushRef<'a>>,
+        brush_transform: Option<Affine>,
+        shape: &impl Shape,
+    ) {
+        self.push(Command::Fill(
+            fill,
+            transform,
+            brush.into().to_owned(),
+            brush_transform,
+            Geometry::new(shape),
+        ));
+    }
+    pub fn stroke<'a>(
+        &mut self,
+        stroke: &Stroke,
+        transform: Affine,
+        brush: impl Into<BrushRef<'a>>,
+        brush_transform: Option<Affine>,
+        shape: &impl Shape,
+    ) {
+        self.push(Command::Stroke(
+            stroke.clone(),
+            transform,
+            brush.into().to_owned(),
+            brush_transform,
+            shape.to_path(0.1),
+        ));
+    }
+    pub fn push_layer(
+        &mut self,
+        blend: impl Into<BlendMode>,
+        alpha: f32,
+        transform: Affine,
+        shape: &impl Shape,
+    ) {
+        self.push(Command::Layer(
+            blend.into(),
+            alpha.clamp(0., 1.),
+            transform,
+            shape.to_path(0.1),
+        ));
+    }
+    pub fn push_clip_layer(&mut self, transform: Affine, shape: &impl Shape) {
+        self.push_layer(BlendMode::default(), 1., transform, shape);
+    }
+    /// Clip the composited result, including filter output that extends past its source.
+    pub fn push_isolated_clip_layer(&mut self, transform: Affine, shape: &impl Shape) {
+        self.push(Command::ClipGroup(transform, shape.to_path(0.1)));
+    }
     /// True Gaussian filtering of a bounded content group; zero keeps the ordinary clip path.
-    pub fn push_gaussian_layer(&mut self,transform:Affine,shape:&impl Shape,sigma:f64){
-        let sigma=if sigma.is_finite(){sigma.clamp(0.,3.)as f32}else{0.};
-        if sigma<0.015{self.push_clip_layer(transform,shape);}else{self.push(Command::SoftLayer(transform,shape.to_path(0.1),sigma));}
+    pub fn push_gaussian_layer(&mut self, transform: Affine, shape: &impl Shape, sigma: f64) {
+        let sigma = if sigma.is_finite() {
+            sigma.clamp(0., 3.) as f32
+        } else {
+            0.
+        };
+        if sigma < 0.015 {
+            self.push_clip_layer(transform, shape);
+        } else {
+            self.push(Command::SoftLayer(transform, shape.to_path(0.1), sigma));
+        }
     }
-    pub fn pop_layer(&mut self) { self.push(Command::Pop); }
-    pub fn append(&mut self,scene:&Scene,transform:Option<Affine>) {
-        if !scene.commands.is_empty() { self.push(Command::Append(scene.clone(),transform.unwrap_or(Affine::IDENTITY))); }
+    /// A balanced copy for sampling already-painted content behind a material surface.
+    pub fn snapshot(&self) -> Self {
+        let mut result = self.clone();
+        let mut depth = 0usize;
+        for command in self.commands.iter() {
+            match command {
+                Command::Layer(..) | Command::SoftLayer(..) | Command::ClipGroup(..) => depth += 1,
+                Command::Pop => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        for _ in 0..depth {
+            result.pop_layer();
+        }
+        result
     }
-    pub fn draw_image<'a>(&mut self,image:impl Into<ImageBrushRef<'a>>,transform:Affine) {
-        let image=image.into().to_owned();
-        let rect=Rect::new(0.,0.,image.image.width as f64,image.image.height as f64);
-        self.push(Command::Fill(Fill::NonZero,transform,Brush::Image(image),None,Geometry::Rect(rect)));
+    /// Frost only the sampled backdrop, leaving foreground text and controls sharp.
+    pub fn push_frost_layer(&mut self, transform: Affine, shape: &impl Shape, sigma: f64) {
+        let sigma = if sigma.is_finite() {
+            sigma.clamp(0., 24.) as f32
+        } else {
+            0.
+        };
+        if sigma < 0.015 {
+            self.push_clip_layer(transform, shape);
+        } else {
+            self.push(Command::SoftLayer(transform, shape.to_path(0.1), sigma));
+        }
     }
-    pub fn draw_blurred_rounded_rect(&mut self,transform:Affine,rect:Rect,color:peniko::Color,radius:f64,std_dev:f64) {
-        self.push(Command::Blur(transform,rect,color,radius,std_dev));
+    pub fn pop_layer(&mut self) {
+        self.push(Command::Pop);
     }
-    pub fn draw_glyphs<'a>(&'a mut self,font:&FontData)->GlyphBuilder<'a> {
-        GlyphBuilder{scene:self,font:font.clone(),size:16.,coords:vec![],transform:Affine::IDENTITY,brush:Brush::Solid(peniko::Color::BLACK)}
+    pub fn append(&mut self, scene: &Scene, transform: Option<Affine>) {
+        if !scene.commands.is_empty() {
+            self.push(Command::Append(
+                scene.clone(),
+                transform.unwrap_or(Affine::IDENTITY),
+            ));
+        }
+    }
+    pub fn draw_image<'a>(&mut self, image: impl Into<ImageBrushRef<'a>>, transform: Affine) {
+        let image = image.into().to_owned();
+        let rect = Rect::new(0., 0., image.image.width as f64, image.image.height as f64);
+        self.push(Command::Fill(
+            Fill::NonZero,
+            transform,
+            Brush::Image(image),
+            None,
+            Geometry::Rect(rect),
+        ));
+    }
+    pub fn draw_blurred_rounded_rect(
+        &mut self,
+        transform: Affine,
+        rect: Rect,
+        color: peniko::Color,
+        radius: f64,
+        std_dev: f64,
+    ) {
+        self.push(Command::Blur(transform, rect, color, radius, std_dev));
+    }
+    pub fn draw_glyphs<'a>(&'a mut self, font: &FontData) -> GlyphBuilder<'a> {
+        GlyphBuilder {
+            scene: self,
+            font: font.clone(),
+            size: 16.,
+            coords: vec![],
+            transform: Affine::IDENTITY,
+            brush: Brush::Solid(peniko::Color::BLACK),
+        }
     }
 }
-pub struct GlyphBuilder<'a>{scene:&'a mut Scene,font:FontData,size:f32,coords:Vec<i16>,transform:Affine,brush:Brush}
+pub struct GlyphBuilder<'a> {
+    scene: &'a mut Scene,
+    font: FontData,
+    size: f32,
+    coords: Vec<i16>,
+    transform: Affine,
+    brush: Brush,
+}
 impl GlyphBuilder<'_> {
-    pub fn font_size(mut self,size:f32)->Self{self.size=size;self}
-    pub fn normalized_coords(mut self,coords:&[i16])->Self{self.coords.extend_from_slice(coords);self}
-    pub fn transform(mut self,transform:Affine)->Self{self.transform=transform;self}
-    pub fn brush<'b>(mut self,brush:impl Into<BrushRef<'b>>)->Self{self.brush=brush.into().to_owned();self}
-    pub fn draw(self,fill:Fill,glyphs:impl IntoIterator<Item=Glyph>){
-        self.scene.push(Command::Glyphs{font:self.font,size:self.size,coords:self.coords,transform:self.transform,brush:self.brush,fill,glyphs:glyphs.into_iter().collect()});
+    pub fn font_size(mut self, size: f32) -> Self {
+        self.size = size;
+        self
+    }
+    pub fn normalized_coords(mut self, coords: &[i16]) -> Self {
+        self.coords.extend_from_slice(coords);
+        self
+    }
+    pub fn transform(mut self, transform: Affine) -> Self {
+        self.transform = transform;
+        self
+    }
+    pub fn brush<'b>(mut self, brush: impl Into<BrushRef<'b>>) -> Self {
+        self.brush = brush.into().to_owned();
+        self
+    }
+    pub fn draw(self, fill: Fill, glyphs: impl IntoIterator<Item = Glyph>) {
+        self.scene.push(Command::Glyphs {
+            font: self.font,
+            size: self.size,
+            coords: self.coords,
+            transform: self.transform,
+            brush: self.brush,
+            fill,
+            glyphs: glyphs.into_iter().collect(),
+        });
     }
 }
 
-struct CachedImage { source:ImageSource,last_used:u64 }
-type ImageKey=(u64,u32,u32,std::mem::Discriminant<peniko::ImageFormat>,std::mem::Discriminant<peniko::ImageAlphaType>);
-fn image_key(i:&peniko::ImageData)->ImageKey{(i.data.id(),i.width,i.height,std::mem::discriminant(&i.format),std::mem::discriminant(&i.alpha_type))}
+struct CachedImage {
+    source: ImageSource,
+    last_used: u64,
+}
+type ImageKey = (
+    u64,
+    u32,
+    u32,
+    std::mem::Discriminant<peniko::ImageFormat>,
+    std::mem::Discriminant<peniko::ImageAlphaType>,
+);
+fn image_key(i: &peniko::ImageData) -> ImageKey {
+    (
+        i.data.id(),
+        i.width,
+        i.height,
+        std::mem::discriminant(&i.format),
+        std::mem::discriminant(&i.alpha_type),
+    )
+}
 #[derive(Default)]
-struct PaintCache { images:HashMap<ImageKey,CachedImage>,frame:u64 }
+struct PaintCache {
+    images: HashMap<ImageKey, CachedImage>,
+    frame: u64,
+}
 impl PaintCache {
-    fn prepare(&mut self,commands:&[Command],renderer:&mut vello_hybrid::Renderer,resources:&mut vello_hybrid::Resources,device:&wgpu::Device,queue:&wgpu::Queue,encoder:&mut wgpu::CommandEncoder){
+    fn prepare(
+        &mut self,
+        commands: &[Command],
+        renderer: &mut vello_hybrid::Renderer,
+        resources: &mut vello_hybrid::Resources,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
         for command in commands {
-            let brush=match command {
-                Command::Fill(_,_,b,_,_)|Command::Stroke(_,_,b,_,_)|Command::Glyphs{brush:b,..}=>b,
-                Command::Append(child,_)=>{self.prepare(&child.commands,renderer,resources,device,queue,encoder);continue},
-                _=>continue,
+            let brush = match command {
+                Command::Fill(_, _, b, _, _)
+                | Command::Stroke(_, _, b, _, _)
+                | Command::Glyphs { brush: b, .. } => b,
+                Command::Append(child, _) => {
+                    self.prepare(&child.commands, renderer, resources, device, queue, encoder);
+                    continue;
+                }
+                _ => continue,
             };
-            if let Brush::Image(i)=brush {
-                let key=image_key(&i.image);
-                if let Some(image)=self.images.get_mut(&key){image.last_used=self.frame;continue}
-                let ImageSource::Pixmap(pixmap)=ImageSource::from_peniko_image_data(&i.image) else {unreachable!()};
-                let id=renderer.upload_image(resources,device,queue,encoder,&pixmap);
-                self.images.insert(key,CachedImage{source:ImageSource::opaque_id_with_transparency_hint(id,pixmap.may_have_transparency()),last_used:self.frame});
+            if let Brush::Image(i) = brush {
+                let key = image_key(&i.image);
+                if let Some(image) = self.images.get_mut(&key) {
+                    image.last_used = self.frame;
+                    continue;
+                }
+                let ImageSource::Pixmap(pixmap) = ImageSource::from_peniko_image_data(&i.image)
+                else {
+                    unreachable!()
+                };
+                let id = renderer.upload_image(resources, device, queue, encoder, &pixmap);
+                self.images.insert(
+                    key,
+                    CachedImage {
+                        source: ImageSource::opaque_id_with_transparency_hint(
+                            id,
+                            pixmap.may_have_transparency(),
+                        ),
+                        last_used: self.frame,
+                    },
+                );
             }
         }
     }
-    fn resolve(&mut self,brush:&Brush)->PaintType {
+    fn resolve(&mut self, brush: &Brush) -> PaintType {
         match brush {
-            Brush::Solid(c)=>PaintType::Solid(*c),
-            Brush::Gradient(g)=>PaintType::Gradient(g.clone()),
-            Brush::Image(i)=>{
-                let key=image_key(&i.image);
-                let cached=self.images.get_mut(&key).expect("image must be uploaded before replay");
-                cached.last_used=self.frame;
-                PaintType::Image(ImageBrush{image:cached.source.clone(),sampler:i.sampler})
+            Brush::Solid(c) => PaintType::Solid(*c),
+            Brush::Gradient(g) => PaintType::Gradient(g.clone()),
+            Brush::Image(i) => {
+                let key = image_key(&i.image);
+                let cached = self
+                    .images
+                    .get_mut(&key)
+                    .expect("image must be uploaded before replay");
+                cached.last_used = self.frame;
+                PaintType::Image(ImageBrush {
+                    image: cached.source.clone(),
+                    sampler: i.sampler,
+                })
             }
         }
     }
-    fn maintain(&mut self){
-        self.frame=self.frame.wrapping_add(1);
+    fn maintain(&mut self) {
+        self.frame = self.frame.wrapping_add(1);
     }
-    fn retire(&mut self,renderer:&mut vello_hybrid::Renderer,resources:&mut vello_hybrid::Resources,encoder:&mut wgpu::CommandEncoder){
+    fn retire(
+        &mut self,
+        renderer: &mut vello_hybrid::Renderer,
+        resources: &mut vello_hybrid::Resources,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
         // Clear freed slots after this frame's draws. Reusing a slot earlier would let
         // an encoded clear overwrite the queue's newly uploaded pixels.
-        let stale:Vec<_>=self.images.iter().filter(|(_,v)|self.frame.wrapping_sub(v.last_used)>2).map(|(k,_)|*k).collect();
-        for key in stale{if let Some(CachedImage{source:ImageSource::OpaqueId{id,..},..})=self.images.remove(&key){renderer.destroy_image(resources,encoder,id);}}
+        let stale: Vec<_> = self
+            .images
+            .iter()
+            .filter(|(_, v)| self.frame.wrapping_sub(v.last_used) > 2)
+            .map(|(k, _)| *k)
+            .collect();
+        for key in stale {
+            if let Some(CachedImage {
+                source: ImageSource::OpaqueId { id, .. },
+                ..
+            }) = self.images.remove(&key)
+            {
+                renderer.destroy_image(resources, encoder, id);
+            }
+        }
     }
 }
 
-fn replay(commands:&[Command],root:Affine,scene:&mut vello_hybrid::Scene,resources:&mut vello_hybrid::Resources,cache:&mut PaintCache,layers:&mut Vec<bool>){
-    for command in commands {
+fn contains_filter(commands: &[Command]) -> bool {
+    commands.iter().any(|c| match c {
+        Command::SoftLayer(..) => true,
+        Command::Append(child, _) => contains_filter(&child.commands),
+        _ => false,
+    })
+}
+fn layer_contains_filter(commands: &[Command]) -> bool {
+    let mut depth = 0usize;
+    for c in commands {
+        match c {
+            Command::SoftLayer(..) => return true,
+            Command::Append(child, _) if contains_filter(&child.commands) => return true,
+            Command::Layer(..) | Command::ClipGroup(..) => depth += 1,
+            Command::Pop => {
+                if depth == 0 {
+                    return false;
+                }
+                depth -= 1
+            }
+            _ => {}
+        }
+    }
+    false
+}
+fn replay(
+    commands: &[Command],
+    root: Affine,
+    scene: &mut vello_hybrid::Scene,
+    resources: &mut vello_hybrid::Resources,
+    cache: &mut PaintCache,
+    layers: &mut Vec<bool>,
+) {
+    for (index, command) in commands.iter().enumerate() {
         match command {
-            Command::Fill(fill,tr,brush,bt,shape)=>{
-                scene.set_transform(root * *tr);scene.set_paint_transform(bt.unwrap_or(Affine::IDENTITY));
-                scene.set_paint(cache.resolve(brush));scene.set_fill_rule(*fill);
-                match shape {Geometry::Rect(r)=>scene.fill_rect(r),Geometry::Path(p)=>scene.fill_path(p)}
+            Command::Fill(fill, tr, brush, bt, shape) => {
+                scene.set_transform(root * *tr);
+                scene.set_paint_transform(bt.unwrap_or(Affine::IDENTITY));
+                scene.set_paint(cache.resolve(brush));
+                scene.set_fill_rule(*fill);
+                match shape {
+                    Geometry::Rect(r) => scene.fill_rect(r),
+                    Geometry::Path(p) => scene.fill_path(p),
+                }
             }
-            Command::Stroke(stroke,tr,brush,bt,path)=>{
-                scene.set_transform(root * *tr);scene.set_paint_transform(bt.unwrap_or(Affine::IDENTITY));
-                scene.set_paint(cache.resolve(brush));scene.set_stroke(stroke.clone());scene.stroke_path(path);
+            Command::Stroke(stroke, tr, brush, bt, path) => {
+                scene.set_transform(root * *tr);
+                scene.set_paint_transform(bt.unwrap_or(Affine::IDENTITY));
+                scene.set_paint(cache.resolve(brush));
+                scene.set_stroke(stroke.clone());
+                scene.stroke_path(path);
             }
-            Command::Layer(blend,alpha,tr,path)=>{
-                scene.set_transform(root * *tr);scene.set_fill_rule(Fill::NonZero);
+            Command::Layer(blend, alpha, tr, path) => {
+                scene.set_transform(root * *tr);
+                scene.set_fill_rule(Fill::NonZero);
                 // A plain clip needs no isolated color texture. Opacity groups still
                 // use a real layer so overlapping children receive group alpha once.
-                let clip=*alpha==1.&&*blend==BlendMode::default();
-                if clip{scene.push_clip_path(path)}else{scene.push_layer(Some(path),Some(*blend),Some(*alpha),None,None);}
+                // Filters shift their input viewport. Clip their parents after compositing,
+                // so inherited clip paths stay in the output coordinate system.
+                let clip = *alpha == 1.
+                    && *blend == BlendMode::default()
+                    && !layer_contains_filter(&commands[index + 1..]);
+                if clip {
+                    scene.push_clip_path(path)
+                } else {
+                    scene.push_layer(Some(path), Some(*blend), Some(*alpha), None, None);
+                }
                 layers.push(clip);
             }
-            Command::SoftLayer(tr,path,sigma)=>{
-                scene.set_transform(root * *tr);scene.set_fill_rule(Fill::NonZero);
-                let filter=vello_common::filter_effects::Filter::from_function(vello_common::filter_effects::FilterFunction::Blur{radius:*sigma});
-                scene.push_layer(Some(path),None,None,None,Some(filter));layers.push(false);
+            Command::ClipGroup(tr, path) => {
+                scene.set_transform(root * *tr);
+                scene.set_fill_rule(Fill::NonZero);
+                scene.push_layer(Some(path), None, None, None, None);
+                layers.push(false);
             }
-            Command::Pop=>{if layers.pop()==Some(true){scene.pop_clip_path()}else{scene.pop_layer()}},
-            Command::Append(child,tr)=>replay(&child.commands,root * *tr,scene,resources,cache,layers),
-            Command::Blur(tr,rect,color,radius,std_dev)=>{
-                scene.set_transform(root * *tr);scene.reset_paint_transform();scene.set_paint(*color);
-                scene.fill_blurred_rounded_rect(rect,*radius as f32,*std_dev as f32,false);
+            Command::SoftLayer(tr, path, sigma) => {
+                scene.set_transform(root * *tr);
+                scene.set_fill_rule(Fill::NonZero);
+                let filter = vello_common::filter_effects::Filter::from_function(
+                    vello_common::filter_effects::FilterFunction::Blur { radius: *sigma },
+                );
+                scene.push_layer(Some(path), None, None, None, Some(filter));
+                layers.push(false);
             }
-            Command::Glyphs{font,size,coords,transform,brush,fill,glyphs}=>{
-                scene.set_transform(root * *transform);scene.reset_paint_transform();scene.set_paint(cache.resolve(brush));scene.set_fill_rule(*fill);
+            Command::Pop => {
+                if layers.pop() == Some(true) {
+                    scene.pop_clip_path()
+                } else {
+                    scene.pop_layer()
+                }
+            }
+            Command::Append(child, tr) => {
+                replay(&child.commands, root * *tr, scene, resources, cache, layers)
+            }
+            Command::Blur(tr, rect, color, radius, std_dev) => {
+                scene.set_transform(root * *tr);
+                scene.reset_paint_transform();
+                scene.set_paint(*color);
+                scene.fill_blurred_rounded_rect(rect, *radius as f32, *std_dev as f32, false);
+            }
+            Command::Glyphs {
+                font,
+                size,
+                coords,
+                transform,
+                brush,
+                fill,
+                glyphs,
+            } => {
+                scene.set_transform(root * *transform);
+                scene.reset_paint_transform();
+                scene.set_paint(cache.resolve(brush));
+                scene.set_fill_rule(*fill);
                 // Match the previous renderer's unhinted outlines, including variable fonts.
-                scene.glyph_run(resources,font).font_size(*size).normalized_coords(coords).hint(false).fill_glyphs(glyphs.iter().copied());
+                scene
+                    .glyph_run(resources, font)
+                    .font_size(*size)
+                    .normalized_coords(coords)
+                    .hint(false)
+                    .fill_glyphs(glyphs.iter().copied());
             }
         }
     }
 }
 
 /// Persistent CPU preparation and GPU resources; no compute rasterizer is constructed.
-pub struct Renderer { renderer:vello_hybrid::Renderer,resources:vello_hybrid::Resources,scene:vello_hybrid::Scene,paints:PaintCache }
+pub struct Renderer {
+    renderer: vello_hybrid::Renderer,
+    resources: vello_hybrid::Resources,
+    scene: vello_hybrid::Scene,
+    paints: PaintCache,
+}
 impl Renderer {
-    pub fn new(device:&wgpu::Device,format:wgpu::TextureFormat,width:u32,height:u32)->Self {
-        let settings=vello_hybrid::RenderSettings{
-            memory_settings:vello_hybrid::MemorySettings{
+    pub fn new(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        let settings = vello_hybrid::RenderSettings {
+            memory_settings: vello_hybrid::MemorySettings {
                 // Covers are decoded to thumbnail sizes by the callers. Allocate image pages lazily.
-                image_atlas_config:vello_hybrid::AtlasConfig{atlas_size:(1024,1024),..Default::default()},
-                layers_config:vello_hybrid::LayersConfig{min_texture_size:vello_hybrid::SizeU16::new(256),..Default::default()},
-            },..Default::default()
+                image_atlas_config: vello_hybrid::AtlasConfig {
+                    atlas_size: (1024, 1024),
+                    ..Default::default()
+                },
+                layers_config: vello_hybrid::LayersConfig {
+                    min_texture_size: vello_hybrid::SizeU16::new(256),
+                    ..Default::default()
+                },
+            },
+            ..Default::default()
         };
-        let(renderer,resources)=vello_hybrid::Renderer::new_with(device,&vello_hybrid::RenderTargetConfig{format,width,height},settings);
-        Self{renderer,resources,scene:vello_hybrid::Scene::new(width as u16,height as u16),paints:PaintCache::default()}
+        let (renderer, resources) = vello_hybrid::Renderer::new_with(
+            device,
+            &vello_hybrid::RenderTargetConfig {
+                format,
+                width,
+                height,
+            },
+            settings,
+        );
+        Self {
+            renderer,
+            resources,
+            scene: vello_hybrid::Scene::new(width as u16, height as u16),
+            paints: PaintCache::default(),
+        }
     }
-    pub fn render(&mut self,device:&wgpu::Device,queue:&wgpu::Queue,encoder:&mut wgpu::CommandEncoder,scene:&Scene,scale:f64,width:u32,height:u32,view:&wgpu::TextureView)->Result<(),String>{
-        let w=u16::try_from(width).map_err(|_|"render width exceeds 65535")?;
-        let h=u16::try_from(height).map_err(|_|"render height exceeds 65535")?;
-        self.scene.reset_and_resize(w,h);
+    pub fn render(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        scene: &Scene,
+        scale: f64,
+        width: u32,
+        height: u32,
+        view: &wgpu::TextureView,
+    ) -> Result<(), String> {
+        let w = u16::try_from(width).map_err(|_| "render width exceeds 65535")?;
+        let h = u16::try_from(height).map_err(|_| "render height exceeds 65535")?;
+        self.scene.reset_and_resize(w, h);
         self.paints.maintain();
-        self.paints.prepare(&scene.commands,&mut self.renderer,&mut self.resources,device,queue,encoder);
-        replay(&scene.commands,Affine::scale(scale),&mut self.scene,&mut self.resources,&mut self.paints,&mut Vec::new());
-        self.renderer.render(&self.scene,&mut self.resources,device,queue,encoder,&vello_hybrid::RenderSize{width,height},view,&vello_hybrid::TextureBindings::new()).map_err(|e|e.to_string())?;
-        self.paints.retire(&mut self.renderer,&mut self.resources,encoder);
+        self.paints.prepare(
+            &scene.commands,
+            &mut self.renderer,
+            &mut self.resources,
+            device,
+            queue,
+            encoder,
+        );
+        replay(
+            &scene.commands,
+            Affine::scale(scale),
+            &mut self.scene,
+            &mut self.resources,
+            &mut self.paints,
+            &mut Vec::new(),
+        );
+        self.renderer
+            .render(
+                &self.scene,
+                &mut self.resources,
+                device,
+                queue,
+                encoder,
+                &vello_hybrid::RenderSize { width, height },
+                view,
+                &vello_hybrid::TextureBindings::new(),
+            )
+            .map_err(|e| e.to_string())?;
+        self.paints
+            .retire(&mut self.renderer, &mut self.resources, encoder);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod scene_storage_tests {
+    use super::*;
+    #[test]
+    fn reset_detaches_while_the_presented_frame_remains_valid() {
+        let mut scene = Scene::new();
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            peniko::Color::BLACK,
+            None,
+            &Rect::new(0., 0., 10., 10.),
+        );
+        let presented = scene.clone();
+        let old = Arc::as_ptr(&presented.commands);
+        scene.reset();
+        assert!(scene.is_empty());
+        assert_eq!(presented.commands.len(), 1);
+        assert_eq!(Arc::as_ptr(&presented.commands), old);
+        assert_eq!(scene.commands.capacity(), 0);
+    }
+    #[test]
+    fn reset_reuses_the_buffer_when_no_snapshot_owns_it() {
+        let mut scene = Scene::new();
+        scene.pop_layer();
+        let capacity = scene.commands.capacity();
+        scene.reset();
+        assert!(scene.is_empty());
+        assert_eq!(scene.commands.capacity(), capacity);
     }
 }

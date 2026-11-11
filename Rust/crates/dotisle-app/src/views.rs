@@ -6,7 +6,6 @@ pub const TITLEBAR_H:f64=56.;
 /// Google Sans Flex, which also stays the pinned metric source for every rect.
 pub fn center_face(m:&Model)->Option<String>{
     if crate::swiss::active(m){return Some("Google Sans Flex".into())}
-    if crate::nocturne::active(m){return Some("Google Sans Flex".into())}
     if crate::miuix::active(m){return Some(Text::system_family("MiSans").unwrap_or_else(||"Noto Sans SC".into()))}
     if crate::pixel::active(m){return Some(crate::pixel::FACE.into())}
     if crate::terminal::active(m){return Some("Space Mono".into())}
@@ -16,11 +15,11 @@ pub fn center_face(m:&Model)->Option<String>{
     if requested.is_empty()||requested=="Noto Sans SC"||requested=="Google Sans Flex"{return None}
     Some(Text::system_family(&requested).unwrap_or(requested))
 }
-#[derive(Default)]pub struct ViewState{pub signature_age:Option<f64>,pub scroll_blur:f64,pub tutorial_time:Option<f64>,pub selection_values:std::collections::HashMap<String,f64>,pub press_layers:Vec<f64>,pub rail_target:Option<f64>,pub switches:std::collections::HashMap<String,f64>,pub color_scheme:Option<dotisle_domain::monet::Scheme>,pub state_layers:Vec<f32>,pub page_enter:Option<f64>,pub media_position:Option<f64>,pub pointer:(f64,f64),pub focus:Option<usize>,pub pressed:Option<usize>,pub rail_y:f64,pub satellite:f64,pub cloud_open:f64,pub time:f64,pub swipe:f64,pub maximized:bool}
+#[derive(Default)]pub struct ViewState{pub lyric_lines:Option<Vec<crate::music_card::PresentedLine>>,pub signature_age:Option<f64>,pub scroll_blur:f64,pub tutorial_time:Option<f64>,pub selection_values:std::collections::HashMap<String,f64>,pub press_layers:Vec<f64>,pub rail_target:Option<f64>,pub switches:std::collections::HashMap<String,f64>,pub color_scheme:Option<dotisle_domain::monet::Scheme>,pub state_layers:Vec<f32>,pub page_enter:Option<f64>,pub media_position:Option<f64>,pub pointer:(f64,f64),pub focus:Option<usize>,pub pressed:Option<usize>,pub rail_y:f64,pub satellite:f64,pub cloud_open:f64,pub time:f64,pub swipe:f64,pub maximized:bool}
 pub struct View{pub motion_targets:Vec<(String,f64)>,pub scene:Scene,pub hits:Vec<Hit>,pub max_scroll:f64}
 fn page_icon(page:Page)->Icon{match page{Page::Home=>Icon::Home,Page::Music=>Icon::Music,Page::Focus=>Icon::Focus,Page::Todos=>Icon::Todo,Page::Island=>Icon::Island,Page::Widgets=>Icon::Folder,Page::Notifications=>Icon::Volume,Page::Settings=>Icon::Settings}}
 fn caption_button(ui:&mut Ui,x:f64,kind:Icon,label:&'static str,action:Action,close:bool){
-    let s=ui.s;let r=rect(x,0.,46.,TITLEBAR_H);let hovered=r.contains(ui.pointer);let locked=ui.nothing||ui.miuix||ui.terminal||ui.pixel||ui.swiss||ui.nocturne;ui.hit(r,label,action,!(locked&&matches!(kind,Icon::Maximize|Icon::Restore)));
+    let s=ui.s;let r=rect(x,0.,46.,TITLEBAR_H);let hovered=r.contains(ui.pointer);let locked=ui.nothing||ui.miuix||ui.terminal||ui.pixel||ui.swiss;ui.hit(r,label,action,!(locked&&matches!(kind,Icon::Maximize|Icon::Restore)));
     if hovered&&!(locked&&matches!(kind,Icon::Maximize|Icon::Restore)){draw::fill(ui.scene,r,0.,if close{0xC42B1C}else{s.high});}
     // Window chrome uses one shared 12px optical box and a 1.4px stroke.
     // Generic symbol viewBoxes have different ink bounds and a low minimize baseline.
@@ -34,32 +33,31 @@ fn caption_button(ui:&mut Ui,x:f64,kind:Icon,label:&'static str,action:Action,cl
     ui.scene.stroke(&Stroke::new(1.4),Affine::IDENTITY,draw::color(if locked&&matches!(kind,Icon::Maximize|Icon::Restore){s.outline}else if hovered&&close{0xFFFFFF}else{s.on_surface_variant}),None,&path);
 }
 pub fn render(model:&Model,text:&mut Text,width:f64,height:f64,state:&ViewState)->View{
-    let mut scene=Scene::new();let nothing=crate::nothing::active(model);let miuix=crate::miuix::active(model);let terminal=crate::terminal::active(model);let pixel=crate::pixel::active(model);let swiss=crate::swiss::active(model);let nocturne=crate::nocturne::active(model);let target=if nothing||miuix||terminal||pixel||swiss||nocturne{crate::nothing::resolved(model)}else{state.color_scheme.unwrap_or_else(||model.scheme())};let s=crate::nothing::blend_to(target);let window=rect(0.,0.,width,height);
-    let mut ui=Ui{selection_values:state.selection_values.clone(),motion_targets:vec![],press_layers:state.press_layers.clone(),switches:state.switches.clone(),scene:&mut scene,text,s,hits:vec![],state_layers:state.state_layers.clone(),pointer:state.pointer,focus:state.focus,pressed:state.pressed,clip:window,nothing,miuix,terminal,pixel,swiss,nocturne,face:center_face(model)};
-    draw::fill(ui.scene,window,0.,s.surface);crate::background::paint(ui.scene,model,rect(0.,TITLEBAR_H,width,height-TITLEBAR_H));
-    if swiss{draw::fill(ui.scene,rect(16.,14.,28.,28.),0.,s.primary);}else if pixel{crate::pixel::panel(ui.scene,rect(16.,14.,28.,28.),s.primary,s.on_surface);}else if terminal{draw::fill(ui.scene,rect(16.,14.,28.,28.),0.,s.primary);}else if nothing{draw::fill(ui.scene,rect(16.,14.,28.,28.),8.,0x000000);draw::outline(ui.scene,rect(16.,14.,28.,28.),8.,s.outline_variant,1.);}else{draw::fill(ui.scene,rect(16.,14.,28.,28.),8.,s.primary);}ui.icon(Icon::Island,22.,20.,16.,if nothing{0xFFFFFF}else{s.on_primary});
-    ui.label("点屿",52.,16.,16.,s.on_surface,true,44.);ui.label("/",94.,19.,13.,s.outline,false,12.);ui.label(model.page.label(),108.,19.,13.,s.on_surface_variant,false,86.);
-    if model.demo{ui.label("设计预览 · 示例歌曲",196.,20.,11.,s.on_surface_variant,false,(width-600.).max(40.));}
+    let mut scene=Scene::new();let nothing=crate::nothing::active(model);let miuix=crate::miuix::active(model);let terminal=crate::terminal::active(model);let pixel=crate::pixel::active(model);let swiss=crate::swiss::active(model);let target=if nothing||miuix||terminal||pixel||swiss{crate::nothing::resolved(model)}else{state.color_scheme.unwrap_or_else(||model.scheme())};let s=crate::nothing::blend_to(target);let window=rect(0.,0.,width,height);
+    let mut ui=Ui{selection_values:state.selection_values.clone(),motion_targets:vec![],press_layers:state.press_layers.clone(),switches:state.switches.clone(),scene:&mut scene,text,s,hits:vec![],state_layers:state.state_layers.clone(),pointer:state.pointer,focus:state.focus,pressed:state.pressed,clip:window,nothing,miuix,terminal,pixel,swiss,face:center_face(model)};
+    draw::fill(ui.scene,window,0.,s.surface);crate::background::paint(ui.scene,model,rect(0.,TITLEBAR_H,width,height-TITLEBAR_H));let backdrop=ui.scene.snapshot();
     ui.icon_button(rect(width-378.,10.,36.,36.),Icon::Search,"搜索与跳转 · Ctrl+K",Action::Palette,false,true);
     ui.icon_button(rect(width-334.,10.,36.,36.),if model.prefs.dark{Icon::Sun}else{Icon::Moon},"切换明暗主题",Action::Pref("dark"),false,true);
-    ui.button(rect(width-290.,10.,140.,36.),if model.prefs.island{"收起灵动岛"}else{"开启灵动岛"},Some(Icon::Island),Action::Pref("island"),true,true);
+    ui.button(rect(width-290.,10.,140.,36.),if model.prefs.island{"隐藏灵动岛"}else{"显示灵动岛"},Some(Icon::Island),Action::Pref("island"),true,true);
     caption_button(&mut ui,width-138.,Icon::Minimize,"最小化窗口",Action::WindowMinimize,false);
-    caption_button(&mut ui,width-92.,if state.maximized{Icon::Restore}else{Icon::Maximize},if nothing||miuix||terminal||pixel||swiss||nocturne{"窗口尺寸已固定"}else if state.maximized{"还原窗口"}else{"最大化窗口"},Action::WindowMaximize,false);
+    caption_button(&mut ui,width-92.,if state.maximized{Icon::Restore}else{Icon::Maximize},if nothing||miuix||terminal||pixel||swiss{"窗口尺寸已固定"}else if state.maximized{"还原窗口"}else{"最大化窗口"},Action::WindowMaximize,false);
     caption_button(&mut ui,width-46.,Icon::Close,"关闭窗口",Action::WindowClose,true);
     let x=36.;let w=width-72.;
-    if swiss{crate::swiss::header(&mut ui,model,x,w);}else{
-    ui.label(if terminal{crate::terminal::page(model.page)}else{model.page.label()},x,85.,if terminal{28.}else{36.},s.on_surface,true,w-220.);
-    ui.label(if model.page==Page::Home{"音乐、时间与小事，都在这里。"}else{model.page.description()},x,137.,14.,s.on_surface_variant,false,w-220.);
-    if nocturne{crate::nocturne::header(&mut ui,model,x,w);}}
-
+    let editing=model.page==Page::Settings&&model.settings_tab==135;
+    if !editing{if swiss{crate::swiss::header(&mut ui,model,x,w);}else{
+    ui.label(if terminal{crate::terminal::page(model.page)}else{model.page.label()},x,85.,if terminal{28.}else if nothing||miuix||pixel{36.}else{34.},s.on_surface,true,w-220.);
+    ui.label(if model.page==Page::Home{"音乐、时间与小事，都在这里。"}else{model.page.description()},x,134.,13.,s.on_surface_variant,false,w-220.);
+}
+}
     if model.page==Page::Todos{ui.button(rect(width-198.,102.,162.,48.),"新建待办",Some(Icon::Plus),Action::EditTodo(None),false,true);}
-    let clip=Rect::new(x-4.,179.,width-24.,height-112.);ui.clip(clip);
-    let enter=if nothing||terminal||pixel||swiss||model.prefs.reduced_motion{1.}else{state.page_enter.unwrap_or(1.)};let e=enter.clamp(0.,1.);ui.scene.push_layer(vello::peniko::Mix::Normal,(0.82+0.18*e)as f32,Affine::IDENTITY,&clip);let y=188.-model.scroll+8.*(1.-e);
-    let bottom=match model.page{Page::Home=>crate::overview::render(&mut ui,model,x,y,w,state),Page::Widgets=>crate::desktop_cards::gallery(&mut ui,model,x,y,w,state),Page::Notifications=>crate::notification_center::render(&mut ui,model,x,y,w),Page::Music=>music(&mut ui,model,x,y,w,state),Page::Focus=>focus(&mut ui,model,x,y,w),Page::Todos=>todos(&mut ui,model,x,y,w),Page::Island=>crate::island_settings::render(&mut ui,model,x,y,w,state),Page::Settings=>crate::settings_hub::render(&mut ui,model,x,y,w,state)};
+    let content_top=if editing{68.}else{179.};let clip=Rect::new(x-4.,content_top,width-24.,height-if model.page==Page::Home{84.}else{112.});ui.clip(clip);
+    let enter=if model.page==Page::Settings||nothing||terminal||pixel||swiss||model.prefs.reduced_motion{1.}else{state.page_enter.unwrap_or(1.)};let e=enter.clamp(0.,1.);ui.scene.push_layer(vello::peniko::Mix::Normal,(0.82+0.18*e)as f32,Affine::IDENTITY,&clip);let y=content_top+9.-model.scroll+8.*(1.-e);
+    let bottom=match model.page{Page::Home=>crate::overview::render(&mut ui,model,x,y,w,state,&backdrop),Page::Widgets=>crate::desktop_cards::gallery(&mut ui,model,x,y,w,state),Page::Notifications=>crate::notification_center::render(&mut ui,model,x,y,w),Page::Music=>music(&mut ui,model,x,y,w,state),Page::Focus=>focus(&mut ui,model,x,y,w),Page::Todos=>todos(&mut ui,model,x,y,w),Page::Island=>crate::island_settings::render(&mut ui,model,x,y,w,state),Page::Settings=>crate::settings_hub::render(&mut ui,model,x,y,w,state,&backdrop)};
     ui.scene.pop_layer();ui.end_clip(window);
+    if model.page==Page::Home{crate::acrylic::scroll_edge(&mut ui,rect(24.,content_top-8.,width-48.,66.),true);crate::acrylic::scroll_edge(&mut ui,rect(24.,height-139.,width-48.,55.),false);}
     let max_scroll=if model.page==Page::Home{0.}else{(bottom+model.scroll-(height-120.)).max(0.)};
-    if max_scroll>0.&&model.page!=Page::Home{let track=(height-308.).max(60.);let thumb=(track*track/(track+max_scroll)).max(40.);let pos=(model.scroll/max_scroll).clamp(0.,1.)*(track-thumb);draw::fill(ui.scene,rect(width-14.,188.+pos,4.,thumb),2.,s.outline);}
-    bottom_navigation(&mut ui,model,width,height,state);
+    if max_scroll>0.&&model.page!=Page::Home{let track=(height-content_top-120.).max(60.);let thumb=(track*track/(track+max_scroll)).max(40.);let pos=(model.scroll/max_scroll).clamp(0.,1.)*(track-thumb);draw::fill(ui.scene,rect(width-14.,content_top+9.+pos,4.,thumb),2.,s.outline);}
+    bottom_navigation(&mut ui,model,width,height,state,&backdrop);
     if nothing{if let Some((message,_))=&model.toast{ui.label(&format!("[{message}]"),x,height-145.,12.,s.on_surface_variant,false,w-120.);if model.undo.is_some(){ui.button(rect(width-144.,height-156.,108.,36.),"撤销",None,Action::Undo,true,true);}}}
     if let Some((message,_))=model.toast.as_ref().filter(|_|!nothing){let tw=(ui.text.measure(message,13.,false)+if model.undo.is_some(){136.}else{44.}).clamp(160.,w.min(480.));let r=rect(x+w-tw,height-170.,tw,48.);draw::fill(ui.scene,r,16.,s.high);draw::outline(ui.scene,r,16.,s.outline_variant,1.);ui.label(message,r.x0+18.,r.y0+13.,13.,s.on_surface,false,tw-if model.undo.is_some(){120.}else{36.});if model.undo.is_some(){let r=rect(r.x1-94.,r.y0+7.,84.,44.);let i=ui.hit(r,"撤销移除",Action::Undo,true);ui.state(r,20.,i,s.primary);ui.center("撤销",r,14.,s.primary,true);}}
     if model.palette{palette(&mut ui,model,width,height);}
@@ -73,19 +71,18 @@ pub fn render(model:&Model,text:&mut Text,width:f64,height:f64,state:&ViewState)
         ui.scene.push_layer(vello::peniko::Mix::Normal,alpha as f32,Affine::IDENTITY,&cover);
         draw::fill(ui.scene,cover,0.,s.surface);
         dotisle_render::brand_signature::draw(ui.scene,rect((width-420.)/2.,height*0.44-72.,420.,144.),progress,draw::color(s.on_surface));
-        ui.center(&format!("{} · 开发预览",env!("CARGO_PKG_VERSION")),rect(0.,height*0.44+92.,width,24.),12.,s.on_surface_variant,false);
+        ui.center(&format!("{}",env!("CARGO_PKG_VERSION")),rect(0.,height*0.44+92.,width,24.),12.,s.on_surface_variant,false);
         ui.scene.pop_layer();ui.hits.retain(|h|h.rect.y1<=TITLEBAR_H);
     }
     let max_scroll=if model.tutorial.is_some(){0.}else{max_scroll};let motion_targets=ui.motion_targets;let hits=ui.hits;View{motion_targets,scene,hits,max_scroll}
 }
 pub(crate) fn record(ui:&mut Ui,m:&Model,r:Rect,_flower:bool){if let Some(a)=&m.artwork{draw::image(ui.scene,&a.image,r,if ui.pixel||ui.terminal||ui.swiss{0.}else if ui.miuix{16.}else{15.});}else if ui.pixel{crate::pixel::record(ui.scene,r,ui.s.primary,ui.s.on_surface);}else if ui.terminal{crate::terminal::record(ui.scene,r,ui.s.primary,ui.s.high);}else{draw::fill(ui.scene,r,if ui.swiss{0.}else{15.},if ui.swiss{ui.s.high}else{ui.s.secondary_container});let size=r.width().min(r.height())*0.32;ui.icon(Icon::Music,r.center().x-size/2.,r.center().y-size/2.,size,ui.s.on_surface_variant);}}
 pub(crate) fn player_controls(ui:&mut Ui,m:&Model,x:f64,y:f64,large:bool){
-    let s=ui.s;let size=if large{64.}else{52.};let pad=(size-44.)/2.;let ink=dotisle_domain::music_controls::on_surface(s.primary_container,s.on_primary_container);
-    ui.s.on_surface_variant=ink;ui.icon_button(rect(x,y+pad,44.,44.),Icon::Prev,"上一首",Action::Media("previous"),false,m.track());ui.s=s;
-    ui.icon_button(rect(x+56.,y,size,size),if m.playing(){Icon::Pause}else{Icon::Play},if m.playing(){"暂停播放"}else{"开始播放"},Action::Media("toggle"),true,m.track());
-    ui.s.on_surface_variant=ink;ui.icon_button(rect(x+size+68.,y+pad,44.,44.),Icon::Next,"下一首",Action::Media("next"),false,m.track());ui.s=s;
+    let size=if large{64.}else{52.};let pad=(size-44.)/2.;transport_control(ui,m,rect(x,y+pad,44.,44.),3,"上一首","previous");transport_control(ui,m,rect(x+56.,y,size,size),4,if m.playing(){"暂停播放"}else{"开始播放"},"toggle");transport_control(ui,m,rect(x+size+68.,y+pad,44.,44.),5,"下一首","next");
+
 }
-pub(crate) fn progress(ui:&mut Ui,m:&Model,r:Rect,state:&ViewState){let duration=m.snapshot["track"]["durationSeconds"].as_f64().unwrap_or(0.);let pos=state.media_position.unwrap_or_else(||m.snapshot["positionSeconds"].as_f64().unwrap_or(0.));let bar=dotisle_render::progress::BarStyle::from_setting(m.setting("ProgressBarStyle").as_str().unwrap_or("Wavy"));let thumb=if m.setting("ProgressBarThumbEnabled").as_bool().unwrap_or(false){dotisle_render::progress::ThumbStyle::from_setting(m.setting("ProgressBarThumb").as_str().unwrap_or("Pill"))}else{dotisle_render::progress::ThumbStyle::None};let spin=if m.setting("ProgressBarThumbSpin").as_bool().unwrap_or(false)&&!m.prefs.reduced_motion{state.time*0.25}else{0.};ui.slider(r,if duration>0.{pos/duration}else{0.},m.track()&&m.snapshot["canSeek"].as_bool().unwrap_or(false),if m.playing()&&!m.prefs.reduced_motion{state.time*2.}else{0.},spin,bar,thumb);ui.label(&dotisle_domain::timers::format_time(pos.max(0.)as u64),r.x0,r.y1+2.,11.,ui.s.on_surface_variant,false,80.);let total=dotisle_domain::timers::format_time(duration.max(0.)as u64);ui.label(&total,r.x1-42.,r.y1+2.,11.,ui.s.on_surface_variant,false,60.);}
+pub(crate) fn transport_control(ui:&mut Ui,m:&Model,r:Rect,id:i32,label:&str,command:&'static str){use dotisle_render::{transport::{self,TransportTheme,Colors},transport_icons::{self,Glyph}};let s=ui.s;let theme=TransportTheme::from_setting(m.setting("TransportTheme").as_str().unwrap_or("Reef"));let colors=Colors{accent:0xff000000|s.primary,on_accent:0xff000000|s.on_primary,control:0xff000000|s.on_surface,tonal:0xff000000|s.high,ink_fill:0xff000000|s.on_surface};let hit=ui.hit(r,label,Action::Media(command),m.track());let ink=transport::background(ui.scene,id,r,theme,colors,if m.playing(){1.}else{0.});ui.state(r,r.height()/2.,hit,s.on_surface);let edge=if id==4{24.}else{22.};transport_icons::paint_icon(ui.scene,match id{3=>Glyph::Prev,5=>Glyph::Next,_=>if m.playing(){Glyph::Pause}else{Glyph::Play}},theme,rect(r.center().x-edge/2.,r.center().y-edge/2.,edge,edge),if m.track(){ink}else{0x80000000|s.on_surface_variant});}
+pub(crate) fn progress(ui:&mut Ui,m:&Model,r:Rect,state:&ViewState){let duration=m.snapshot["track"]["durationSeconds"].as_f64().unwrap_or(0.);let pos=state.media_position.unwrap_or_else(||m.snapshot["positionSeconds"].as_f64().unwrap_or(0.));let bar=dotisle_render::progress::BarStyle::from_setting(m.setting("ProgressBarStyle").as_str().unwrap_or("Wavy"));let thumb=if m.setting("ProgressBarThumbEnabled").as_bool().unwrap_or(false){dotisle_render::progress::ThumbStyle::from_setting(m.setting("ProgressBarThumb").as_str().unwrap_or("Pill"))}else{dotisle_render::progress::ThumbStyle::None};let spin=if m.setting("ProgressBarThumbSpin").as_bool().unwrap_or(false)&&!m.prefs.reduced_motion{state.time*0.25}else{0.};ui.slider(r,if duration>0.{pos/duration}else{0.},m.track()&&m.snapshot["canSeek"].as_bool().unwrap_or(false),if m.playing()&&!m.prefs.reduced_motion{state.time*2.}else{0.},spin,bar,thumb);ui.label(&dotisle_domain::timers::format_time(pos.max(0.)as u64),r.x0,r.y1+2.,11.,ui.s.on_surface_variant,false,80.);let total=dotisle_domain::timers::format_time(duration.max(0.)as u64);let total_width=ui.measure_alpha(&total,11.,false);ui.label_alpha(&total,r.x1-total_width,r.y1+2.,11.,ui.s.on_surface_variant,1.,false,total_width+0.5);}
 fn music(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64,state:&ViewState)->f64{
     let s=ui.s;if ui.swiss{crate::swiss::music_head(ui,m,x,y,w,state);}else{ui.panel(rect(x,y,w,300.),s.primary_container);record(ui,m,rect(x+24.,y+24.,252.,252.),false);let px=x+310.;let avail=w-340.;
     ui.label(if m.demo{"音乐预览"}else if m.track(){"正在播放"}else{"等待播放器"},px,y+25.,12.,s.on_primary_container,true,avail);
@@ -109,22 +106,22 @@ fn music(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64,state:&ViewState)->f64{
 }
 fn focus(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64)->f64{crate::timer_surface::render(ui,m,x,y,w)}
 fn todos(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64)->f64{
-    let s=ui.s;ui.label(&format!("{} 件未完成 · 共 {} 件",m.pending(),m.todos.items.len()),x+4.,y+4.,13.,s.on_surface_variant,false,w);let now=dotisle_domain::todos::Now::local();let mut items=m.todos.items.iter().collect::<Vec<_>>();items.sort_by_key(|t|(t.done(&now),t.date.clone(),t.time.clone()));
+    let s=ui.s;ui.label(&format!("{} 件未完成 · 共 {} 件",m.pending(),m.todos.items.len()),x,y+4.,13.,s.on_surface_variant,false,w);let now=dotisle_domain::todos::Now::local();let mut items=m.todos.items.iter().collect::<Vec<_>>();items.sort_by_key(|t|(t.done(&now),t.date.clone(),t.time.clone()));
     if items.is_empty(){ui.panel(rect(x,y+45.,w,360.),s.container);if ui.nothing||ui.terminal||ui.pixel||ui.swiss{ui.icon(Icon::Leaf,x+w/2.-22.,y+136.,44.,s.on_surface);}else{draw::circle(ui.scene,x+w/2.,y+158.,42.,s.secondary_container);ui.icon(Icon::Leaf,x+w/2.-22.,y+136.,44.,if ui.miuix{s.on_secondary_container}else{s.primary});}ui.center("心里，少一点牵挂",rect(x,y+234.,w,44.),28.,s.on_surface,true);ui.center("点击右上角的新建待办，记下第一件事。",rect(x,y+293.,w,28.),14.,s.on_surface_variant,false);return y+405.}
     let mut bottom=y+42.;for t in items{let done=t.done(&now);ui.panel(rect(x,bottom,w,96.),if done{s.container}else{s.high});ui.icon_button(rect(x+16.,bottom+26.,44.,44.),Icon::Check,if done{"恢复待办"}else{"完成待办"},Action::ToggleTodo(t.id.clone()),done,true);let title=if done{format!("已完成 · {}",t.title)}else{t.title.clone()};ui.label(&title,x+78.,bottom+17.,18.,if done{s.on_surface_variant}else{s.on_surface},!done,w-248.);ui.label(&format!("{}  {}{}{}",t.date,t.time,if t.daily{" · 每天"}else{""},if t.content.is_empty(){String::new()}else{format!("  /  {}",t.content)}),x+78.,bottom+54.,13.,s.on_surface_variant,false,w-248.);ui.button(rect(x+w-156.,bottom+26.,88.,44.),"编辑",None,Action::EditTodo(Some(t.id.clone())),true,true);ui.icon_button(rect(x+w-60.,bottom+26.,44.,44.),Icon::Trash,"移除待办",Action::DeleteTodo(t.id.clone()),false,true);bottom+=108.;}bottom
 }
 pub(crate) fn settings(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64)->f64{
     let s=ui.s;let mut cy=y;
-    let mut group=|ui:&mut Ui,title:&str,rows:Vec<(&str,&str,bool,&'static str)>|{ui.label(title,x+4.,cy+5.,20.,s.on_surface,true,w);cy+=48.;let h=rows.len()as f64*80.+16.;ui.panel(rect(x,cy,w,h),s.container);for(i,(title,detail,on,key))in rows.iter().enumerate(){ui.toggle(rect(x+24.,cy+8.+i as f64*80.,w-48.,72.),title,detail,*on,Action::Pref(key));if i+1<rows.len(){draw::line(ui.scene,(x+24.,cy+88.+i as f64*80.),(x+w-24.,cy+88.+i as f64*80.),s.outline,0.5);}}cy+=h+28.;};
+    let mut group=|ui:&mut Ui,title:&str,rows:Vec<(&str,&str,bool,&'static str)>|{ui.label(title,x,cy+5.,20.,s.on_surface,true,w);cy+=48.;let h=rows.len()as f64*80.+16.;ui.panel(rect(x,cy,w,h),s.container);for(i,(title,detail,on,key))in rows.iter().enumerate(){ui.toggle(rect(x+24.,cy+8.+i as f64*80.,w-48.,72.),title,detail,*on,Action::Pref(key));if i+1<rows.len(){draw::line(ui.scene,(x+24.,cy+88.+i as f64*80.),(x+w-24.,cy+88.+i as f64*80.),s.outline,0.5);}}cy+=h+28.;};
     match m.settings_tab{
         0=>{crate::preferences_ui::theme_options(ui,m,x,&mut cy,w);crate::background::settings(ui,m,x,&mut cy,w);cy=crate::appearance::render(ui,m,x,cy,w);},
         1=>{group(ui,"聆听偏好",vec![("显示翻译","有译文时在当前歌词下方显示",m.prefs.translation,"translation"),("逐字高亮","歌词随歌曲进度渐次点亮",m.prefs.word_highlight,"words"),("在线歌曲补全","使用现有音乐服务补全歌曲信息和歌词",m.prefs.online,"online")]);
             ui.panel(rect(x,cy,w,88.),s.container);ui.label("本地歌词",x+24.,cy+16.,17.,s.on_surface,true,w-220.);ui.label(&format!("{} 个文件夹 · 支持本地歌词优先匹配",m.prefs.local_folders.len()),x+24.,cy+48.,12.,s.on_surface_variant,false,w-220.);ui.button(rect(x+w-172.,cy+22.,148.,44.),"管理文件夹",Some(Icon::Folder),Action::Paths,true,true);cy+=116.;
-            ui.label("同步偏移与播放器来源在「音乐与歌词」中统一管理。",x+4.,cy,13.,s.on_surface_variant,false,w);cy+=30.;},
+            ui.label("同步偏移与播放器来源在「音乐与歌词」中统一管理。",x,cy,13.,s.on_surface_variant,false,w);cy+=30.;},
         2=>{},
         3=>{cy=crate::software_update::render(ui,m,x,cy,w);
 
-            if let Some(e)=m.prefs_error.as_ref().or(m.todos.error.as_ref()).or(m.timers.error.as_ref()){ui.label(e,x+4.,cy,14.,s.error,true,w);cy+=56.;}
+            if let Some(e)=m.prefs_error.as_ref().or(m.todos.error.as_ref()).or(m.timers.error.as_ref()){ui.label(e,x,cy,14.,s.error,true,w);cy+=56.;}
             ui.button(rect(x,cy,168.,48.),"关闭设置",Some(Icon::Close),Action::Quit,true,true);cy+=60.;},_=>{}
     }crate::preferences_ui::extra(ui,m,x,cy,w,m.settings_tab)
 }
@@ -156,14 +153,14 @@ fn templates_dialog(ui:&mut Ui,m:&Model,width:f64,height:f64){
     else{let cw=(w-64.)/2.;for(i,t)in templates.iter().take(16).enumerate(){let cx=x+28.+(i%2)as f64*(cw+8.);let cy=y+104.+(i/2)as f64*58.;let r=rect(cx,cy,cw,50.);draw::fill(ui.scene,r,14.,s.high);ui.label(&t.name,cx+14.,cy+6.,15.,s.on_surface,true,cw-160.);ui.label(&crate::workflow::summary(&t.stages),cx+14.,cy+28.,11.,s.on_surface_variant,false,cw-160.);ui.button(rect(cx+cw-136.,cy+7.,76.,36.),"加载",None,Action::WorkflowLoadTemplate(t.id.clone()),true,true);ui.icon_button(rect(cx+cw-52.,cy+7.,40.,36.),Icon::Trash,"删除模板",Action::WorkflowDeleteTemplate(t.id.clone()),false,true);}}
     ui.button(rect(x+w-140.,y+h-62.,112.,44.),"关闭",None,Action::CancelModal,true,true);
 }
-fn palette(ui:&mut Ui,m:&Model,width:f64,height:f64){let s=ui.s;ui.hits.clear();ui.scene.fill(Fill::NonZero,Affine::IDENTITY,draw::alpha(0,0.30),None,&rect(0.,0.,width,height));let w=560.;let x=(width-w)/2.;let y=height*0.18;ui.panel(rect(x,y,w,418.),s.surface);ui.icon(Icon::Search,x+24.,y+25.,24.,s.primary);ui.label(&format!("{}│",if m.query.is_empty(){"搜索页面或设置"}else{&m.query}),x+64.,y+23.,20.,s.on_surface,true,w-140.);ui.icon_button(rect(x+w-64.,y+16.,44.,44.),Icon::Close,"关闭搜索",Action::Palette,false,true);let mut cy=y+84.;for page in Page::ALL{if !m.query.is_empty()&&!page.label().contains(&m.query)&&!page.description().contains(&m.query){continue}let r=rect(x+16.,cy,w-32.,56.);let i=ui.hit(r,page.label(),Action::Navigate(page),true);ui.state(r,16.,i,s.on_surface);ui.icon(page_icon(page),x+30.,cy+16.,24.,s.primary);ui.label(page.label(),x+76.,cy+14.,17.,s.on_surface,false,w-120.);cy+=60.;}if cy==y+84.{ui.label("没有找到页面，试试“音乐”或“偏好”。",x+28.,cy+20.,14.,s.on_surface_variant,false,w-56.);}}
+fn palette(ui:&mut Ui,m:&Model,width:f64,height:f64){let s=ui.s;ui.hits.clear();ui.scene.fill(Fill::NonZero,Affine::IDENTITY,draw::alpha(0,0.30),None,&rect(0.,0.,width,height));let w=560.;let x=(width-w)/2.;let panel_h=100.+Page::ALL.len()as f64*60.;let y=((height-panel_h)/2.).max(24.);ui.panel(rect(x,y,w,panel_h),s.surface);ui.icon(Icon::Search,x+24.,y+25.,24.,s.primary);ui.label(&format!("{}│",if m.query.is_empty(){"搜索页面或设置"}else{&m.query}),x+64.,y+23.,20.,s.on_surface,true,w-140.);ui.icon_button(rect(x+w-64.,y+16.,44.,44.),Icon::Close,"关闭搜索",Action::Palette,false,true);let mut cy=y+84.;for page in Page::ALL{if !m.query.is_empty()&&!page.label().contains(&m.query)&&!page.description().contains(&m.query){continue}let r=rect(x+16.,cy,w-32.,56.);let i=ui.hit(r,page.label(),Action::Navigate(page),true);ui.state(r,16.,i,s.on_surface);ui.icon(page_icon(page),x+30.,cy+16.,24.,s.primary);ui.label(page.label(),x+76.,cy+14.,17.,s.on_surface,false,w-120.);cy+=60.;}if cy==y+84.{ui.label("没有找到页面，试试“音乐”或“偏好”。",x+28.,cy+20.,14.,s.on_surface_variant,false,w-56.);}}
 
-fn bottom_navigation(ui:&mut Ui,m:&Model,width:f64,height:f64,state:&ViewState){
+fn bottom_navigation(ui:&mut Ui,m:&Model,width:f64,height:f64,state:&ViewState,backdrop:&Scene){
  let s=ui.s;let w=(width-96.).min(744.);let r=rect((width-w)/2.,height-94.,w,72.);
- ui.scene.draw_blurred_rounded_rect(Affine::translate((0.,5.)),r,draw::alpha(0,0.10),36.,14.);
- draw::fill(ui.scene,r,36.,s.container);draw::outline(ui.scene,r,36.,s.outline_variant,1.);
+ crate::acrylic::surface(ui,r,36.,backdrop,Affine::IDENTITY,m.prefs.dark);
  let cw=(w-16.)/6.;let selected=Page::ALL.iter().position(|p|*p==m.page).unwrap_or(5)as f64;
  let position=if m.prefs.reduced_motion{selected}else{if state.rail_y>=112.{((state.rail_y-112.)/82.).clamp(0.,5.)}else{selected}};
- draw::fill(ui.scene,rect(r.x0+8.+cw*position,r.y0+8.,cw,56.),28.,s.secondary_container);
- for(i,page)in Page::ALL.iter().enumerate(){let item=rect(r.x0+8.+i as f64*cw,r.y0+8.,cw,56.);let hit=ui.hit(item,page.label(),Action::Navigate(*page),true);ui.state(item,28.,hit,s.on_surface);let ink=if m.page==*page{s.on_secondary_container}else{s.on_surface_variant};ui.icon(page_icon(*page),item.center().x-10.,item.y0+6.,20.,ink);ui.center(page.label(),rect(item.x0,item.y0+29.,item.width(),22.),11.,ink,m.page==*page);}
+ let selected=rect(r.x0+8.+cw*position,r.y0+8.,cw,56.);let classic=!ui.nothing&&!ui.miuix&&!ui.terminal&&!ui.pixel&&!ui.swiss;
+ if classic{ui.scene.draw_blurred_rounded_rect(Affine::translate((0.,2.)),selected,draw::alpha(0,if m.prefs.dark{0.15}else{0.055}),28.,5.);draw::fill(ui.scene,selected,28.,s.high);ui.scene.stroke(&Stroke::new(0.7),Affine::IDENTITY,draw::alpha(if m.prefs.dark{0xffffff}else{0x000000},if m.prefs.dark{0.06}else{0.035}),None,&draw::continuous_rect(selected,28.));}else{draw::fill(ui.scene,selected,28.,s.secondary_container);}
+ for(i,page)in Page::ALL.iter().enumerate(){let item=rect(r.x0+8.+i as f64*cw,r.y0+8.,cw,56.);let hit=ui.hit(item,page.label(),Action::Navigate(*page),true);ui.state(item,28.,hit,s.on_surface);let ink=if m.page==*page{if classic{s.primary}else{s.on_secondary_container}}else{s.on_surface_variant};ui.icon(page_icon(*page),item.center().x-10.,item.y0+6.,20.,ink);ui.center(page.label(),rect(item.x0,item.y0+29.,item.width(),22.),11.,ink,m.page==*page);}
 }
