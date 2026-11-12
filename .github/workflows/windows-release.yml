@@ -90,7 +90,8 @@ jobs:
           "INNO_SETUP_COMPILER=$compiler" >> $env:GITHUB_ENV
 
       - name: Restore Rust build cache
-        uses: actions/cache@v4
+        id: rust_cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -165,6 +166,8 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 build --release --locked --package dotisle-focus --lib --features module-broken
           if($LASTEXITCODE -ne 0){throw 'Rollback fixture build failed'}
           Copy-Item target/release/dotisle_focus.dll validation/module-fixtures/focus-broken.dll
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 build --release --locked --package dotisle-focus --lib
+          if($LASTEXITCODE -ne 0){throw 'Restoring production focus build failed'}
           if((Get-FileHash target/release/dotisle_core.dll -Algorithm SHA256).Hash -ne $before){throw 'CORE changed during focus-only builds'}
 
       - name: Verify module replacement, independent updates and automatic rollback
@@ -220,6 +223,16 @@ jobs:
             gh release edit $tag --draft=false --prerelease=false --latest
           }
           if($LASTEXITCODE -ne 0){throw 'Release publish failed'}
+
+      - name: Preserve Rust cache even when acceptance fails
+        if: ${{ always() && steps.rust_cache.outcome == 'success' && steps.rust_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: windows-gnu-zig013-rust-${{ hashFiles('Rust/Cargo.lock', 'tools/li-cargo.ps1', 'Rust/Cargo.toml') }}-${{ github.sha }}
 
       - name: Save packages and verification for inspection
         if: always()

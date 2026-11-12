@@ -22,3 +22,8 @@ pub fn validate_set(items:&[Value])->Result<(),String>{
  for (id,_) in MODULES{if !items.iter().any(|i|i["id"]==*id){return Err(format!("缺少模块 {id}"));}}
  Ok(())
 }
+#[cfg(test)]mod tests{
+ use super::*;
+ fn valid()->Vec<Value>{MODULES.iter().map(|(id,_)|metadata(id,"1.0.0")).collect()}
+ #[test]fn compatibility_checks_core_range_and_required_dependencies(){let modules=valid();assert!(validate_set(&modules).is_ok());let mut wrong=modules.clone();wrong.iter_mut().find(|m|m["id"]=="focus").unwrap()["coreMin"]=json!(2);assert!(validate_set(&wrong).is_err());let mut missing=modules.clone();missing.retain(|m|m["id"]!="lyrics");assert!(validate_set(&missing).is_err());let mut abi=modules;abi[0]["abi"]=json!(2);assert!(validate_set(&abi).is_err());}
+}

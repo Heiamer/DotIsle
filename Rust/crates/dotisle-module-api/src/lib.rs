@@ -65,14 +65,14 @@ impl Client {
 }
 pub fn call(id:&str,method:&str,args:Value)->Result<Value,String>{Client::open(id)?.call(method,args)}
 pub fn versions()->Value{static V:OnceLock<Value>=OnceLock::new();V.get_or_init(||{let mut result=json!({});for(id,_)in MODULES{if *id=="core"{continue;}if let Ok(v)=Client::open(id).and_then(|c|c.describe()){result[*id]=v["version"].clone();}}result}).clone()}
-pub struct Session {client:Result<Client,String>,pub handle:u64,service:&'static str}
+pub struct Session {client:Result<Client,String>,pub handle:u64,service:&'static str,owner:std::thread::ThreadId,shared:bool}
 impl Session {
  pub fn new(module:&str,service:&'static str,args:Value)->(Self,Result<Value,String>){
   let client=Client::open(module);let reply=client.as_ref().map_err(Clone::clone).and_then(|c|c.call(&format!("{service}.new"),args)).and_then(|v|if v["handle"].as_u64().is_some_and(|h|h!=0){Ok(v)}else{Err("模块没有创建有效会话".into())});
   let key=format!("{module}.{service}");if let Ok(mut errors)=INITIALIZATION_ERRORS.get_or_init(Default::default).lock(){match &reply{Ok(_)=>{errors.remove(&key);},Err(e)=>{errors.insert(key,e.clone());}}}
-  let handle=reply.as_ref().ok().and_then(|v|v["handle"].as_u64()).unwrap_or(0);(Self{client,handle,service},reply)
+  let handle=reply.as_ref().ok().and_then(|v|v["handle"].as_u64()).unwrap_or(0);(Self{client,handle,service,owner:std::thread::current().id(),shared:matches!(module,"music"|"lyrics")},reply)
  }
- pub fn invoke(&self,method:&str,mut args:Value)->Result<Value,String>{args["handle"]=json!(self.handle);self.client.as_ref().map_err(Clone::clone)?.call(&format!("{}.{method}",self.service),args)}
+ pub fn invoke(&self,method:&str,mut args:Value)->Result<Value,String>{if !self.shared&&std::thread::current().id()!=self.owner{return Err("线程绑定的模块会话不能在其他线程使用".into());}args["handle"]=json!(self.handle);self.client.as_ref().map_err(Clone::clone)?.call(&format!("{}.{method}",self.service),args)}
 }
 impl Drop for Session {fn drop(&mut self){if self.handle!=0{let _=self.invoke("drop",json!({}));}}}
 #[cfg(test)]mod tests {
