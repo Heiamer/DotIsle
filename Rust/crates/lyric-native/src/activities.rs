@@ -1,12 +1,12 @@
 //! Tool panel and a redirectable spring used when selecting island activities.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Task {
     pub id: String,
     pub title: String,
     pub detail: String,
     pub color: u32,
 }
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TimerPresentation {
     pub label: String,
     pub elapsed: String,
@@ -16,7 +16,7 @@ pub struct TimerPresentation {
     pub indefinite: bool,
     pub elapsed_ms: u64,
 }
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Panel {
     pub kind: u8,
     pub title: String,

@@ -1,2 +1,0 @@
-//! Static resource capability evidence, not a live player test.
-fn main(){let mut failed=false;for path in std::env::args_os().skip(1){let path=std::path::PathBuf::from(path);match lyric_backend::netease_control::inspect_player_resources(&path){Ok(layout)=>println!("{}",serde_json::json!({"path":path,"success":true,"layout":layout,"evidence":"static-resource-only"})),Err(error)=>{failed=true;println!("{}",serde_json::json!({"path":path,"success":false,"error":error}));}}}if failed{std::process::exit(1)}}

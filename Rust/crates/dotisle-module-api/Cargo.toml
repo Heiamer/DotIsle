@@ -1,0 +1,7 @@
+[package]
+name = "dotisle-module-api"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+[dependencies]
+serde_json.workspace = true

@@ -1,13 +1,13 @@
 [package]
 name = "dotisle-domain"
-version.workspace = true
+version = "3.5.1"
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+dotisle-module-api={path="../dotisle-module-api"}
 lyric-core = { path = "../lyric-core" }
 lyric-backend = { path = "../lyric-backend" }
 serde.workspace = true
 serde_json.workspace = true
-material-colors = { path = "../../vendor/material-colors-0.4.2" }
 windows = { version = "0.62", features = ["Win32_System_SystemInformation"] }

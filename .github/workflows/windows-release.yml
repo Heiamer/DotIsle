@@ -89,24 +89,44 @@ jobs:
           }
           "INNO_SETUP_COMPILER=$compiler" >> $env:GITHUB_ENV
 
-      - name: Test workspace
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 test --workspace --locked
+      - name: Restore Rust build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: windows-gnu-zig013-rust-${{ hashFiles('Rust/Cargo.lock', 'tools/li-cargo.ps1', 'Rust/Cargo.toml') }}-${{ github.sha }}
+          restore-keys: |
+            windows-gnu-zig013-rust-${{ hashFiles('Rust/Cargo.lock', 'tools/li-cargo.ps1', 'Rust/Cargo.toml') }}-
 
-      - name: Build release binaries
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 build --release --workspace --bins --locked
+      - name: Build release binaries and internal DLLs
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 build --release --workspace --bins --lib --locked
+          if($LASTEXITCODE -ne 0){throw 'DLL build failed'}
+
+      - name: Test workspace against built service DLLs
+        run: |
+          $env:DOTISLE_MODULE_DIR="$pwd/target/release"
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 test --workspace --locked
+          if($LASTEXITCODE -ne 0){throw 'Module regression failed'}
 
       - name: Package installer, portable, OTA and source
         run: |
           $out=Join-Path $pwd 'publish/release-output'
           New-Item -ItemType Directory -Force $out | Out-Null
           if ('${{ inputs.verify_only }}' -eq 'true') {
-            Copy-Item release-notes/DotIsle-Pomodoro-Fix-Notes.md "$out/DotIsle-$env:VERSION-Notes.md"
+            Copy-Item release-notes/DotIsle-Modular-Verification.md "$out/DotIsle-$env:VERSION-Notes.md"
           } else {
           Copy-Item "release-notes/DotIsle-$env:VERSION-Notes.md" $out
           }
           python build/package_release.py --binary-dir "$pwd/target/release" --output $out --work-dir "$env:RUNNER_TEMP/package" --iscc $env:INNO_SETUP_COMPILER --version $env:VERSION --shader-cache "$pwd/Assets/ShaderCache/Hybrid29"
           if($LASTEXITCODE -ne 0){throw 'Packaging failed'}
+          python build/package_modules.py --runtime "$out/DotIsle-$env:VERSION" --output $out --version $env:VERSION
+          if($LASTEXITCODE -ne 0){throw 'Module packaging failed'}
           git archive --format=zip --prefix="DotIsle-$env:VERSION-Source/" -o "$out/DotIsle-$env:VERSION-Source.zip" HEAD
+          $index=Join-Path $out "LyricIsland-$env:VERSION-Modules.json"
+          "$((Get-FileHash $index -Algorithm SHA256).Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($index))" | Add-Content "$out/LyricIsland-$env:VERSION-SHA256.txt" -Encoding ascii
           $lines=@()
           Get-ChildItem $out -File | Where-Object {$_.Name -ne "DotIsle-$env:VERSION-SHA256.txt"} | Sort-Object Name | ForEach-Object {
             $lines += "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
@@ -135,6 +155,25 @@ jobs:
             if($process.ExitCode -ne 0){throw "$effect capture failed: $($process.ExitCode)"}
           }
 
+      - name: Build focus-only acceptance DLLs without rebuilding CORE
+        run: |
+          $before=(Get-FileHash target/release/dotisle_core.dll -Algorithm SHA256).Hash
+          New-Item -ItemType Directory -Force validation/module-fixtures | Out-Null
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 build --release --locked --package dotisle-focus --lib --features module-probe
+          if($LASTEXITCODE -ne 0){throw 'Focus probe build failed'}
+          Copy-Item target/release/dotisle_focus.dll validation/module-fixtures/focus-probe.dll
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 build --release --locked --package dotisle-focus --lib --features module-broken
+          if($LASTEXITCODE -ne 0){throw 'Rollback fixture build failed'}
+          Copy-Item target/release/dotisle_focus.dll validation/module-fixtures/focus-broken.dll
+          if((Get-FileHash target/release/dotisle_core.dll -Algorithm SHA256).Hash -ne $before){throw 'CORE changed during focus-only builds'}
+
+      - name: Verify module replacement, independent updates and automatic rollback
+        run: |
+          python tests/test_module_packages.py
+          if($LASTEXITCODE -ne 0){throw 'Resource package regression failed'}
+          python tests/verify_modules.py --runtime "publish/release-output/DotIsle-$env:VERSION" --probe validation/module-fixtures/focus-probe.dll --broken validation/module-fixtures/focus-broken.dll --scratch "$env:RUNNER_TEMP/module-transactions" --report validation/modules/report.json
+          if($LASTEXITCODE -ne 0){throw 'Module transaction acceptance failed'}
+
       - name: Package validation evidence
         if: always()
         run: |
@@ -148,7 +187,7 @@ jobs:
 
       - name: Require successful acceptance reports
         run: |
-          foreach($report in @('validation/source/report.json','validation/settings/report.json','validation/settings/layout-audit/report.json','validation/themes/report.json','validation/themes/background-report.json','validation/covers/report.json','validation/native-timers/report.json','validation/liquid/report.json','validation/glow/report.json')){
+          foreach($report in @('validation/source/report.json','validation/settings/report.json','validation/settings/layout-audit/report.json','validation/themes/report.json','validation/themes/background-report.json','validation/covers/report.json','validation/native-timers/report.json','validation/liquid/report.json','validation/glow/report.json','validation/modules/report.json')){
             if(-not(Test-Path -LiteralPath $report)){throw "Missing acceptance report: $report"}
             if((Get-Content -LiteralPath $report -Raw | ConvertFrom-Json).success -ne $true){throw "Acceptance failed: $report"}
           }

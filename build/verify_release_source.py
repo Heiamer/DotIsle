@@ -20,8 +20,11 @@ def verify(root, version):
     lock = tomllib.loads((root / 'Rust/Cargo.lock').read_text(encoding='utf-8'))
     locked = {p['name']: p for p in lock['package'] if 'source' not in p}
     for member in workspace['workspace']['members']:
-        name = tomllib.loads((root / 'Rust' / member / 'Cargo.toml').read_text(encoding='utf-8'))['package']['name']
-        if locked.get(name, {}).get('version') != version:
+        member_package = tomllib.loads((root / 'Rust' / member / 'Cargo.toml').read_text(encoding='utf-8'))['package']
+        name = member_package['name']
+        declared = member_package['version']
+        expected = version if isinstance(declared, dict) and declared.get('workspace') else declared
+        if locked.get(name, {}).get('version') != expected:
             errors.append(f'Workspace lock version differs: {name}')
     installer = (root / 'build/installer.iss').read_text(encoding='utf-8')
     if f'#define AppVersion "{version}"' not in installer or 'AppPublisher=Heiamer' not in installer:

@@ -25,6 +25,7 @@ name = "lyric-uninstall"
 path = "src/bin/uninstall.rs"
 
 [dependencies]
+dotisle-module-api={path="../dotisle-module-api"}
 dotisle-render = { path = "../dotisle-render" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 vello = { package = "dotisle-scene", path = "../dotisle-scene" }

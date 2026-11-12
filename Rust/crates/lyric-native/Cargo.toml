@@ -1,14 +1,16 @@
 [package]
+autobins = false
 name = "lyric-native"
-version.workspace = true
+version = "3.5.1"
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
 name = "LyricIsland"
-path = "src/main.rs"
+path = "src/launcher.rs"
 
 [dependencies]
+dotisle-module-api = {path="../dotisle-module-api"}
 dotisle-domain = { path = "../dotisle-domain" }
 dotisle-render = { path = "../dotisle-render" }
 vello = { package = "dotisle-scene", path = "../dotisle-scene" }
@@ -22,7 +24,6 @@ base64.workspace = true
 roxmltree = "=0.20.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # Material Color Utilities port (Celebi quantizer, Score, HCT/TonalPalette) for cover-driven Monet palettes.
-material-colors = { path = "../../vendor/material-colors-0.4.2" }
 windows-core = "0.62"
 windows = { version = "0.62", features = [
   "Win32_Storage_Packaging_Appx", "ApplicationModel", "ApplicationModel_Core", "Foundation", "Storage_Streams", "Win32_System_WinRT", "UI_ViewManagement", "Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_Com",
@@ -41,3 +42,8 @@ windows = { version = "0.62", features = [
 
 
 
+
+[lib]
+name = "dotisle_core"
+path = "src/main.rs"
+crate-type = ["cdylib"]

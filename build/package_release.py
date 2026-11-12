@@ -36,6 +36,8 @@ def main():
         target=runtime/shipped
         shutil.copy2(args.binary_dir/built,target)
         embed_icon(target,root/'Assets/LyricIsland-v3.ico')
+    for module in ['dotisle_core.dll', 'dotisle_settings.dll', 'dotisle_focus.dll', 'dotisle_todos.dll', 'dotisle_music.dll', 'dotisle_lyrics.dll', 'dotisle_notifications.dll', 'dotisle_history.dll', 'dotisle_automation.dll', 'dotisle_devices.dll', 'dotisle_osd.dll', 'dotisle_sound.dll', 'dotisle_widgets.dll', 'dotisle_themes.dll', 'dotisle_glow.dll']:
+        shutil.copy2(args.binary_dir/module,runtime/module)
     shutil.copytree(root/'Assets',runtime/'Assets',ignore=shutil.ignore_patterns('ShaderCache'))
     shutil.copytree(args.shader_cache,runtime/'Assets/ShaderCache/Hybrid29')
     shutil.copytree(root/'licenses',runtime/'licenses')

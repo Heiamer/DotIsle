@@ -11,7 +11,7 @@ mod glass;
 mod material_preview;
 mod mini_contrast;
 mod motion_preview;
-mod notification_store;
+
 mod startup_preview;
 mod surface;
 mod update_activity;
@@ -31,6 +31,8 @@ mod glow_preview;
 mod history;
 mod immersive_preview;
 mod island_glow;
+mod module_canvas;
+mod module_updates;
 mod layout;
 mod liquid_preview;
 mod liquid_timer;
@@ -46,7 +48,7 @@ mod theme_accent;
 mod timers;
 mod todos;
 mod vello_surface;
-mod weather_http;
+
 mod widget_data;
 mod widget_metrics;
 use base64::Engine;
@@ -298,6 +300,7 @@ struct App {
     /// When the steady playback loop last drew. See `frame_pacing::CONTINUOUS_FPS`.
     continuous_last: Instant,
     glow: island_glow::State,
+    module_updates:module_updates::Manager,
     widget_data: widget_data::Hub,
     desktop_widgets: dotisle_domain::desktop_widgets::Store,
     widget_metrics: widget_metrics::Hub,
@@ -343,6 +346,7 @@ struct App {
 }
 impl App {
     fn new(base: PathBuf, data: PathBuf, demo: bool) -> Self {
+        lyric_backend::updates::set_runtime_version(DISPLAY_VERSION);
         // Demo builds paint a synthetic track, but a font probe must still resolve the real
         // settings.json + preferences.json so the island honours fontScope exactly as shipping does.
         let settings = if demo && std::env::var_os("LYRICISLAND_FONT_PROBE").is_none() {
@@ -362,6 +366,7 @@ impl App {
                 data.join("Logs"),
             ))
         };
+        let module_updates=module_updates::Manager::new(&base,&data,demo);
         let now = Instant::now();
         let snapshot = if demo {
             json!({"track":{"id":"demo","title":"晚风电台","artist":"DotIsle","sourceApp":"演示","durationSeconds":236.},"isPlaying":true,"positionSeconds":83.,"canSeek":true,"frame":{"currentLine":"景色は移ろい瞬く間に変わる","currentTranslation":"景色转瞬即逝","nextLine":"変わらないものはない","wordScanProgress":0.4}})
@@ -550,6 +555,7 @@ impl App {
             dirty: true,
             continuous_last: now - Duration::from_secs(1),
             glow: Default::default(),
+            module_updates,
             widget_data,
             desktop_widgets,
             widget_metrics: Default::default(),
@@ -2941,6 +2947,7 @@ impl App {
         }
     }
     unsafe fn tick(&mut self) -> Result<()> {
+        if self.module_updates.tick(){self.dirty=true;}
         if self.greeting_pending {
             self.greeting_pending = false;
             if !self.banner.visible() && self.queue.is_empty() {
@@ -3573,6 +3580,11 @@ impl App {
             self.advance_timers(Instant::now());
         }
         match command {
+            "moduleRefresh"=>{self.module_updates.refresh();json!({"success":true})},
+            "moduleStage"=>match self.module_updates.stage(r["value"]["id"].as_str().unwrap_or(""),r["value"]["path"].as_str().unwrap_or("")){Ok(())=>json!({"success":true,"message":"正在校验模块"}),Err(e)=>json!({"success":false,"message":e})},
+            "moduleRollback"=>match self.module_updates.rollback(r["value"]["id"].as_str().unwrap_or("")){Ok(())=>json!({"success":true,"message":"正在校验备份"}),Err(e)=>json!({"success":false,"message":e})},
+            "moduleCancel"=>match self.module_updates.cancel(){Ok(())=>json!({"success":true}),Err(e)=>json!({"success":false,"message":e})},
+            "moduleApply"=>match self.module_updates.apply(r["value"]["callerSettingsPid"].as_u64().unwrap_or(0)as u32){Ok(())=>json!({"success":true}),Err(e)=>json!({"success":false,"message":e})},
             "media" => {
                 let name = r["value"]["action"].as_str().unwrap_or("");
                 if !["toggle", "previous", "next", "seek"].contains(&name) {
@@ -3669,7 +3681,8 @@ impl App {
                 self.widget_metrics.poll();
                 self.todo_now = todos::Now::local();
                 let t = &self.snapshot["track"];
-                let mut state = json!({"success":true,"version":DISPLAY_VERSION,"settings":self.settings,"softwareUpdate":self.updates.state,"settingsDark":match self.settings["SettingsTheme"].as_str().unwrap_or("System"){"Dark"=>true,"Light"=>false,_=>theme_accent::system_dark()},"dataDirectory":self.data.to_string_lossy(),"musicPreview":self.music_preview(),"activeSource":self.snapshot["activeSource"],"nativeStatus":self.snapshot["nativeStatus"],"title":t["title"],"artist":t["artist"],"songId":t["songId"],"player":t["sourceApp"],"position":self.snapshot["positionSeconds"],"duration":t["durationSeconds"],"timeline":self.snapshot["clockStatus"],"lyricSource":self.snapshot["lyricSource"],"isPlaying":self.snapshot["isPlaying"],"canSeek":self.snapshot["canSeek"],"seekStatus":self.snapshot["seekStatus"],"neteaseAttention":lyric_backend::netease_control::attention_diagnostics(),"mediaCommand":self.snapshot["mediaCommand"],"expanded":self.expanded,"islandEnabled":!self.user_hidden,"islandVisible":self.opacity>0.001,"processId":std::process::id(),"windowLevel":unsafe{window_level::snapshot(self.visual_hwnd,self.hwnd)},"glassCaptures":self.renderer.as_ref().map_or(0,Renderer::glass_captures),"rendererGeneration":self.renderer_generation,"renderFrames":self.render_frames,"renderer":"Vello Hybrid 0.2 / wgpu 29","lastError":self.error,"notificationState":self.notification_state,"notificationVisible":self.banner.visible(),"notificationGeometry":self.notification_geometry(),"osdVisible":self.osd_banner.visible()||self.bottom_osd.visible(),"bottomOsdVisible":self.bottom_osd.visible(),"systemState":self.osd.status(),"todos":self.todos.list(&self.todo_now),"todoError":self.todos.error,"today":self.todo_now.date,"now":self.todo_now.time,"pendingPage":self.pending_page,"islandGeometry":{"mini":self.mini(),"capsule":self.layout.capsule,"card":self.layout.card,"satellite":!self.mini()&&self.components.len()>1,"horizontalGestures":self.flag("SwipeActivities",true)},"miniContrast":{"enabled":self.mini()&&self.flag("MiniAutoContrast",true)&&self.settings["MiniMaterial"]=="Glass","sampledLuminance":self.mini_contrast.sampled,"darkText":self.mini_contrast.dark,"foreground":format!("#{:06X}",self.mini_contrast.ink()&0xffffff)},"compactTargetWidth":self.compact_size.width_target,"compactWidth":self.compact_size.width,"compactHeight":self.compact_size.height,"compactSecondary":self.compact_secondary,"timers":self.timers.list(),"timerError":self.timers.error,"widgetData":self.widget_data.value,"desktopWidgets":self.desktop_widgets.list(),"desktopWidgetError":self.desktop_widgets.error,"systemMetrics":self.widget_metrics.value,"activeComponent":self.selected,"components":self.components,"notificationHistory":self.history.list(),"historyError":self.history.error,"quickHotkey":self.settings["QuickReminderHotkey"],"pendingAction":self.pending_action,"sessionLocked":self.session_locked,"focusResume":self.focus_resume.as_ref().map(|r|json!({"generation":r.generation,"ids":r.ids,"prompted":r.prompted})),"templates":self.templates.list(),"workflowTemplateError":self.templates.error,"appRules":self.rules.list(&self.todo_now.date),"appRuleError":self.rules.error,"foreground":{"path":self.foreground.path,"name":self.foreground.name,"unreadable":self.foreground.unreadable},"lockWatch":true});
+                let mut module_versions=dotisle_module_api::versions();module_versions["core"]=json!(DISPLAY_VERSION);
+                let mut state = json!({"success":true,"version":DISPLAY_VERSION,"bundleVersion":lyric_backend::updates::installed_version(),"settings":self.settings,"moduleManagement":self.module_updates.state,"moduleVersions":module_versions,"moduleErrors":dotisle_module_api::initialization_errors(),"moduleReady":dotisle_module_api::initialization_errors().as_object().is_some_and(|m|m.is_empty()),"softwareUpdate":self.updates.state,"settingsDark":match self.settings["SettingsTheme"].as_str().unwrap_or("System"){"Dark"=>true,"Light"=>false,_=>theme_accent::system_dark()},"dataDirectory":self.data.to_string_lossy(),"musicPreview":self.music_preview(),"activeSource":self.snapshot["activeSource"],"nativeStatus":self.snapshot["nativeStatus"],"title":t["title"],"artist":t["artist"],"songId":t["songId"],"player":t["sourceApp"],"position":self.snapshot["positionSeconds"],"duration":t["durationSeconds"],"timeline":self.snapshot["clockStatus"],"lyricSource":self.snapshot["lyricSource"],"isPlaying":self.snapshot["isPlaying"],"canSeek":self.snapshot["canSeek"],"seekStatus":self.snapshot["seekStatus"],"neteaseAttention":lyric_backend::netease_control::attention_diagnostics(),"mediaCommand":self.snapshot["mediaCommand"],"expanded":self.expanded,"islandEnabled":!self.user_hidden,"islandVisible":self.opacity>0.001,"processId":std::process::id(),"windowLevel":unsafe{window_level::snapshot(self.visual_hwnd,self.hwnd)},"glassCaptures":self.renderer.as_ref().map_or(0,Renderer::glass_captures),"rendererGeneration":self.renderer_generation,"renderFrames":self.render_frames,"renderer":"Vello Hybrid 0.2 / wgpu 29","lastError":self.error,"notificationState":self.notification_state,"notificationVisible":self.banner.visible(),"notificationGeometry":self.notification_geometry(),"osdVisible":self.osd_banner.visible()||self.bottom_osd.visible(),"bottomOsdVisible":self.bottom_osd.visible(),"systemState":self.osd.status(),"todos":self.todos.list(&self.todo_now),"todoError":self.todos.error,"today":self.todo_now.date,"now":self.todo_now.time,"pendingPage":self.pending_page,"islandGeometry":{"mini":self.mini(),"capsule":self.layout.capsule,"card":self.layout.card,"satellite":!self.mini()&&self.components.len()>1,"horizontalGestures":self.flag("SwipeActivities",true)},"miniContrast":{"enabled":self.mini()&&self.flag("MiniAutoContrast",true)&&self.settings["MiniMaterial"]=="Glass","sampledLuminance":self.mini_contrast.sampled,"darkText":self.mini_contrast.dark,"foreground":format!("#{:06X}",self.mini_contrast.ink()&0xffffff)},"compactTargetWidth":self.compact_size.width_target,"compactWidth":self.compact_size.width,"compactHeight":self.compact_size.height,"compactSecondary":self.compact_secondary,"timers":self.timers.list(),"timerError":self.timers.error,"widgetData":self.widget_data.value,"desktopWidgets":self.desktop_widgets.list(),"desktopWidgetError":self.desktop_widgets.error,"systemMetrics":self.widget_metrics.value,"activeComponent":self.selected,"components":self.components,"notificationHistory":self.history.list(),"historyError":self.history.error,"quickHotkey":self.settings["QuickReminderHotkey"],"pendingAction":self.pending_action,"sessionLocked":self.session_locked,"focusResume":self.focus_resume.as_ref().map(|r|json!({"generation":r.generation,"ids":r.ids,"prompted":r.prompted})),"templates":self.templates.list(),"workflowTemplateError":self.templates.error,"appRules":self.rules.list(&self.todo_now.date),"appRuleError":self.rules.error,"foreground":{"path":self.foreground.path,"name":self.foreground.name,"unreadable":self.foreground.unreadable},"lockWatch":true});
                 state["glassRefraction"] = self
                     .renderer
                     .as_ref()
@@ -7402,3 +7415,17 @@ mod manual_retirement_tests {
         assert!(!a.scene().transient_only);
     }
 }
+
+// Stable C ABI; no Rust values or allocator ownership cross the DLL boundary.
+#[no_mangle]
+pub extern "C" fn dotisle_module_abi() -> u32 { 1 }
+#[no_mangle]
+pub extern "C" fn dotisle_module_run() -> i32 {
+    match std::panic::catch_unwind(main) { Ok(()) => 0, Err(_) => 1 }
+}
+
+#[no_mangle]
+pub extern "C" fn dotisle_module_kind() -> u32 { 1 }
+
+fn describe_only(_:serde_json::Value)->std::result::Result<serde_json::Value,String>{Err("bootstrap module has no service commands".into())}
+dotisle_module_api::export_service!("core",describe_only);

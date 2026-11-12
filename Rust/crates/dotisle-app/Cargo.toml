@@ -1,14 +1,16 @@
 [package]
+autobins = false
 name = "dotisle-app"
-version.workspace = true
+version = "3.5.1"
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
 name = "lyric-island-settings"
-path = "src/main.rs"
+path = "src/launcher.rs"
 
 [dependencies]
+dotisle-module-api={path="../dotisle-module-api"}
 lyric-core = { path = "../lyric-core" }
 dotisle-render = { path = "../dotisle-render" }
 dotisle-domain = { path = "../dotisle-domain" }
@@ -26,3 +28,8 @@ windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsA
 
 [build-dependencies]
 embed-manifest = "=1.5.1"
+
+[lib]
+name = "dotisle_settings"
+path = "src/main.rs"
+crate-type = ["cdylib"]

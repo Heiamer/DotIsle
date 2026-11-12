@@ -105,6 +105,7 @@ pub enum Action {
     WidgetConfigure(String),
     WidgetLaunch(String),
     BackgroundPick,
+    ReplaceModule(&'static str),
     BackgroundReset,
     BackgroundEnable(bool),
     BackgroundMode(bool),
@@ -940,7 +941,7 @@ impl Model {
             | Action::WidgetFocus
             | Action::WidgetConfigure(_)
             | Action::WidgetLaunch(_) => {}
-            Action::BackgroundPick => {}
+            Action::BackgroundPick | Action::ReplaceModule(_) => {}
             Action::BackgroundReset => {
                 let old = self.prefs.clone();
                 let i = crate::themes::background_slot(self);

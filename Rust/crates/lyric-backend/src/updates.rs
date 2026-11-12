@@ -1,6 +1,14 @@
 //! GitHub Releases is the update source; installation is performed in place.
 use serde_json::{json,Value};
 use std::time::Duration;
+static RUNTIME_VERSION:std::sync::OnceLock<String>=std::sync::OnceLock::new();
+pub fn set_runtime_version(version:&str){let _=RUNTIME_VERSION.set(version.into());}
+fn runtime_version()->&'static str{RUNTIME_VERSION.get().map(String::as_str).unwrap_or(env!("CARGO_PKG_VERSION"))}
+pub fn installed_version()->String {
+ let state=std::env::current_exe().ok().and_then(|p|p.parent().map(|p|p.join("ModuleState.json"))).and_then(|p|std::fs::read(p).ok()).and_then(|b|serde_json::from_slice::<Value>(&b).ok()).unwrap_or(Value::Null);
+ if state["schemaVersion"]==1 && state["runtimeVersion"]==runtime_version() {if let Some(v)=state["version"].as_str().filter(|v|version(v).is_some()){return v.into();}}
+ runtime_version().into()
+}
 pub const RELEASES:&str="https://github.com/Heiamer/DotIsle/releases/latest";
 const RELEASE_MANIFEST:&str="https://raw.githubusercontent.com/Heiamer/DotIsle/main/Assets/UpdateManifest.json";
 fn version(input:&str)->Option<[u32;4]>{
@@ -23,10 +31,10 @@ pub fn describe(release:&Value,current:&str)->Result<Value,String>{
 fn sources()->Value{let path=std::env::current_exe().ok().and_then(|p|p.parent().map(|p|p.join("Assets/UpdateSources.json")));path.and_then(|p|std::fs::read(p).ok()).and_then(|b|serde_json::from_slice(&b).ok()).unwrap_or_else(||serde_json::from_str(include_str!("../../../../Assets/UpdateSources.json")).unwrap_or_else(|_|json!({})))}
 fn repository(input:&str,host:&str)->Result<String,String>{let prefix=format!("https://{host}/");let slug=input.trim().strip_prefix(&prefix).ok_or("更新源必须使用官方 HTTPS 仓库地址")?.trim_end_matches('/').trim_end_matches(".git");let parts=slug.split('/').collect::<Vec<_>>();if parts.len()!=2||parts.iter().any(|p|p.is_empty()||!p.bytes().all(|b|b.is_ascii_alphanumeric()||b"-_.".contains(&b))||*p=="."||*p==".."){return Err("更新仓库地址无效".into())}Ok(slug.to_owned())}
 fn gitee_asset_url(slug:&str,release_id:u64,assets:&Value,name:&str)->Result<String,String>{let item=assets.as_array().and_then(|a|a.iter().find(|a|a["name"].as_str().or_else(||a["file_name"].as_str())==Some(name))).ok_or_else(||format!("国内发行版缺少 {name}"))?;let id=item["id"].as_u64().filter(|n|*n>0).ok_or("国内附件标识无效")?;Ok(format!("https://gitee.com/api/v5/repos/{slug}/releases/{release_id}/attach_files/{id}/download"))}
-fn check_gitee(repo:&str)->Result<Value,String>{let slug=repository(repo,"gitee.com")?;let api=format!("https://gitee.com/api/v5/repos/{slug}");let ctx=crate::http::RequestContext::new(Duration::from_secs(10));let release=crate::http::get_system(&format!("{api}/releases/latest"),&ctx)?;let mut result=describe(&release,env!("CARGO_PKG_VERSION"))?;let tag=release["tag_name"].as_str().ok_or("国内版本号缺失")?;result["source"]=json!("Gitee 国内源");result["url"]=json!(format!("https://gitee.com/{slug}/releases/tag/{tag}"));if result["newer"]==true{let id=release["id"].as_u64().filter(|n|*n>0).ok_or("国内发行版标识无效")?;let attachments=crate::http::get_system(&format!("{api}/releases/{id}/attach_files?per_page=100"),&ctx)?;let v=tag.trim_start_matches('v');result["manifestUrl"]=json!(gitee_asset_url(&slug,id,&attachments,&format!("LyricIsland-{v}-SHA256.txt"))?);result["zipUrl"]=json!(gitee_asset_url(&slug,id,&attachments,&format!("LyricIsland-{v}-Portable.zip"))?);}Ok(result)}
+fn check_gitee(repo:&str)->Result<Value,String>{let slug=repository(repo,"gitee.com")?;let api=format!("https://gitee.com/api/v5/repos/{slug}");let ctx=crate::http::RequestContext::new(Duration::from_secs(10));let release=crate::http::get_system(&format!("{api}/releases/latest"),&ctx)?;let mut result=describe(&release,&installed_version())?;let tag=release["tag_name"].as_str().ok_or("国内版本号缺失")?;result["source"]=json!("Gitee 国内源");result["url"]=json!(format!("https://gitee.com/{slug}/releases/tag/{tag}"));if result["newer"]==true{let id=release["id"].as_u64().filter(|n|*n>0).ok_or("国内发行版标识无效")?;let attachments=crate::http::get_system(&format!("{api}/releases/{id}/attach_files?per_page=100"),&ctx)?;let v=tag.trim_start_matches('v');result["manifestUrl"]=json!(gitee_asset_url(&slug,id,&attachments,&format!("LyricIsland-{v}-SHA256.txt"))?);result["zipUrl"]=json!(gitee_asset_url(&slug,id,&attachments,&format!("LyricIsland-{v}-Portable.zip"))?);}Ok(result)}
 fn manifest_release(value:Value)->Result<Value,String>{
     if value["published"]!=true{return Err("备用清单对应版本尚未发布".into())}
-    describe(&value,env!("CARGO_PKG_VERSION"))?;Ok(value)
+    describe(&value,&installed_version())?;Ok(value)
 }
 fn check_github()->Result<Value,String>{
     let ctx=crate::http::RequestContext::new(Duration::from_secs(10));
@@ -46,7 +54,7 @@ fn check_github()->Result<Value,String>{
             }
         }
     };
-    let mut result=describe(&release,env!("CARGO_PKG_VERSION"))?;
+    let mut result=describe(&release,&installed_version())?;
     let v=release["tag_name"].as_str().ok_or("版本号缺失")?.trim_start_matches('v');
     let base=format!("https://github.com/Heiamer/DotIsle/releases/download/v{v}/LyricIsland-{v}");
     result["source"]=json!("GitHub");result["manifestUrl"]=json!(format!("{base}-SHA256.txt"));result["zipUrl"]=json!(format!("{base}-Portable.zip"));Ok(result)

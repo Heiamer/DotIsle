@@ -1,0 +1,14 @@
+[package]
+name="dotisle-sound"
+version="1.0.0"
+edition="2021"
+license="MIT"
+[lib]
+name="dotisle_sound"
+crate-type=["cdylib"]
+[dependencies]
+dotisle-module-api={path="../dotisle-module-api"}
+dotisle-module-storage={path="../dotisle-module-storage"}
+serde.workspace=true
+serde_json.workspace=true
+dotisle-domain={path="../dotisle-domain"}

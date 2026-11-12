@@ -32,6 +32,6 @@ impl Selection{pub fn identity_score(&self)->Option<i32>{Some(self.score as i32)
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]pub enum LookupStatus{Found,Missing,TransientFailure}
 #[derive(Clone,Debug)]pub struct Lookup{pub lyrics:Option<Selection>,pub status:LookupStatus}
 impl Lookup{pub fn from_lyrics(lyrics:Option<Selection>)->Self{Self{status:if lyrics.is_some(){LookupStatus::Found}else{LookupStatus::Missing},lyrics}}pub fn unavailable()->Self{Self::from_lyrics(None)}}
-#[derive(Clone,Debug)]pub struct Hit{pub provider:Provider,pub id:String,pub title:String,pub artists:Vec<String>,pub album:String,pub duration:Duration,pub extra:BTreeMap<String,String>}
+#[derive(Clone,Debug,Serialize,Deserialize)]pub struct Hit{pub provider:Provider,pub id:String,pub title:String,pub artists:Vec<String>,pub album:String,pub duration:Duration,pub extra:BTreeMap<String,String>}
 #[derive(Clone,Debug,Serialize,Deserialize)]pub struct Payload{pub format:Format,pub original:String,pub translation:String,pub instrumental:bool}
-#[derive(Default)]pub struct DisplayFrame{pub current_line:String,pub next_line:String,pub title:String,pub line_progress:f64,pub current_line_index:i32,pub is_pure_music:bool,pub word_scan_progress:Option<f64>,pub current_translation:Option<String>,pub next_translation:Option<String>,pub has_track_translation:bool}
+#[derive(Default,Serialize,Deserialize)]pub struct DisplayFrame{pub current_line:String,pub next_line:String,pub title:String,pub line_progress:f64,pub current_line_index:i32,pub is_pure_music:bool,pub word_scan_progress:Option<f64>,pub current_translation:Option<String>,pub next_translation:Option<String>,pub has_track_translation:bool}

@@ -12,7 +12,7 @@ impl Hub{
   if let Some(pending)=meta["applyingVersion"].as_str().map(str::to_owned).filter(|v|!v.is_empty()){
    // The helper was asked to install this version. Matching the running version means it
    // succeeded; anything else means it rolled back and the old build is what is running now.
-   state=if same_version(&pending,crate::DISPLAY_VERSION){json!({"phase":"completed","version":pending,"message":"新版已启动，设置已保留。"})}else{json!({"phase":"failed","version":pending,"message":"更新未完成，当前仍为原版本。"})};
+   state=if same_version(&pending,&lyric_backend::updates::installed_version()){json!({"phase":"completed","version":pending,"message":"新版已启动，设置已保留。"})}else{json!({"phase":"failed","version":pending,"message":"更新未完成，当前仍为原版本。"})};
    if let Some(fields)=meta.as_object_mut(){fields.remove("applyingVersion");fields.remove("applyingAt");}
    if path.parent().is_some_and(|parent|!parent.as_os_str().is_empty()){let _=lyric_backend::io::save_settings(&path,&meta);}
   }

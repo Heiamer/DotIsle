@@ -1,0 +1,8 @@
+[package]
+name="dotisle-module-storage"
+version="1.0.0"
+edition="2021"
+license="MIT"
+[dependencies]
+serde_json.workspace=true
+windows={version="0.62",features=["Win32_Storage_FileSystem"]}

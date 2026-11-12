@@ -520,6 +520,7 @@ version = "3.5.1"
 dependencies = [
  "base64",
  "dotisle-domain",
+ "dotisle-module-api",
  "dotisle-render",
  "dotisle-scene",
  "embed-manifest",
@@ -536,15 +537,153 @@ dependencies = [
 ]
 
 [[package]]
-name = "dotisle-domain"
-version = "3.5.1"
+name = "dotisle-automation"
+version = "1.0.0"
 dependencies = [
- "lyric-backend",
- "lyric-core",
- "material-colors",
+ "dotisle-module-api",
+ "dotisle-module-storage",
  "serde",
  "serde_json",
  "windows 0.62.2",
+]
+
+[[package]]
+name = "dotisle-devices"
+version = "1.0.0"
+dependencies = [
+ "dotisle-module-api",
+ "dotisle-module-storage",
+ "serde",
+ "serde_json",
+ "windows 0.62.2",
+ "windows-core 0.62.2",
+]
+
+[[package]]
+name = "dotisle-domain"
+version = "3.5.1"
+dependencies = [
+ "dotisle-module-api",
+ "lyric-backend",
+ "lyric-core",
+ "serde",
+ "serde_json",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "dotisle-focus"
+version = "1.0.0"
+dependencies = [
+ "dotisle-module-api",
+ "dotisle-module-storage",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "dotisle-glow"
+version = "1.0.0"
+dependencies = [
+ "dotisle-module-api",
+ "dotisle-module-storage",
+ "lyric-core",
+ "serde",
+ "serde_json",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "dotisle-history"
+version = "1.0.0"
+dependencies = [
+ "dotisle-module-api",
+ "dotisle-module-storage",
+ "serde",
+ "serde_json",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "dotisle-lyrics"
+version = "1.0.0"
+dependencies = [
+ "aes",
+ "base64",
+ "cc",
+ "dotisle-module-api",
+ "encoding_rs",
+ "flate2",
+ "iced-x86",
+ "lyric-archive",
+ "lyric-core",
+ "md-5",
+ "regex",
+ "roxmltree",
+ "serde",
+ "serde_json",
+ "sha2",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "dotisle-module-api"
+version = "1.0.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
+name = "dotisle-module-storage"
+version = "1.0.0"
+dependencies = [
+ "serde_json",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "dotisle-music"
+version = "1.0.0"
+dependencies = [
+ "aes",
+ "base64",
+ "dotisle-module-api",
+ "iced-x86",
+ "lyric-archive",
+ "lyric-core",
+ "md-5",
+ "regex",
+ "roxmltree",
+ "serde",
+ "serde_json",
+ "sha2",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "dotisle-notifications"
+version = "1.0.0"
+dependencies = [
+ "dotisle-module-api",
+ "dotisle-module-storage",
+ "image",
+ "roxmltree",
+ "serde",
+ "serde_json",
+ "windows 0.62.2",
+ "windows-core 0.62.2",
+]
+
+[[package]]
+name = "dotisle-osd"
+version = "1.0.0"
+dependencies = [
+ "dotisle-module-api",
+ "dotisle-module-storage",
+ "serde",
+ "serde_json",
+ "windows 0.62.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -568,6 +707,54 @@ dependencies = [
  "vello_common",
  "vello_hybrid",
  "wgpu",
+]
+
+[[package]]
+name = "dotisle-sound"
+version = "1.0.0"
+dependencies = [
+ "dotisle-domain",
+ "dotisle-module-api",
+ "dotisle-module-storage",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "dotisle-themes"
+version = "1.0.0"
+dependencies = [
+ "dotisle-module-api",
+ "dotisle-module-storage",
+ "lyric-core",
+ "material-colors",
+ "serde",
+ "serde_json",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "dotisle-todos"
+version = "1.0.0"
+dependencies = [
+ "dotisle-module-api",
+ "dotisle-module-storage",
+ "serde",
+ "serde_json",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "dotisle-widgets"
+version = "1.0.0"
+dependencies = [
+ "dotisle-domain",
+ "dotisle-module-api",
+ "dotisle-module-storage",
+ "lyric-core",
+ "serde",
+ "serde_json",
+ "windows 0.62.2",
 ]
 
 [[package]]
@@ -1345,6 +1532,7 @@ version = "3.5.1"
 dependencies = [
  "aes",
  "base64",
+ "dotisle-module-api",
  "iced-x86",
  "lyric-archive",
  "lyric-core",
@@ -1361,6 +1549,7 @@ dependencies = [
 name = "lyric-bootstrap"
 version = "3.5.1"
 dependencies = [
+ "dotisle-module-api",
  "dotisle-render",
  "dotisle-scene",
  "flate2",
@@ -1376,12 +1565,7 @@ dependencies = [
 name = "lyric-core"
 version = "3.5.1"
 dependencies = [
- "base64",
- "cc",
- "encoding_rs",
- "flate2",
  "regex",
- "roxmltree",
  "serde",
  "serde_json",
  "sha2",
@@ -1394,12 +1578,12 @@ version = "3.5.1"
 dependencies = [
  "base64",
  "dotisle-domain",
+ "dotisle-module-api",
  "dotisle-render",
  "dotisle-scene",
  "image",
  "lyric-backend",
  "lyric-core",
- "material-colors",
  "pollster",
  "roxmltree",
  "serde",

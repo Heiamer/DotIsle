@@ -313,7 +313,7 @@ fn confirm_started(pipe: &str, version: &str, old_pid: u32) -> bool {
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline {
         if let Ok(state) = win::pipe_request(pipe, &json!({"version": 1, "command": "state"}), Duration::from_secs(1)) {
-            if state["version"].as_str() == Some(version) && state["processId"].as_u64() != Some(old_pid as u64) { return true; }
+            if (state["version"].as_str() == Some(version) || state["bundleVersion"].as_str() == Some(version)) && state["processId"].as_u64() != Some(old_pid as u64) { return true; }
         }
         std::thread::sleep(Duration::from_millis(250));
     }
@@ -321,6 +321,7 @@ fn confirm_started(pipe: &str, version: &str, old_pid: u32) -> bool {
 }
 
 pub fn run(args: Vec<String>) -> i32 {
+    if let Some(code)=crate::local_modules::cli(&args){return code;}
     if let Some(code) = crate::vello_overlay::cli(&args) { return code; }
     if args.len() == 2 && args[0] == "--self-test" {
         return match self_test(Path::new(&args[1])) { Ok(()) => 0, Err(error) => { eprintln!("{error}"); 1 } };
@@ -351,10 +352,13 @@ pub fn run(args: Vec<String>) -> i32 {
         let preferred = if args.len() >= 8 && !args[6].is_empty() && !args[7].is_empty() { Some((args[6].clone(), args[7].clone())) } else { None };
         let state = shared_state();
         let mut reporter = Reporter::new(authenticated, job.clone(), nonce, pipe.clone(), state.clone());
-        download_bundle(&target_path, &version, &work, preferred, &mut reporter)?;
-        let zip = work.join("update.zip");
+        let modular = crate::module_update::prepare(&target_path, &version, &work, &mut reporter)?;
         let stage = work.join("stage");
-        extract(&zip, &stage, &version)?;
+        if !modular {
+            download_bundle(&target_path, &version, &work, preferred, &mut reporter)?;
+            extract(&work.join("update.zip"), &stage, &version)?;
+        }
+        crate::local_modules::validate_overlay(&target_path,&stage,&work)?;
         merge_marker(&stage, &target_path, &version)?;
 
         if authenticated {

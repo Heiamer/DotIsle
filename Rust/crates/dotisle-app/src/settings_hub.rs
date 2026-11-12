@@ -18,6 +18,7 @@ pub fn destination(tab: u8) -> u8 {
         243 => 8,
         244 => 4,
         245 => 3,
+        246 => 9,
         _ => tab,
     }
 }
@@ -34,6 +35,7 @@ pub fn parent(tab: u8) -> u8 {
 }
 fn name(tab: u8) -> &'static str {
     match tab {
+        9 => "模块管理",
         135 => "灵动岛布局编辑器",
         0 => "控制中心外观",
         1 => "歌词与本地文件",
@@ -47,7 +49,7 @@ fn name(tab: u8) -> &'static str {
         128 => "灵动岛尺寸与排版",
         129 => "材质与取色",
         130 => "交互与系统提示",
-        131 => "动效与圆角",
+        131 => "光效、动效与圆角",
         132 => "播放器与同步",
         133 => "播放进度条",
         134 => "播放按钮主题",
@@ -141,6 +143,7 @@ pub fn render(
         return crate::layout_editor::render(ui, m, x, y, w, state);
     }
     if tab == 255 {
+        link(ui,x,y,w,"模块管理","CORE 与 13 个功能 DLL · 替换、校验和回滚",9,backdrop);y+=100.;
         let cw = (w - 16.) / 2.;
         for (i, (title, detail)) in GROUPS.iter().enumerate() {
             link(
@@ -157,7 +160,7 @@ pub fn render(
         return y + 284.;
     }
     let is_group = (240..243).contains(&tab);
-    let direct = matches!(tab, 3 | 4 | 8);
+    let direct = matches!(tab, 3 | 4 | 8 | 9);
     ui.button(
         rect(x, y, 128., 40.),
         if is_group || direct {
@@ -192,7 +195,7 @@ pub fn render(
                 (128, "模式、大小、字体与音乐排版"),
                 (129, "胶囊、卡片与 Mini 的材质和配色"),
                 (130, "悬停、手势、位置与系统状态提示"),
-                (131, "形变曲线、圆角与高级弹簧参数"),
+                (131, "音乐、计时与更新光效开关，形变曲线和圆角"),
             ],
             241 => &[
                 (135, "10 套播放按钮主题、8 种进度条与 16 种滑块"),
@@ -215,6 +218,7 @@ pub fn render(
         }
         return y;
     }
+    if tab==9{return crate::module_management::render(ui,m,x,y,w);}
     if (128..135).contains(&tab) {
         return crate::island_settings::render(ui, m, x, y, w, state);
     }

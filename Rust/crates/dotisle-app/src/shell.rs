@@ -292,6 +292,9 @@ impl App {
         } else {
             None
         };
+        if let Action::ReplaceModule(id)=a {
+            if let Some(s)=&self.main{match platform::choose_module(&s.window){Ok(Some(path))=>self.model.native_command("moduleStage",serde_json::json!({"id":id,"path":path})),Ok(None)=>{},Err(e)=>self.model.message(&e)}}self.redraw();return;
+        }
         if matches!(a, Action::BackgroundPick) {
             if let Some(s) = &self.main {
                 match platform::choose_background(&s.window) {
