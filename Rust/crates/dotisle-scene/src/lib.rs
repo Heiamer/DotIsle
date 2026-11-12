@@ -64,6 +64,31 @@ impl Scene {
     pub fn is_empty(&self) -> bool {
         self.commands.is_empty()
     }
+    /// A uniform, opaque backdrop needs no Gaussian pass. Require the complete
+    /// sampling region to lie inside its sole fill, including transformed cards.
+    pub fn uniform_color(&self, region: Rect, source: Affine) -> Option<peniko::Color> {
+        let [Command::Fill(_, transform, Brush::Solid(color), _, Geometry::Rect(bounds))] =
+            self.commands.as_slice()
+        else {
+            return None;
+        };
+        if color.components[3] != 1. {
+            return None;
+        }
+        let inverse = (source * *transform).inverse();
+        for point in [
+            region.origin(),
+            (region.x1, region.y0).into(),
+            (region.x0, region.y1).into(),
+            (region.x1, region.y1).into(),
+        ] {
+            let point = inverse * point;
+            if !point.x.is_finite() || !point.y.is_finite() || !bounds.contains(point) {
+                return None;
+            }
+        }
+        Some(*color)
+    }
     pub fn fill<'a>(
         &mut self,
         fill: Fill,
@@ -470,7 +495,7 @@ fn replay(
                 scene.reset_paint_transform();
                 scene.set_paint(cache.resolve(brush));
                 scene.set_fill_rule(*fill);
-                // Match the previous renderer's unhinted outlines, including variable fonts.
+                // Keep unhinted outlines, including variable fonts, on the proven rendering path.
                 scene
                     .glyph_run(resources, font)
                     .font_size(*size)
@@ -484,6 +509,7 @@ fn replay(
 
 /// Persistent CPU preparation and GPU resources; no compute rasterizer is constructed.
 pub struct Renderer {
+    pub cpu_timings: [f64; 3],
     renderer: vello_hybrid::Renderer,
     resources: vello_hybrid::Resources,
     scene: vello_hybrid::Scene,
@@ -520,6 +546,7 @@ impl Renderer {
             settings,
         );
         Self {
+            cpu_timings: [0.; 3],
             renderer,
             resources,
             scene: vello_hybrid::Scene::new(width as u16, height as u16),
@@ -537,8 +564,23 @@ impl Renderer {
         height: u32,
         view: &wgpu::TextureView,
     ) -> Result<(), String> {
+        self.prepare(device, queue, encoder, scene, scale, width, height)?;
+        self.render_prepared(device, queue, encoder, width, height, view)
+    }
+    /// Prepare paths and image uploads while the preceding frame is on the GPU.
+    pub fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        scene: &Scene,
+        scale: f64,
+        width: u32,
+        height: u32,
+    ) -> Result<(), String> {
         let w = u16::try_from(width).map_err(|_| "render width exceeds 65535")?;
         let h = u16::try_from(height).map_err(|_| "render height exceeds 65535")?;
+        let started = std::time::Instant::now();
         self.scene.reset_and_resize(w, h);
         self.paints.maintain();
         self.paints.prepare(
@@ -549,6 +591,7 @@ impl Renderer {
             queue,
             encoder,
         );
+        let prepared_at = std::time::Instant::now();
         replay(
             &scene.commands,
             Affine::scale(scale),
@@ -557,6 +600,22 @@ impl Renderer {
             &mut self.paints,
             &mut Vec::new(),
         );
+
+        self.cpu_timings[0] = prepared_at.duration_since(started).as_secs_f64() * 1000.;
+        self.cpu_timings[1] = prepared_at.elapsed().as_secs_f64() * 1000.;
+        Ok(())
+    }
+    /// Encode the prepared scene once a swapchain texture becomes available.
+    pub fn render_prepared(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        width: u32,
+        height: u32,
+        view: &wgpu::TextureView,
+    ) -> Result<(), String> {
+        let started = std::time::Instant::now();
         self.renderer
             .render(
                 &self.scene,
@@ -569,6 +628,7 @@ impl Renderer {
                 &vello_hybrid::TextureBindings::new(),
             )
             .map_err(|e| e.to_string())?;
+        self.cpu_timings[2] = started.elapsed().as_secs_f64() * 1000.;
         self.paints
             .retire(&mut self.renderer, &mut self.resources, encoder);
         Ok(())
@@ -578,6 +638,46 @@ impl Renderer {
 #[cfg(test)]
 mod scene_storage_tests {
     use super::*;
+    #[test]
+    fn uniform_backdrop_requires_opaque_complete_coverage() {
+        let mut scene = Scene::new();
+        let bounds = Rect::new(0., 0., 400., 300.);
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            peniko::Color::WHITE,
+            None,
+            &bounds,
+        );
+        let sample = Rect::new(10., 10., 90., 90.);
+        assert_eq!(
+            scene.uniform_color(sample, Affine::IDENTITY),
+            Some(peniko::Color::WHITE)
+        );
+        assert!(scene
+            .uniform_color(sample, Affine::translate((100., 100.)))
+            .is_none());
+        assert!(scene
+            .uniform_color(Rect::new(-1., 0., 10., 10.), Affine::IDENTITY)
+            .is_none());
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            peniko::Color::BLACK,
+            None,
+            &sample,
+        );
+        assert!(scene.uniform_color(sample, Affine::IDENTITY).is_none());
+        scene.reset();
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            peniko::Color::TRANSPARENT,
+            None,
+            &bounds,
+        );
+        assert!(scene.uniform_color(sample, Affine::IDENTITY).is_none());
+    }
     #[test]
     fn reset_detaches_while_the_presented_frame_remains_valid() {
         let mut scene = Scene::new();

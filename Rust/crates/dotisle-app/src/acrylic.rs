@@ -41,10 +41,17 @@ pub fn surface(ui: &mut Ui, r: Rect, radius: f64, backdrop: &Scene, source: Affi
         14.,
     );
     ui.scene.push_isolated_clip_layer(Affine::IDENTITY, &shape);
-    ui.scene
-        .push_frost_layer(Affine::IDENTITY, &r.inflate(28., 28.), 12.);
-    ui.scene.append(backdrop, Some(source));
-    ui.scene.pop_layer();
+    let sample_bounds = r.inflate(28., 28.);
+    if let Some(color) = backdrop.uniform_color(sample_bounds, source) {
+        // Blurring an opaque constant colour produces the same constant colour.
+        ui.scene
+            .fill(Fill::NonZero, Affine::IDENTITY, color, None, &shape);
+    } else {
+        ui.scene
+            .push_frost_layer(Affine::IDENTITY, &sample_bounds, 12.);
+        ui.scene.append(backdrop, Some(source));
+        ui.scene.pop_layer();
+    }
     let tint = Gradient::new_linear((r.x0, r.y0), (r.x1, r.y1)).with_stops([
         draw::alpha(s.container, if dark { 0.78 } else { 0.76 }),
         draw::alpha(s.surface, if dark { 0.72 } else { 0.60 }),
@@ -57,16 +64,16 @@ pub fn surface(ui: &mut Ui, r: Rect, radius: f64, backdrop: &Scene, source: Affi
     ]);
     ui.scene
         .fill(Fill::NonZero, Affine::IDENTITY, &light, None, &shape);
-    let grain = ImageBrush::from(grain());
-    for row in 0..(r.height() / 128.).ceil() as usize {
-        for col in 0..(r.width() / 128.).ceil() as usize {
-            ui.scene.draw_image(
-                &grain,
-                Affine::translate((r.x0 + col as f64 * 128., r.y0 + row as f64 * 128.))
-                    * Affine::scale(2.),
-            );
-        }
-    }
+    // Repeat one image brush instead of rebuilding dozens of tile geometries.
+    let grain = ImageBrush::from(grain()).with_extend(vello::peniko::Extend::Repeat);
+    let grain_transform = Affine::translate((r.x0, r.y0)) * Affine::scale(2.);
+    ui.scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        &grain,
+        Some(grain_transform),
+        &shape,
+    );
     ui.scene.pop_layer();
     ui.scene.stroke(
         &vello::kurbo::Stroke::new(0.8),
@@ -107,35 +114,5 @@ pub fn album(ui: &mut Ui, r: Rect, radius: f64, image: &ImageData) {
         .with_stops([draw::alpha(0x080b14, 0.), draw::alpha(0x080b14, 0.56)]);
     ui.scene
         .fill(Fill::NonZero, Affine::IDENTITY, &shade, None, &lower);
-    ui.scene.pop_layer();
-}
-
-/// Fade a sampled, genuinely blurred content edge into the unobscured deck.
-pub fn scroll_edge(ui: &mut Ui, r: Rect, top: bool) {
-    use vello::peniko::{BlendMode, Compose, Mix};
-    let source = ui.scene.snapshot();
-    let (start, end) = if top { (r.y0, r.y1) } else { (r.y1, r.y0) };
-    ui.scene.push_isolated_clip_layer(Affine::IDENTITY, &r);
-    ui.scene
-        .push_frost_layer(Affine::IDENTITY, &r.inflate(30., 30.), 10.);
-    ui.scene.append(&source, None);
-    ui.scene.pop_layer();
-    let mask = Gradient::new_linear((r.x0, start), (r.x0, end))
-        .with_stops([draw::alpha(0xffffff, 1.), draw::alpha(0xffffff, 0.)]);
-    ui.scene.push_layer(
-        BlendMode::new(Mix::Normal, Compose::DestIn),
-        1.,
-        Affine::IDENTITY,
-        &r,
-    );
-    ui.scene
-        .fill(Fill::NonZero, Affine::IDENTITY, &mask, None, &r);
-    ui.scene.pop_layer();
-    let veil = Gradient::new_linear((r.x0, start), (r.x0, end)).with_stops([
-        draw::alpha(ui.s.surface, 0.82),
-        draw::alpha(ui.s.surface, 0.),
-    ]);
-    ui.scene
-        .fill(Fill::NonZero, Affine::IDENTITY, &veil, None, &r);
     ui.scene.pop_layer();
 }

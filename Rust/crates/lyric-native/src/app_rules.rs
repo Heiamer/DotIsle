@@ -123,7 +123,12 @@ impl Store{
  pub fn clear_usage(&mut self)->Result<(),String>{self.usage.clear();self.persist_usage()}
 }
 #[cfg(test)]mod tests{use super::*;
- fn dir()->PathBuf{let p=std::env::temp_dir().join(format!("LyricIsland.Rules.{}.{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));std::fs::create_dir_all(&p).unwrap();p}
+ fn dir()->PathBuf{
+  static SERIAL:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+  let serial=SERIAL.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
+  let p=std::env::temp_dir().join(format!("LyricIsland.Rules.{}.{}.{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),serial));
+  std::fs::create_dir_all(&p).unwrap();p
+ }
  fn store()->(Store,PathBuf){let d=dir();(Store::new(d.join("rules.json"),d.join("usage.json"),"2026-10-17"),d)}
  fn now()->crate::todos::Now{crate::todos::Now{date:"2026-10-17".into(),time:"09:00".into()}}
  fn rule(path:&str,trigger:&str)->Value{json!({"name":"导出前检查","executablePath":path,"trigger":trigger,"message":"检查导出目录","cooldownMinutes":30,"thresholdMinutes":10,"enabled":true})}

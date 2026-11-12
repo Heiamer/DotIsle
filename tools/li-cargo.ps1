@@ -6,6 +6,8 @@ $ToolchainRoot = Join-Path $env:USERPROFILE '.rustup/toolchains/stable-x86_64-pc
 $env:PATH = (Join-Path $ToolchainRoot 'bin') + ';' + (Join-Path $ToolchainRoot 'lib/rustlib/x86_64-pc-windows-gnu/bin/self-contained') + ';' + $env:PATH
 if ($env:DOTISLE_TARGET_DIR) { $env:CARGO_TARGET_DIR = $env:DOTISLE_TARGET_DIR } else { $env:CARGO_TARGET_DIR = Join-Path $ProjectRoot 'target' }
 $env:CC = Join-Path $ProjectRoot 'tools/zig-cc.cmd'
+# Rust performs the final link, so the C archive must not require Zig's UBSan runtime.
+if (-not $env:CFLAGS) { $env:CFLAGS = '-O2 -fno-sanitize=undefined' }
 $DllTool=$env:DOTISLE_DLLTOOL
 if(-not $DllTool){$command=Get-Command llvm-dlltool.exe -ErrorAction SilentlyContinue;if($command){$DllTool=$command.Source}}
 if(-not $DllTool -or -not (Test-Path -LiteralPath $DllTool)){throw 'Install LLVM llvm-dlltool.exe on PATH, or set DOTISLE_DLLTOOL to its absolute path.'}

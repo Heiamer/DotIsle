@@ -9,7 +9,7 @@ on:
       version:
         description: Release version without the leading v
         required: true
-        default: "3.5.0"
+        default: "3.5.1"
       publish:
         description: Publish the release instead of leaving a draft
         type: boolean
@@ -119,6 +119,22 @@ jobs:
           DOTISLE_LAYOUT_AUDIT_CAPTURE: "0"
         run: python build/verify_packaged_ui.py --runtime "publish/release-output/DotIsle-${{ env.VERSION }}" --output validation
 
+      - name: Verify native timers and optional island effects
+        run: |
+          $runtime="$pwd/publish/release-output/DotIsle-$env:VERSION"
+          python tests/verify_pomodoro.py $runtime --scratch "$env:RUNNER_TEMP/native-timers" --report validation/native-timers/report.json
+          if($LASTEXITCODE -ne 0){throw 'Native timer acceptance failed'}
+          $env:LYRICISLAND_TEST_PIPE='LyricIsland.Settings.test.release-effects.'+[guid]::NewGuid().ToString('N')
+          foreach($effect in @('liquid','glow')){
+            $destination="$pwd/validation/$effect"
+            $process=Start-Process "$runtime/LyricIsland.exe" -ArgumentList @("--$effect-preview",$destination,'--data-dir',"$env:RUNNER_TEMP/native-effects") -WindowStyle Hidden -PassThru
+            if(-not $process.WaitForExit(180000)){
+              $process.Kill()
+              throw "$effect capture timed out"
+            }
+            if($process.ExitCode -ne 0){throw "$effect capture failed: $($process.ExitCode)"}
+          }
+
       - name: Package validation evidence
         if: always()
         run: |
@@ -132,7 +148,7 @@ jobs:
 
       - name: Require successful acceptance reports
         run: |
-          foreach($report in @('validation/source/report.json','validation/settings/report.json','validation/settings/layout-audit/report.json','validation/themes/report.json','validation/themes/background-report.json','validation/covers/report.json')){
+          foreach($report in @('validation/source/report.json','validation/settings/report.json','validation/settings/layout-audit/report.json','validation/themes/report.json','validation/themes/background-report.json','validation/covers/report.json','validation/native-timers/report.json','validation/liquid/report.json','validation/glow/report.json')){
             if(-not(Test-Path -LiteralPath $report)){throw "Missing acceptance report: $report"}
             if((Get-Content -LiteralPath $report -Raw | ConvertFrom-Json).success -ne $true){throw "Acceptance failed: $report"}
           }

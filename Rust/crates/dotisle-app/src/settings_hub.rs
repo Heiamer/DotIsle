@@ -90,7 +90,7 @@ fn link(
         Icon::Settings,
         Icon::Import,
     ][index];
-    let classic = !ui.nothing && !ui.miuix && !ui.terminal && !ui.pixel && !ui.swiss;
+    let classic = !ui.miuix && !ui.terminal && !ui.pixel && !ui.swiss;
     let color = if classic {
         [0x5877d5, 0xd45a6c, 0xb88833, 0x467e67, 0x72727e, 0x5381b4][index]
     } else {
@@ -188,7 +188,7 @@ pub fn render(
         let entries: &[(u8, &str)] = match tab {
             240 => &[
                 (135, "组合歌曲信息、歌词、播放按钮与进度条，预览并应用"),
-                (0, "六套控制中心主题与背景"),
+                (0, "控制中心主题与背景"),
                 (128, "模式、大小、字体与音乐排版"),
                 (129, "胶囊、卡片与 Mini 的材质和配色"),
                 (130, "悬停、手势、位置与系统状态提示"),

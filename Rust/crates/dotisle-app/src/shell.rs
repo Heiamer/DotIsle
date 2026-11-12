@@ -70,6 +70,8 @@ struct Surface {
     hidden_since: Option<Instant>,
 }
 struct App {
+    frame_trace: Option<crate::frame_trace::Trace>,
+    overlay_motion: crate::overlay_motion::OverlayMotion,
     signature_at: Option<Instant>,
     desktop: crate::desktop_host::Host,
     scroll_motion: Spring,
@@ -111,6 +113,8 @@ impl App {
         let mut color_motion = dotisle_domain::dynamic_color::RoleMotion::default();
         color_motion.update(model.dynamic_color().roles, 0., false);
         Self {
+            frame_trace: crate::frame_trace::Trace::from_args(model.demo),
+            overlay_motion: Default::default(),
             signature_at: None,
             desktop: Default::default(),
             scroll_motion: Spring::new(0.),
@@ -160,13 +164,13 @@ impl App {
             .with_inner_size(LogicalSize::new(1200., 800.))
             .with_min_inner_size(LogicalSize::new(900., 680.))
             .with_decorations(false)
-            .with_resizable(crate::nothing::slot(&self.model) == 0)
+            .with_resizable(crate::themes::slot(&self.model) == 0)
             .with_transparent(true)
             .with_visible(false);
         let window = Arc::new(event.create_window(attrs).map_err(|e| e.to_string())?);
         window.set_ime_allowed(true);
         platform::backdrop(&window);
-        platform::set_theme_icon(&window, crate::nothing::slot(&self.model));
+        platform::set_theme_icon(&window, crate::themes::slot(&self.model));
         self.startup_phase("creating-surface");
         let mut surface = self.gpu.surface(window.clone())?;
         self.startup_phase("building-first-frame");
@@ -192,7 +196,13 @@ impl App {
         };
         self.rail.snap(initial.rail_y);
         let mut initial = initial;
-        if !self.warm && self.model.setting("StartupSignatureEnabled") != false {
+        if !self.warm
+            && self
+                .frame_trace
+                .as_ref()
+                .is_none_or(|trace| trace.is_startup())
+            && self.model.setting("StartupSignatureEnabled") != false
+        {
             self.signature_at = Some(Instant::now());
             initial.signature_age = Some(0.);
         }
@@ -275,8 +285,8 @@ impl App {
         // instead of repainting the whole window in one step.
         let theme_from = if matches!(a, Action::ControlTheme(_)) {
             Some((
-                crate::nothing::slot(&self.model),
-                crate::nothing::resolved(&self.model),
+                crate::themes::slot(&self.model),
+                crate::themes::resolved(&self.model),
                 self.model.prefs.dark,
             ))
         } else {
@@ -305,7 +315,7 @@ impl App {
                 return;
             }
             Action::WindowMaximize => {
-                if crate::nothing::slot(&self.model) == 0 {
+                if crate::themes::slot(&self.model) == 0 {
                     if let Some(s) = &self.main {
                         s.window.set_maximized(!s.window.is_maximized());
                     }
@@ -364,14 +374,14 @@ impl App {
         }
         if let Some((slot, from, dark)) = theme_from {
             if self.model.prefs.reduced_motion {
-                crate::nothing::end_transition();
+                crate::themes::end_transition();
             } else {
-                crate::nothing::begin_transition(slot, from, dark);
+                crate::themes::begin_transition(slot, from, dark);
             }
             if let Some(s) = &self.main {
                 s.window
-                    .set_resizable(crate::nothing::slot(&self.model) == 0);
-                platform::set_theme_icon(&s.window, crate::nothing::slot(&self.model));
+                    .set_resizable(crate::themes::slot(&self.model) == 0);
+                platform::set_theme_icon(&s.window, crate::themes::slot(&self.model));
             }
         }
         if reset {
@@ -596,7 +606,7 @@ impl App {
         self.redraw();
     }
     fn resize_from_edge(&mut self) -> bool {
-        if crate::nothing::slot(&self.model) != 0 || self.touch.is_some() {
+        if crate::themes::slot(&self.model) != 0 || self.touch.is_some() {
             return false;
         }
         let Some(s) = &self.main else { return false };
@@ -670,7 +680,7 @@ impl App {
                 .is_some_and(|t| now.duration_since(t) < Duration::from_millis(420));
             if double {
                 self.last_title_click = None;
-                if crate::nothing::slot(&self.model) == 0 {
+                if crate::themes::slot(&self.model) == 0 {
                     if let Some(s) = &self.main {
                         s.window.set_maximized(!s.window.is_maximized());
                     }
@@ -759,7 +769,7 @@ impl App {
             }
             if matches!(drag, Action::ThemeHandle(_)) {
                 if let Some(v) = self.model.preview_values.remove("ControlCenterThemeSlot") {
-                    let slot = crate::nothing::slot_from_fraction(v.as_f64().unwrap_or(1.));
+                    let slot = crate::themes::slot_from_fraction(v.as_f64().unwrap_or(1.));
                     self.action(Action::ControlTheme(slot));
                 }
                 if let Some(s) = &mut self.main {
@@ -836,7 +846,7 @@ impl App {
         });
         if let Some((a, r, p)) = action {
             if let Action::ThemeHandle(b) = &a {
-                let slot = crate::nothing::slot_from_fraction(((p.0 - b[0]) / b[2]).clamp(0., 1.));
+                let slot = crate::themes::slot_from_fraction(((p.0 - b[0]) / b[2]).clamp(0., 1.));
                 self.action(Action::ControlTheme(slot));
             } else if matches!(a, Action::Seek) {
                 self.model.seek((p.0 - r.x0) / r.width());
@@ -855,6 +865,10 @@ impl App {
         self.redraw();
     }
     fn key(&mut self, cloud: bool, key: Key, text: Option<String>) {
+        self.key_impl(cloud, key, text);
+        self.overlay_motion.snap(&self.model);
+    }
+    fn key_impl(&mut self, cloud: bool, key: Key, text: Option<String>) {
         self.signature_at = None;
         if key == Key::Named(NamedKey::F5) {
             self.dump_hits();
@@ -1104,9 +1118,9 @@ impl App {
             && self.model.dialog.is_none()
         {
             if let Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowRight) = key {
-                let cur = crate::nothing::slot(&self.model);
+                let cur = crate::themes::slot(&self.model);
                 let next = if matches!(key, Key::Named(NamedKey::ArrowRight)) {
-                    (cur + 1).min((crate::nothing::SLOTS.len() - 1) as u8)
+                    (cur + 1).min((crate::themes::SLOTS.len() - 1) as u8)
                 } else {
                     cur.saturating_sub(1)
                 };
@@ -1199,7 +1213,7 @@ impl App {
                         .and_then(|s| s.focus.and_then(|i| s.hits.get(i)))
                         .map(|h| h.rect.center().x)
                         .unwrap_or(b[0]);
-                    self.action(Action::ControlTheme(crate::nothing::slot_from_fraction(
+                    self.action(Action::ControlTheme(crate::themes::slot_from_fraction(
                         ((x - b[0]) / b[2]).clamp(0., 1.),
                     )));
                 } else {
@@ -1445,6 +1459,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested => {
+                let frame_at = Instant::now();
                 let state = {
                     let Some(s) = &self.main else { return };
                     let palette = self
@@ -1453,6 +1468,8 @@ impl ApplicationHandler for App {
                         .ui();
                     views::ViewState {
                         signature_age: self.signature_at.map(|at| at.elapsed().as_secs_f64()),
+                        overlay_progress: Some(self.overlay_motion.value()),
+                        closing_overlay: self.overlay_motion.closing_scene.clone(),
                         scroll_blur: self.scroll_blur,
                         switches: self
                             .switches
@@ -1491,13 +1508,30 @@ impl ApplicationHandler for App {
                     &state,
                 );
                 let s = self.main.as_mut().unwrap();
+                if let Some(overlay) = view.overlay_scene {
+                    self.overlay_motion.closing_scene = Some(overlay);
+                }
                 s.hits = view.hits;
                 self.motion_targets = view.motion_targets;
                 self.max_scroll = view.max_scroll;
                 if self.model.page != Page::Home {
                     self.model.scroll = self.model.scroll.min(self.max_scroll);
                 }
+                let built_at = Instant::now();
                 let drawn = self.gpu.draw(&mut s.surface, &view.scene, scale);
+                if let Some(trace) = &mut self.frame_trace {
+                    trace.record(
+                        frame_at,
+                        built_at.duration_since(frame_at).as_secs_f64() * 1000.,
+                        built_at.elapsed().as_secs_f64() * 1000.,
+                        self.model.scroll,
+                        (size.width, size.height),
+                        scale,
+                        drawn.is_ok(),
+                        s.surface.draw_timings(),
+                        state.signature_age,
+                    );
+                }
                 if drawn.is_ok() {
                     if let (Some(path), Some(lock)) = (switch_path(), SWITCH_START.get()) {
                         if let Ok(mut g) = lock.lock() {
@@ -1572,6 +1606,29 @@ impl ApplicationHandler for App {
         }
         let dt = now.duration_since(self.last).as_secs_f64();
         self.last = now;
+        if let Some(trace) = &self.frame_trace {
+            if trace.elapsed() >= trace.duration() {
+                if let Err(error) = trace.finish() {
+                    self.error(error);
+                }
+                self.model.shutdown();
+                e.exit();
+                return;
+            }
+            if !trace.is_startup() {
+                if trace.is_interactive() {
+                    let index = (trace.elapsed() / 0.45) as usize % Page::ALL.len();
+                    self.model.page = Page::ALL[index];
+                    self.model.settings_tab = 255;
+                }
+                self.scroll_target = if self.model.page == Page::Home {
+                    trace.target()
+                } else {
+                    0.
+                };
+                self.scroll_input = now;
+            }
+        }
         let changed = self.model.tick();
         let signature_moving = if let Some(at) = self.signature_at {
             if at.elapsed().as_secs_f64()
@@ -1692,9 +1749,11 @@ impl ApplicationHandler for App {
                 .position(|p| *p == self.model.page)
                 .unwrap_or(0) as f64
                 * 82.;
-        let transition_moving = crate::nothing::finish_transition();
+        let transition_moving = crate::themes::finish_transition();
         let rail_moving = self.rail.tick(dt, self.model.prefs.reduced_motion);
-        let moving = lyric_moving
+        let overlay_moving = self.overlay_motion.tick(&self.model, dt);
+        let moving = overlay_moving
+            || lyric_moving
             || signature_moving
             || scroll_moving
             || rail_moving
@@ -1734,9 +1793,14 @@ impl ApplicationHandler for App {
             e.exit();
             return;
         }
-        e.set_control_flow(ControlFlow::WaitUntil(
-            now + Duration::from_millis(if moving || animated { 16 } else { 120 }),
-        ));
+        // Let the vsynced swapchain pace active animation. An additional 16ms
+        // timer can miss the next refresh after rendering and halve the cadence.
+        let flow = if visible && (moving || animated) {
+            ControlFlow::Poll
+        } else {
+            ControlFlow::WaitUntil(now + Duration::from_millis(120))
+        };
+        e.set_control_flow(flow);
     }
     fn exiting(&mut self, _: &ActiveEventLoop) {
         self.model.shutdown();
@@ -1953,14 +2017,14 @@ pub fn verify_theme_inputs(out: &std::path::Path) -> Result<(), String> {
     let mut app = App::new(Model::new(out.to_path_buf(), true));
     app.model.page = Page::Settings;
     app.model.settings_tab = 0;
-    for target in 0..crate::nothing::SLOTS.len() as u8 {
+    for target in 0..crate::themes::SLOTS.len() as u8 {
         app.drag = Some(Action::ThemeHandle([100., 100., 600., 60.]));
         app.drag_to((
-            100. + 600. * target as f64 / (crate::nothing::SLOTS.len() - 1) as f64,
+            100. + 600. * target as f64 / (crate::themes::SLOTS.len() - 1) as f64,
             100.,
         ));
         app.up();
-        if crate::nothing::slot(&app.model) != target {
+        if crate::themes::slot(&app.model) != target {
             return Err(format!("theme drag/release failed for {target}"));
         }
     }
@@ -1968,18 +2032,18 @@ pub fn verify_theme_inputs(out: &std::path::Path) -> Result<(), String> {
     app.drag_to((100., 100.));
     app.cancel_drag();
     app.up();
-    if crate::nothing::slot(&app.model) != (crate::nothing::SLOTS.len() - 1) as u8 {
+    if crate::themes::slot(&app.model) != (crate::themes::SLOTS.len() - 1) as u8 {
         return Err("cancelled theme drag committed".into());
     }
     app.key(false, Key::Named(NamedKey::ArrowLeft), None);
-    if crate::nothing::slot(&app.model) != (crate::nothing::SLOTS.len() - 2) as u8 {
+    if crate::themes::slot(&app.model) != (crate::themes::SLOTS.len() - 2) as u8 {
         return Err("left arrow failed".into());
     }
     app.key(false, Key::Named(NamedKey::ArrowRight), None);
-    if crate::nothing::slot(&app.model) != (crate::nothing::SLOTS.len() - 1) as u8 {
+    if crate::themes::slot(&app.model) != (crate::themes::SLOTS.len() - 1) as u8 {
         return Err("right arrow failed".into());
     }
-    crate::nothing::end_transition();
+    crate::themes::end_transition();
     Ok(())
 }
 

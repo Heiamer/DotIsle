@@ -113,7 +113,7 @@ pub fn run(out: &Path, text: &mut Text, gpu: &mut Gpu) -> Result<(), String> {
  {"id":"layout-2","kind":"notice","title":"A longer notification title for the narrow window","body":"A readable message with an action at the trailing edge.","appName":"Dotisle","date":"2026-11-11","clock":"18:31"}]);
     m.native_state["appRules"] = json!([{"id":"grid-rule","name":"给连续工作很久的自己留一点休息的时间","message":"把注意力放回当下，休息一会儿再继续。","executablePath":"C:/Program Files/Example/Example.exe","enabled":true,"revision":1}]);
     let mut audit = Audit::default();
-    for theme in crate::nothing::SLOTS {
+    for theme in crate::themes::SLOTS {
         m.prefs.control_center_theme = theme.into();
         for dark in [false, true] {
             m.prefs.dark = dark;

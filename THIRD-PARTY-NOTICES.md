@@ -93,3 +93,7 @@ https://github.com/androidx/androidx/tree/androidx-main/compose/material3/materi
 iced-x86 1.22.0，https://github.com/icedland/iced ，MIT，Copyright (C) 2018-present iced project and contributors。使用其指令解码与信息接口分析本机客户端，完整许可见 licenses/iced-x86-MIT.txt。
 
 lazy_static 1.5.1，https://github.com/rust-lang-nursery/lazy-static.rs ，MIT OR Apache-2.0，为 iced-x86 的间接依赖；采用 MIT 许可副本，见 licenses/lazy_static-MIT.txt。
+
+## 天气数据
+
+天气组件使用 [Open-Meteo](https://open-meteo.com/) 天气与地理编码接口，在用户配置城市后请求数据。

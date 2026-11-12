@@ -55,9 +55,9 @@ pub fn render(
         .copied()
         .unwrap_or(target)
         .clamp(0., 1.);
-    draw::fill(ui.scene, track, radius, ui.s.outline_variant);
+    draw::fill_rounded(ui.scene, track, radius, ui.s.outline_variant);
     let filled = rect(track.x0, track.y0, thumb_x - track.x0 + radius, height);
-    draw::fill(ui.scene, filled, radius, ui.s.primary);
+    draw::fill_rounded(ui.scene, filled, radius, ui.s.primary);
     let thumb_radius = height * 0.36 * (1. + 0.127 * amount);
     let thumb = rect(
         thumb_x - thumb_radius,
@@ -74,7 +74,7 @@ pub fn render(
     );
     draw::circle(ui.scene, thumb_x, track.center().y, thumb_radius, 0xffffff);
     if hit.is_some() && ui.focus == hit {
-        draw::outline(
+        draw::outline_rounded(
             ui.scene,
             track.inflate(3., 3.),
             radius + 3.,

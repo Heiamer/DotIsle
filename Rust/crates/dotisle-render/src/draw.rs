@@ -867,6 +867,28 @@ pub fn fill(scene: &mut Scene, r: Rect, radius: f64, rgb: u32) {
         &continuous_rect(r, radius),
     );
 }
+/// Circular corners for control tracks; independent of continuous card corners.
+pub fn rounded_rect(r: Rect, radius: f64) -> RoundedRect {
+    RoundedRect::from_rect(r, radius.clamp(0., r.width().min(r.height()).max(0.) / 2.))
+}
+pub fn fill_rounded(scene: &mut Scene, r: Rect, radius: f64, rgb: u32) {
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        color(rgb),
+        None,
+        &rounded_rect(r, radius),
+    );
+}
+pub fn outline_rounded(scene: &mut Scene, r: Rect, radius: f64, rgb: u32, width: f64) {
+    scene.stroke(
+        &Stroke::new(width),
+        Affine::IDENTITY,
+        color(rgb),
+        None,
+        &rounded_rect(r, radius),
+    );
+}
 pub fn outline(scene: &mut Scene, r: Rect, radius: f64, rgb: u32, width: f64) {
     scene.stroke(
         &Stroke::new(width),

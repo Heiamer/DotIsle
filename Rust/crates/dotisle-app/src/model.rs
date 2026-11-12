@@ -1,161 +1,1637 @@
 //! Application state and actions. No renderer or window handles are owned here.
-use std::{path::PathBuf,sync::{Arc,mpsc},time::{Instant,Duration},collections::VecDeque};
-use serde_json::{Value,json};
-use dotisle_domain::{todos,timers,preferences::{self,Preferences},monet};
+use dotisle_domain::{
+    monet,
+    preferences::{self, Preferences},
+    timers, todos,
+};
 use lyric_backend::runtime::Backend;
+use serde_json::{json, Value};
+use std::{
+    collections::VecDeque,
+    path::PathBuf,
+    sync::{mpsc, Arc},
+    time::{Duration, Instant},
+};
 use vello::peniko::ImageData;
-#[derive(Clone,Copy,Debug,PartialEq,Eq)]pub enum Page{Home,Music,Widgets,Focus,Todos,Notifications,Island,Settings}
-impl Page{
-    pub const ALL:[Self;6]=[Self::Home,Self::Widgets,Self::Focus,Self::Todos,Self::Notifications,Self::Settings];
-    pub fn label(self)->&'static str{match self{Self::Home=>"概览",Self::Music=>"音乐",Self::Widgets=>"组件",Self::Focus=>"计时",Self::Todos=>"待办",Self::Island=>"灵动岛",Self::Notifications=>"通知",Self::Settings=>"设置"}}
-    pub fn description(self)->&'static str{match self{Self::Home=>"滚动浏览，找到此刻需要的陪伴。",Self::Music=>"查看播放状态，调整歌词同步。",Self::Widgets=>"把时间、音乐与小事，轻轻放到桌面。",Self::Focus=>"选择一段时间，专心完成眼前的事。",Self::Todos=>"记录安排，按时提醒。",Self::Island=>"原版灵动岛的外观、交互与动效。",Self::Notifications=>"收拢每一条提醒，按自己的节奏查看。",Self::Settings=>"外观、灵动岛与日常偏好，一个地方就好。"}}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Page {
+    Home,
+    Music,
+    Widgets,
+    Focus,
+    Todos,
+    Notifications,
+    Island,
+    Settings,
 }
-#[derive(Clone,Debug)]pub enum Action{
-    OverviewCard(usize),OverviewDrag,LayoutElement(u8,[f64;3]),LayoutResize(u8,[f64;3]),LayoutNudge(i8,i8),LayoutWidth(i16),LayoutUndo,LayoutRedo,LayoutAuto,LayoutResetElement,LayoutOpen,LayoutTab(u8),LayoutMove(usize,i8),LayoutDrag(usize),LayoutModule(usize),LayoutToggle(u8),LayoutAlign(u8),LayoutGap(i8),LayoutCover(i8),LayoutControl(i32),LayoutStyle(u8,String),LayoutReset,LayoutDiscard,LayoutApply,
-    QuickFocus,NoticeFilter(u8),
-    WidgetAdd(dotisle_domain::desktop_widgets::Kind,dotisle_domain::desktop_widgets::Size),WidgetAddStyle(dotisle_domain::desktop_widgets::Kind,dotisle_domain::desktop_widgets::Size,dotisle_domain::desktop_widgets::Style),WidgetSize(dotisle_domain::desktop_widgets::Kind,dotisle_domain::desktop_widgets::Size),WidgetRemove(String),WidgetResize(String,dotisle_domain::desktop_widgets::Size),WidgetFocus,
-    BackgroundPick,BackgroundReset,BackgroundEnable(bool),BackgroundMode(bool),BackgroundValue(&'static str,f64),
-    TimerPreferences,WorkflowModules,EditModule(Option<usize>),RemoveModule(usize),ModulePage(usize),QuickReminder,QuickCommit,Navigate(Page),IslandSettings(u8),EditRule(Option<String>),Media(&'static str),Seek,Mode(u8),Preset(u32),StartTimer,SelectTimer(String),Timer(String,&'static str),
-    EditTodo(Option<String>),ToggleTodo(String),DeleteTodo(String),SaveModal,CancelModal,Field(usize),Daily,
-    Pref(&'static str),Seed(u32),Offset(i32),Import,Paths,Undo,Palette,Quit,OpenCenter,SettingsTab(u8),CloudExpand,CloudTab(u8),DragWindow,RangeHandle(&'static str,f64,f64,[f64;4]),CurveHandle(u8,[f64;4]),RadiusHandle([f64;4]),IslandTab(u8),EditSetting(&'static str,&'static str),SourceToggle(&'static str),Details(u8),NativeEdit(&'static str,Value),NativeCommand(&'static str,Value),WorkflowAddModule(usize),WorkflowStageNew,WorkflowStageEdit(usize),WorkflowStageDelete(usize),WorkflowStageMove(usize,i8),WorkflowStageNudge(usize,i32),WorkflowSaveTemplate,WorkflowTemplates,WorkflowLoadTemplate(String),WorkflowDeleteTemplate(String),WorkflowDraftReset,WorkflowEditCopy(String),
-    PickColor(&'static str,&'static str),ColorPad([f64;4]),ColorHue([f64;4]),ColorPreset(u32),ColorReset,ColorField,ColorClose,ColorSave,
-    FontPicker,FontSelect(String),FontConfirm,FontClose,FontReset,FontField,PlayerMode(&'static str),SelectPlayer(String),BrowserMedia,
-    TutorialStart,TutorialBack,TutorialNext,TutorialReplay,TutorialFinish,TutorialDemo(u8),
-    RadiusTarget(u8),WindowMinimize,WindowMaximize,WindowClose,ControlTheme(u8),ThemeHandle([f64;4]),NothingDynamic(bool),FontScope(u8),
-}
-#[derive(Clone,Debug)]pub struct Field{pub label:&'static str,pub value:String,pub max:usize,pub selected:bool,pub cursor:usize}
-impl Field{pub(crate) fn new(label:&'static str,value:String,max:usize)->Self{let cursor=value.len();Self{label,value,max,selected:false,cursor}}}
-#[derive(Clone,Debug)]pub enum DialogKind{Todo(Option<String>),Paths,Import,Setting(&'static str),TimerPreferences,WorkflowModules,WorkflowModule(Option<usize>),QuickReminder,Rule(Option<String>),WorkflowStage(Option<u32>),WorkflowTemplate(Option<String>),WorkflowTemplates}
-#[derive(Clone,Debug)]pub struct Dialog{pub kind:DialogKind,pub fields:Vec<Field>,pub active:usize,pub daily:bool,pub error:String,pub preedit:String}
-pub struct Artwork{pub image:ImageData,pub seed:Option<u32>}
-impl Artwork{pub fn new(decoded:image::DynamicImage)->Self{let small=decoded.thumbnail(96,96).to_rgba8();let seed=monet::seed(small.as_raw());let rgba=if decoded.width()>512||decoded.height()>512{decoded.thumbnail(512,512).to_rgba8()}else{decoded.to_rgba8()};let image=crate::cover_art::data(rgba);Self{image,seed}}}
-enum WorkerReply{Snapshot(Value,Option<Artwork>),Result(Result<bool,String>)}
-pub struct Model{
-    pub layout_editor:Option<crate::layout_editor::Editor>,pub notice_filter:u8,pub desktop_widgets:dotisle_domain::desktop_widgets::Store,pub widget_sizes:[dotisle_domain::desktop_widgets::Size;6],
-    pub background:crate::background::Cache,
-    pub tutorial:Option<crate::tutorial::Tutorial>,pub tutorial_checked:bool,pub tutorial_requested:bool,
-    pub remote:Option<crate::remote::Remote>,pub native_state:Value,pub native_error:Option<String>,pub page:Page,pub prefs:Preferences,pub prefs_error:Option<String>,pub data:PathBuf,
-    pub snapshot:Value,pub artwork:Option<Artwork>,pub todos:todos::Store,pub timers:timers::Store,
-    pub timer_seconds:Option<u32>,pub rest_seconds:u32,pub timer_rounds:u32,pub module_page:usize,pub selected:Option<String>,pub mode:u8,pub minutes:u32,pub scroll:f64,pub dialog:Option<Dialog>,
-    pub notices:VecDeque<String>,pub toast:Option<(String,Instant)>,pub undo:Option<todos::Todo>,pub success_at:Option<Instant>,
-    pub quick_preview:Value,pub demo:bool,pub palette:bool,pub query:String,pub exit:bool,pub show_center:bool,pub radius_target:u8,pub island_tab:u8,pub preview_values:std::collections::HashMap<&'static str,Value>,pub preview_curve:Option<[f64;4]>,pub preview_radius:Option<f64>,pub details:[bool;8],pub settings_tab:u8,pub cloud_expanded:bool,pub cloud_tab:u8,pub workflow:crate::workflow::WorkflowState,pub picker:Option<crate::picker::ColorPicker>,pub font_picker:Option<crate::font_picker::FontPicker>,
-    backend:Option<Arc<Backend>>,send:Option<mpsc::Sender<(&'static str,f64)>>,recv:Option<mpsc::Receiver<WorkerReply>>,
-    last_awake:u64,last_save:Instant,last_due:Instant,
-}
-fn awake_ms()->u64{let mut v=0;unsafe{let _=windows::Win32::System::WindowsProgramming::QueryUnbiasedInterruptTime(&mut v);}v/10000}
-impl Model{
-    pub fn new(data:PathBuf,demo:bool)->Self{
-        let(prefs,prefs_error)=match Preferences::load(&data.join("preferences.json")){Ok(p)=>(p,None),Err(e)=>(Preferences::default(),Some(e))};
-        let todos=todos::Store::new(data.join("todos.json"));let timers=timers::Store::new(data.join("timers.json"));
-        let mut s=Self{layout_editor:None,notice_filter:0,desktop_widgets:dotisle_domain::desktop_widgets::Store::new(PathBuf::new()),widget_sizes:dotisle_domain::desktop_widgets::Kind::ALL.map(|kind|kind.default_size()),background:Default::default(),tutorial:None,tutorial_checked:false,tutorial_requested:false,remote:None,native_state:Value::Null,native_error:None,page:Page::Home,prefs,prefs_error,data,snapshot:Value::Null,artwork:None,todos,timers,timer_seconds:None,rest_seconds:300,timer_rounds:4,module_page:0,selected:None,mode:0,minutes:25,scroll:0.,dialog:None,notices:VecDeque::new(),toast:None,undo:None,success_at:None,quick_preview:Value::Null,demo,palette:false,query:String::new(),exit:false,show_center:false,radius_target:1,island_tab:0,preview_values:Default::default(),preview_curve:None,preview_radius:None,details:[false;8],settings_tab:255,cloud_expanded:false,cloud_tab:0,workflow:Default::default(),picker:None,font_picker:None,backend:None,send:None,recv:None,last_awake:awake_ms(),last_save:Instant::now(),last_due:Instant::now()};
-        if demo{s.snapshot=json!({"track":{"id":"preview","title":"海边来信","artist":"点屿 · 设计示例","album":"海边来信","sourceApp":"预览数据","durationSeconds":252.},"isPlaying":false,"positionSeconds":86.,"canSeek":true,"frame":{"previousLine":"把远方写成一封信","currentLine":"海风吹过，晚霞落在你身旁","currentTranslation":"Let the music stay with you","nextLine":"把今天的温柔，轻轻收藏","currentLineIndex":1,"wordScanProgress":0.55}});let bytes=include_bytes!("../../../../Assets/DemoCover.png");if let Ok(im)=image::load_from_memory(bytes){s.artwork=Some(Artwork::new(im));}}
-
-        else{s.connect();}s.refresh_background();s
+impl Page {
+    pub const ALL: [Self; 6] = [
+        Self::Home,
+        Self::Widgets,
+        Self::Focus,
+        Self::Todos,
+        Self::Notifications,
+        Self::Settings,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Home => "概览",
+            Self::Music => "音乐",
+            Self::Widgets => "组件",
+            Self::Focus => "计时",
+            Self::Todos => "待办",
+            Self::Island => "灵动岛",
+            Self::Notifications => "通知",
+            Self::Settings => "设置",
+        }
     }
-    fn connect(&mut self){self.remote=Some(crate::remote::Remote::new(self.data.clone()));}
-    pub fn native_command(&self,name:&str,value:Value){if let Some(r)=&self.remote{r.command(name,value);}}
-    pub(crate) fn timer_action_value(&self,id:&str,action:&str)->Option<Value>{self.timers.items.iter().find(|t|t.id==id).map(|t|json!({"id":id,"action":action,"revision":t.revision}))}
-    pub(crate) fn native_update(&self,key:&str,value:Value){self.native_command("update",json!({"key":key,"value":value}));}
-    fn remote_action(&mut self,a:&Action)->bool{
-        match a{
-            Action::SourceToggle(id)=>{let mut ignored=self.native_state["settings"]["IgnoredSources"].as_array().cloned().unwrap_or_else(||vec![json!("Browser")]);if ignored.iter().any(|v|v==id){ignored.retain(|v|v!=id);}else{ignored.push(json!(id));}self.native_update("IgnoredSources",json!(ignored));},Action::NativeEdit(key,value)=>self.native_update(key,value.clone()),Action::NativeCommand(name,value)=>{if *name=="soundSelect"{self.details[..3].fill(false);self.scroll=0.;}self.native_command(name,value.clone());},
-            Action::Media(name)=>self.native_command("media",json!({"action":name})),Action::Timer(id,action)=>{if let Some(value)=self.timer_action_value(id,action){self.native_command("timerAction",value);}},
-            Action::StartTimer=>{if self.mode==3{self.start_workflow();}else{let mode=["pomodoro","countdown","stopwatch"][self.mode.min(2)as usize];self.native_command("timerCreate",json!({"mode":mode,"duration":self.timer_seconds.unwrap_or(self.minutes*60),"focus":self.timer_seconds.unwrap_or(self.minutes*60),"rest":self.rest_seconds,"rounds":self.timer_rounds}));}},
-            Action::ToggleTodo(id)=>{let done=self.todos.items.iter().find(|t|&t.id==id).is_some_and(|t|t.done(&todos::Now::local()));self.native_command("todoComplete",json!({"id":id,"completed":!done}));},Action::DeleteTodo(id)=>{self.undo=self.todos.items.iter().find(|t|&t.id==id).cloned();self.native_command("todoDelete",json!({"id":id}));},Action::Undo=>{if let Some(t)=self.undo.take(){self.native_command("todoRestore",json!(t));}},
-            Action::CloudExpand=>self.native_command("expand",Value::Null),Action::CloudTab(tab)=>self.native_command("islandSelect",json!(if *tab==0{"music"}else{"todos"})),
-            Action::Pref(key)=>match *key{"island"=>self.native_command("toggleVisibility",Value::Null),"dark"=>self.native_update("SettingsTheme",json!(if self.prefs.dark{"Light"}else{"Dark"})),"monet"=>{self.native_update("ControlCenterMonetEnabled",json!(!self.prefs.monet));},"translation"=>self.native_update("Translation",json!(!self.prefs.translation)),"words"=>self.native_update("WordHighlight",json!(!self.prefs.word_highlight)),"online"=>self.native_update("OnlineSongInfo",json!(!self.prefs.online)),"motion"=>self.native_update("Animation",json!(self.prefs.reduced_motion)),"top"=>self.native_update("AlwaysOnTop",json!(!self.prefs.always_on_top)),"sound"=>self.native_update("TodoSoundEnabled",json!(!self.prefs.reminder_sound)),"browser"=>{let mut ignored=self.native_state["settings"]["IgnoredSources"].as_array().cloned().unwrap_or_default();ignored.retain(|v|v!="Browser");if self.prefs.include_browser{ignored.push(json!("Browser"));}self.native_update("IgnoredSources",json!(ignored));},_=>{}},
-            Action::Seed(seed)=>{self.prefs.seed=*seed;self.prefs.monet=false;self.native_update("ControlCenterMonetEnabled",json!(false));self.native_update(if self.prefs.dark{"SettingsDarkAccentColor"}else{"SettingsLightAccentColor"},json!(format!("#{seed:06X}")));},Action::Offset(delta)=>self.native_update("OffsetMilliseconds",json!((self.prefs.offset_ms+delta).clamp(-5000,5000))),
-            Action::QuickCommit=>{if let Some(token)=self.quick_preview["previewToken"].as_str(){self.native_command("quickReminderCommit",json!({"previewToken":token,"clientRequestId":format!("vello-{token}")}));}},Action::SaveModal=>{if let Some(d)=self.dialog.clone(){match d.kind{DialogKind::TimerPreferences=>{match self.save_timer_preferences(&d){Ok(())=>self.dialog=None,Err(e)=>if let Some(d)=&mut self.dialog{d.error=e;}}},DialogKind::WorkflowModule(index)=>{match self.save_module(&d,index){Ok(())=>self.dialog=None,Err(e)=>if let Some(d)=&mut self.dialog{d.error=e;}}},DialogKind::WorkflowModules=>self.dialog=None,DialogKind::QuickReminder=>{self.native_command("quickReminderPreview",json!({"text":d.fields[0].value}));},DialogKind::Todo(id)=>self.native_command("todoSave",json!({"id":id.clone().unwrap_or_default(),"title":d.fields[0].value,"date":d.fields[1].value,"time":d.fields[2].value,"content":d.fields[3].value,"daily":d.daily,"color":id.as_ref().and_then(|id|self.todos.items.iter().find(|t|&t.id==id)).map(|t|t.color.as_str()).unwrap_or("#F3D79B")})),DialogKind::Rule(id)=>self.native_command("appRuleSave",json!({"id":id.unwrap_or_default(),"name":d.fields[0].value,"executablePath":d.fields[1].value,"message":d.fields[2].value,"cooldownMinutes":d.fields[3].value.parse::<u32>().unwrap_or(0),"thresholdMinutes":d.fields[4].value.parse::<u32>().unwrap_or(0),"trigger":if d.daily{"foregroundDaily"}else{"enter"},"enabled":true})),DialogKind::Paths=>self.native_update("LocalFolders",json!(d.fields[0].value.split(';').map(str::trim).filter(|s|!s.is_empty()).collect::<Vec<_>>())),DialogKind::Setting(key)=>{let v=&d.fields[0].value;let value=if ["IgnoredSources","NotificationAllowedApps","NotificationBlockedApps"].contains(&key){json!(v.split([';','；']).map(str::trim).filter(|s|!s.is_empty()).collect::<Vec<_>>())}else{json!(v)};self.native_update(key,value);},DialogKind::Import=>{self.message("原版数据已由主进程直接读取，无需再次导入。");self.dialog=None;},DialogKind::WorkflowStage(_)=>{if let Err(e)=self.submit_stage_dialog(){if let Some(d)=&mut self.dialog{d.error=e;}}else{self.dialog=None;self.message("阶段已更新");}},DialogKind::WorkflowTemplate(_)=>{if let Err(e)=self.submit_template_dialog(){if let Some(d)=&mut self.dialog{d.error=e;}}else{self.dialog=None;self.message("模板已保存");}},DialogKind::WorkflowTemplates=>{self.dialog=None;}}}},
-            _=>return false,
-        }true
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Home => "滚动浏览，找到此刻需要的陪伴。",
+            Self::Music => "查看播放状态，调整歌词同步。",
+            Self::Widgets => "把时间、音乐与小事，轻轻放到桌面。",
+            Self::Focus => "选择一段时间，专心完成眼前的事。",
+            Self::Todos => "记录安排，按时提醒。",
+            Self::Island => "原版灵动岛的外观、交互与动效。",
+            Self::Notifications => "收拢每一条提醒，按自己的节奏查看。",
+            Self::Settings => "外观、灵动岛与日常偏好，一个地方就好。",
+        }
     }
-    pub fn dynamic_color(&self)->dotisle_domain::dynamic_color::Resolved{let key=if self.prefs.dark{"SettingsDarkAccentColor"}else{"SettingsLightAccentColor"};let fixed=self.native_state["settings"][key].as_str().and_then(|s|u32::from_str_radix(s.trim_start_matches('#'),16).ok()).unwrap_or(self.prefs.seed);let source=if self.prefs.monet{dotisle_domain::dynamic_color::Source::parse(self.setting("ControlCenterColorSource").as_str().unwrap_or("Content"))}else{dotisle_domain::dynamic_color::Source::Custom};dotisle_domain::dynamic_color::resolve_center(source,self.artwork.as_ref().and_then(|a|a.seed),self.native_state["systemAccent"].as_u64().map(|v|v as u32),fixed,self.prefs.dark,self.setting("DynamicColorHighContrast").as_bool().unwrap_or(false))}
-    pub fn scheme(&self)->monet::Scheme{
-        let mut s=self.dynamic_color().roles.ui();let dark=self.prefs.dark;let contrast=self.setting("DynamicColorHighContrast").as_bool().unwrap_or(false);
+}
+#[derive(Clone, Debug)]
+pub enum Action {
+    OverviewCard(usize),
+    OverviewDrag,
+    LayoutElement(u8, [f64; 3]),
+    LayoutResize(u8, [f64; 3]),
+    LayoutNudge(i8, i8),
+    LayoutWidth(i16),
+    LayoutUndo,
+    LayoutRedo,
+    LayoutAuto,
+    LayoutResetElement,
+    LayoutOpen,
+    LayoutTab(u8),
+    LayoutMove(usize, i8),
+    LayoutDrag(usize),
+    LayoutModule(usize),
+    LayoutToggle(u8),
+    LayoutAlign(u8),
+    LayoutGap(i8),
+    LayoutCover(i8),
+    LayoutControl(i32),
+    LayoutStyle(u8, String),
+    LayoutReset,
+    LayoutDiscard,
+    LayoutApply,
+    QuickFocus,
+    NoticeFilter(u8),
+    WidgetAdd(
+        dotisle_domain::desktop_widgets::Kind,
+        dotisle_domain::desktop_widgets::Size,
+    ),
+    WidgetAddStyle(
+        dotisle_domain::desktop_widgets::Kind,
+        dotisle_domain::desktop_widgets::Size,
+        dotisle_domain::desktop_widgets::Style,
+    ),
+    WidgetSize(
+        dotisle_domain::desktop_widgets::Kind,
+        dotisle_domain::desktop_widgets::Size,
+    ),
+    WidgetRemove(String),
+    WidgetResize(String, dotisle_domain::desktop_widgets::Size),
+    WidgetFocus,
+    WidgetConfigure(String),
+    WidgetLaunch(String),
+    BackgroundPick,
+    BackgroundReset,
+    BackgroundEnable(bool),
+    BackgroundMode(bool),
+    BackgroundValue(&'static str, f64),
+    TimerPreferences,
+    WorkflowModules,
+    EditModule(Option<usize>),
+    RemoveModule(usize),
+    ModulePage(usize),
+    QuickReminder,
+    QuickCommit,
+    Navigate(Page),
+    IslandSettings(u8),
+    EditRule(Option<String>),
+    Media(&'static str),
+    Seek,
+    Mode(u8),
+    Preset(u32),
+    StartTimer,
+    SelectTimer(String),
+    Timer(String, &'static str),
+    EditTodo(Option<String>),
+    ToggleTodo(String),
+    DeleteTodo(String),
+    SaveModal,
+    CancelModal,
+    Field(usize),
+    Daily,
+    Pref(&'static str),
+    Seed(u32),
+    Offset(i32),
+    Import,
+    Paths,
+    Undo,
+    Palette,
+    Quit,
+    OpenCenter,
+    SettingsTab(u8),
+    CloudExpand,
+    CloudTab(u8),
+    DragWindow,
+    RangeHandle(&'static str, f64, f64, [f64; 4]),
+    CurveHandle(u8, [f64; 4]),
+    RadiusHandle([f64; 4]),
+    IslandTab(u8),
+    EditSetting(&'static str, &'static str),
+    SourceToggle(&'static str),
+    Details(u8),
+    NativeEdit(&'static str, Value),
+    NativeCommand(&'static str, Value),
+    WorkflowAddModule(usize),
+    WorkflowStageNew,
+    WorkflowStageEdit(usize),
+    WorkflowStageDelete(usize),
+    WorkflowStageMove(usize, i8),
+    WorkflowStageNudge(usize, i32),
+    WorkflowSaveTemplate,
+    WorkflowTemplates,
+    WorkflowLoadTemplate(String),
+    WorkflowDeleteTemplate(String),
+    WorkflowDraftReset,
+    WorkflowEditCopy(String),
+    PickColor(&'static str, &'static str),
+    ColorPad([f64; 4]),
+    ColorHue([f64; 4]),
+    ColorPreset(u32),
+    ColorReset,
+    ColorField,
+    ColorClose,
+    ColorSave,
+    FontPicker,
+    FontSelect(String),
+    FontConfirm,
+    FontClose,
+    FontReset,
+    FontField,
+    PlayerMode(&'static str),
+    SelectPlayer(String),
+    BrowserMedia,
+    TutorialStart,
+    TutorialBack,
+    TutorialNext,
+    TutorialReplay,
+    TutorialFinish,
+    TutorialDemo(u8),
+    RadiusTarget(u8),
+    WindowMinimize,
+    WindowMaximize,
+    WindowClose,
+    ControlTheme(u8),
+    ThemeHandle([f64; 4]),
+    FontScope(u8),
+}
+#[derive(Clone, Debug)]
+pub struct Field {
+    pub label: &'static str,
+    pub value: String,
+    pub max: usize,
+    pub selected: bool,
+    pub cursor: usize,
+}
+impl Field {
+    pub(crate) fn new(label: &'static str, value: String, max: usize) -> Self {
+        let cursor = value.len();
+        Self {
+            label,
+            value,
+            max,
+            selected: false,
+            cursor,
+        }
+    }
+}
+#[derive(Clone, Debug)]
+pub enum DialogKind {
+    Todo(Option<String>),
+    Paths,
+    Import,
+    Setting(&'static str),
+    Widget(String),
+    TimerPreferences,
+    WorkflowModules,
+    WorkflowModule(Option<usize>),
+    QuickReminder,
+    Rule(Option<String>),
+    WorkflowStage(Option<u32>),
+    WorkflowTemplate(Option<String>),
+    WorkflowTemplates,
+}
+#[derive(Clone, Debug)]
+pub struct Dialog {
+    pub kind: DialogKind,
+    pub fields: Vec<Field>,
+    pub active: usize,
+    pub daily: bool,
+    pub error: String,
+    pub preedit: String,
+}
+pub struct Artwork {
+    pub image: ImageData,
+    pub seed: Option<u32>,
+}
+impl Artwork {
+    pub fn new(decoded: image::DynamicImage) -> Self {
+        let small = decoded.thumbnail(96, 96).to_rgba8();
+        let seed = monet::seed(small.as_raw());
+        let rgba = if decoded.width() > 512 || decoded.height() > 512 {
+            decoded.thumbnail(512, 512).to_rgba8()
+        } else {
+            decoded.to_rgba8()
+        };
+        let image = crate::cover_art::data(rgba);
+        Self { image, seed }
+    }
+}
+enum WorkerReply {
+    Snapshot(Value, Option<Artwork>),
+    Result(Result<bool, String>),
+}
+pub struct Model {
+    pub layout_editor: Option<crate::layout_editor::Editor>,
+    pub notice_filter: u8,
+    pub desktop_widgets: dotisle_domain::desktop_widgets::Store,
+    pub widget_sizes: [dotisle_domain::desktop_widgets::Size; 15],
+    pub background: crate::background::Cache,
+    pub tutorial: Option<crate::tutorial::Tutorial>,
+    pub tutorial_checked: bool,
+    pub tutorial_requested: bool,
+    pub remote: Option<crate::remote::Remote>,
+    pub native_state: Value,
+    pub native_error: Option<String>,
+    pub page: Page,
+    pub prefs: Preferences,
+    pub prefs_error: Option<String>,
+    pub data: PathBuf,
+    pub snapshot: Value,
+    pub artwork: Option<Artwork>,
+    pub todos: todos::Store,
+    pub timers: timers::Store,
+    pub timer_seconds: Option<u32>,
+    pub rest_seconds: u32,
+    pub timer_rounds: u32,
+    pub module_page: usize,
+    pub selected: Option<String>,
+    pub mode: u8,
+    pub minutes: u32,
+    pub scroll: f64,
+    pub dialog: Option<Dialog>,
+    pub notices: VecDeque<String>,
+    pub toast: Option<(String, Instant)>,
+    pub undo: Option<todos::Todo>,
+    pub success_at: Option<Instant>,
+    pub quick_preview: Value,
+    pub demo: bool,
+    pub palette: bool,
+    pub query: String,
+    pub exit: bool,
+    pub show_center: bool,
+    pub radius_target: u8,
+    pub island_tab: u8,
+    pub preview_values: std::collections::HashMap<&'static str, Value>,
+    pub preview_curve: Option<[f64; 4]>,
+    pub preview_radius: Option<f64>,
+    pub details: [bool; 8],
+    pub settings_tab: u8,
+    pub cloud_expanded: bool,
+    pub cloud_tab: u8,
+    pub workflow: crate::workflow::WorkflowState,
+    pub picker: Option<crate::picker::ColorPicker>,
+    pub font_picker: Option<crate::font_picker::FontPicker>,
+    backend: Option<Arc<Backend>>,
+    send: Option<mpsc::Sender<(&'static str, f64)>>,
+    recv: Option<mpsc::Receiver<WorkerReply>>,
+    last_awake: u64,
+    last_save: Instant,
+    last_due: Instant,
+}
+fn awake_ms() -> u64 {
+    let mut v = 0;
+    unsafe {
+        let _ = windows::Win32::System::WindowsProgramming::QueryUnbiasedInterruptTime(&mut v);
+    }
+    v / 10000
+}
+impl Model {
+    pub fn new(data: PathBuf, demo: bool) -> Self {
+        let (prefs, prefs_error) = match Preferences::load(&data.join("preferences.json")) {
+            Ok(p) => (p, None),
+            Err(e) => (Preferences::default(), Some(e)),
+        };
+        let todos = todos::Store::new(data.join("todos.json"));
+        let timers = timers::Store::new(data.join("timers.json"));
+        let mut s = Self {
+            layout_editor: None,
+            notice_filter: 0,
+            desktop_widgets: dotisle_domain::desktop_widgets::Store::new(PathBuf::new()),
+            widget_sizes: dotisle_domain::desktop_widgets::Kind::ALL
+                .map(|kind| kind.default_size()),
+            background: Default::default(),
+            tutorial: None,
+            tutorial_checked: false,
+            tutorial_requested: false,
+            remote: None,
+            native_state: Value::Null,
+            native_error: None,
+            page: Page::Home,
+            prefs,
+            prefs_error,
+            data,
+            snapshot: Value::Null,
+            artwork: None,
+            todos,
+            timers,
+            timer_seconds: None,
+            rest_seconds: 300,
+            timer_rounds: 4,
+            module_page: 0,
+            selected: None,
+            mode: 0,
+            minutes: 25,
+            scroll: 0.,
+            dialog: None,
+            notices: VecDeque::new(),
+            toast: None,
+            undo: None,
+            success_at: None,
+            quick_preview: Value::Null,
+            demo,
+            palette: false,
+            query: String::new(),
+            exit: false,
+            show_center: false,
+            radius_target: 1,
+            island_tab: 0,
+            preview_values: Default::default(),
+            preview_curve: None,
+            preview_radius: None,
+            details: [false; 8],
+            settings_tab: 255,
+            cloud_expanded: false,
+            cloud_tab: 0,
+            workflow: Default::default(),
+            picker: None,
+            font_picker: None,
+            backend: None,
+            send: None,
+            recv: None,
+            last_awake: awake_ms(),
+            last_save: Instant::now(),
+            last_due: Instant::now(),
+        };
+        if demo {
+            s.snapshot = json!({"track":{"id":"preview","title":"海边来信","artist":"点屿 · 设计示例","album":"海边来信","sourceApp":"预览数据","durationSeconds":252.},"isPlaying":false,"positionSeconds":86.,"canSeek":true,"frame":{"previousLine":"把远方写成一封信","currentLine":"海风吹过，晚霞落在你身旁","currentTranslation":"Let the music stay with you","nextLine":"把今天的温柔，轻轻收藏","currentLineIndex":1,"wordScanProgress":0.55}});
+            let bytes = include_bytes!("../../../../Assets/DemoCover.png");
+            if let Ok(im) = image::load_from_memory(bytes) {
+                s.artwork = Some(Artwork::new(im));
+            }
+        } else {
+            s.connect();
+        }
+        s.refresh_background();
+        s
+    }
+    fn connect(&mut self) {
+        self.remote = Some(crate::remote::Remote::new(self.data.clone()));
+    }
+    pub fn native_command(&self, name: &str, value: Value) {
+        if let Some(r) = &self.remote {
+            r.command(name, value);
+        }
+    }
+    pub(crate) fn timer_action_value(&self, id: &str, action: &str) -> Option<Value> {
+        self.timers
+            .items
+            .iter()
+            .find(|t| t.id == id)
+            .map(|t| json!({"id":id,"action":action,"revision":t.revision}))
+    }
+    pub(crate) fn native_update(&self, key: &str, value: Value) {
+        self.native_command("update", json!({"key":key,"value":value}));
+    }
+    fn remote_action(&mut self, a: &Action) -> bool {
+        match a {
+            Action::SourceToggle(id) => {
+                let mut ignored = self.native_state["settings"]["IgnoredSources"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_else(|| vec![json!("Browser")]);
+                if ignored.iter().any(|v| v == id) {
+                    ignored.retain(|v| v != id);
+                } else {
+                    ignored.push(json!(id));
+                }
+                self.native_update("IgnoredSources", json!(ignored));
+            }
+            Action::NativeEdit(key, value) => self.native_update(key, value.clone()),
+            Action::NativeCommand(name, value) => {
+                if *name == "soundSelect" {
+                    self.details[..3].fill(false);
+                    self.scroll = 0.;
+                }
+                self.native_command(name, value.clone());
+            }
+            Action::Media(name) => self.native_command("media", json!({"action":name})),
+            Action::Timer(id, action) => {
+                if let Some(value) = self.timer_action_value(id, action) {
+                    self.native_command("timerAction", value);
+                }
+            }
+            Action::StartTimer => {
+                if self.mode == 3 {
+                    self.start_workflow();
+                } else {
+                    let mode = ["pomodoro", "countdown", "stopwatch"][self.mode.min(2) as usize];
+                    self.native_command("timerCreate",json!({"mode":mode,"duration":self.timer_seconds.unwrap_or(self.minutes*60),"focus":self.timer_seconds.unwrap_or(self.minutes*60),"rest":self.rest_seconds,"rounds":self.timer_rounds}));
+                }
+            }
+            Action::ToggleTodo(id) => {
+                let done = self
+                    .todos
+                    .items
+                    .iter()
+                    .find(|t| &t.id == id)
+                    .is_some_and(|t| t.done(&todos::Now::local()));
+                self.native_command("todoComplete", json!({"id":id,"completed":!done}));
+            }
+            Action::DeleteTodo(id) => {
+                self.undo = self.todos.items.iter().find(|t| &t.id == id).cloned();
+                self.native_command("todoDelete", json!({"id":id}));
+            }
+            Action::Undo => {
+                if let Some(t) = self.undo.take() {
+                    self.native_command("todoRestore", json!(t));
+                }
+            }
+            Action::CloudExpand => self.native_command("expand", Value::Null),
+            Action::CloudTab(tab) => self.native_command(
+                "islandSelect",
+                json!(if *tab == 0 { "music" } else { "todos" }),
+            ),
+            Action::Pref(key) => match *key {
+                "island" => self.native_command("toggleVisibility", Value::Null),
+                "dark" => self.native_update(
+                    "SettingsTheme",
+                    json!(if self.prefs.dark { "Light" } else { "Dark" }),
+                ),
+                "monet" => {
+                    self.native_update("ControlCenterMonetEnabled", json!(!self.prefs.monet));
+                }
+                "translation" => self.native_update("Translation", json!(!self.prefs.translation)),
+                "words" => self.native_update("WordHighlight", json!(!self.prefs.word_highlight)),
+                "online" => self.native_update("OnlineSongInfo", json!(!self.prefs.online)),
+                "motion" => self.native_update("Animation", json!(self.prefs.reduced_motion)),
+                "top" => self.native_update("AlwaysOnTop", json!(!self.prefs.always_on_top)),
+                "sound" => {
+                    self.native_update("TodoSoundEnabled", json!(!self.prefs.reminder_sound))
+                }
+                "browser" => {
+                    let mut ignored = self.native_state["settings"]["IgnoredSources"]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default();
+                    ignored.retain(|v| v != "Browser");
+                    if self.prefs.include_browser {
+                        ignored.push(json!("Browser"));
+                    }
+                    self.native_update("IgnoredSources", json!(ignored));
+                }
+                _ => {}
+            },
+            Action::Seed(seed) => {
+                self.prefs.seed = *seed;
+                self.prefs.monet = false;
+                self.native_update("ControlCenterMonetEnabled", json!(false));
+                self.native_update(
+                    if self.prefs.dark {
+                        "SettingsDarkAccentColor"
+                    } else {
+                        "SettingsLightAccentColor"
+                    },
+                    json!(format!("#{seed:06X}")),
+                );
+            }
+            Action::Offset(delta) => self.native_update(
+                "OffsetMilliseconds",
+                json!((self.prefs.offset_ms + delta).clamp(-5000, 5000)),
+            ),
+            Action::QuickCommit => {
+                if let Some(token) = self.quick_preview["previewToken"].as_str() {
+                    self.native_command(
+                        "quickReminderCommit",
+                        json!({"previewToken":token,"clientRequestId":format!("vello-{token}")}),
+                    );
+                }
+            }
+            Action::SaveModal => {
+                if let Some(d) = self.dialog.clone() {
+                    match d.kind{DialogKind::Widget(ref id)=>{match self.save_widget_config(id,&d){Ok(())=>self.dialog=None,Err(e)=>if let Some(d)=&mut self.dialog{d.error=e;}}},DialogKind::TimerPreferences=>{match self.save_timer_preferences(&d){Ok(())=>self.dialog=None,Err(e)=>if let Some(d)=&mut self.dialog{d.error=e;}}},DialogKind::WorkflowModule(index)=>{match self.save_module(&d,index){Ok(())=>self.dialog=None,Err(e)=>if let Some(d)=&mut self.dialog{d.error=e;}}},DialogKind::WorkflowModules=>self.dialog=None,DialogKind::QuickReminder=>{self.native_command("quickReminderPreview",json!({"text":d.fields[0].value}));},DialogKind::Todo(id)=>self.native_command("todoSave",json!({"id":id.clone().unwrap_or_default(),"title":d.fields[0].value,"date":d.fields[1].value,"time":d.fields[2].value,"content":d.fields[3].value,"daily":d.daily,"color":id.as_ref().and_then(|id|self.todos.items.iter().find(|t|&t.id==id)).map(|t|t.color.as_str()).unwrap_or("#F3D79B")})),DialogKind::Rule(id)=>self.native_command("appRuleSave",json!({"id":id.unwrap_or_default(),"name":d.fields[0].value,"executablePath":d.fields[1].value,"message":d.fields[2].value,"cooldownMinutes":d.fields[3].value.parse::<u32>().unwrap_or(0),"thresholdMinutes":d.fields[4].value.parse::<u32>().unwrap_or(0),"trigger":if d.daily{"foregroundDaily"}else{"enter"},"enabled":true})),DialogKind::Paths=>self.native_update("LocalFolders",json!(d.fields[0].value.split(';').map(str::trim).filter(|s|!s.is_empty()).collect::<Vec<_>>())),DialogKind::Setting(key)=>{let v=&d.fields[0].value;let value=if ["IgnoredSources","NotificationAllowedApps","NotificationBlockedApps"].contains(&key){json!(v.split([';','；']).map(str::trim).filter(|s|!s.is_empty()).collect::<Vec<_>>())}else{json!(v)};self.native_update(key,value);},DialogKind::Import=>{self.message("原版数据已由主进程直接读取，无需再次导入。");self.dialog=None;},DialogKind::WorkflowStage(_)=>{if let Err(e)=self.submit_stage_dialog(){if let Some(d)=&mut self.dialog{d.error=e;}}else{self.dialog=None;self.message("阶段已更新");}},DialogKind::WorkflowTemplate(_)=>{if let Err(e)=self.submit_template_dialog(){if let Some(d)=&mut self.dialog{d.error=e;}}else{self.dialog=None;self.message("模板已保存");}},DialogKind::WorkflowTemplates=>{self.dialog=None;}}
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+    pub fn dynamic_color(&self) -> dotisle_domain::dynamic_color::Resolved {
+        let key = if self.prefs.dark {
+            "SettingsDarkAccentColor"
+        } else {
+            "SettingsLightAccentColor"
+        };
+        let fixed = self.native_state["settings"][key]
+            .as_str()
+            .and_then(|s| u32::from_str_radix(s.trim_start_matches('#'), 16).ok())
+            .unwrap_or(self.prefs.seed);
+        let source = if self.prefs.monet {
+            dotisle_domain::dynamic_color::Source::parse(
+                self.setting("ControlCenterColorSource")
+                    .as_str()
+                    .unwrap_or("Content"),
+            )
+        } else {
+            dotisle_domain::dynamic_color::Source::Custom
+        };
+        dotisle_domain::dynamic_color::resolve_center(
+            source,
+            self.artwork.as_ref().and_then(|a| a.seed),
+            self.native_state["systemAccent"].as_u64().map(|v| v as u32),
+            fixed,
+            self.prefs.dark,
+            self.setting("DynamicColorHighContrast")
+                .as_bool()
+                .unwrap_or(false),
+        )
+    }
+    pub fn scheme(&self) -> monet::Scheme {
+        let mut s = self.dynamic_color().roles.ui();
+        let dark = self.prefs.dark;
+        let contrast = self
+            .setting("DynamicColorHighContrast")
+            .as_bool()
+            .unwrap_or(false);
         // Neutral structural surfaces leave artwork and the chosen accent in charge.
-        let mix=|a:u32,b:u32,t:f64|{let c=|n:u32|{let x=((a>>n)&255u32)as f64;let y=((b>>n)&255u32)as f64;(x+(y-x)*t).round()as u32};c(16)<<16|c(8)<<8|c(0)};
-        s.surface=if dark{0x161618}else{0xf5f5f7};s.container=if dark{0x242427}else{0xffffff};s.high=if dark{0x323236}else{0xebebef};
-        s.on_surface=if contrast{if dark{0xffffff}else{0x000000}}else if dark{0xf5f5f7}else{0x1d1d1f};s.on_surface_variant=if contrast{s.on_surface}else if dark{0xbdbdc5}else{0x626269};
-        s.outline=if dark{0x8b8b94}else{0x81818b};s.outline_variant=if contrast{s.outline}else if dark{0x45454c}else{0xdcdce2};
-        s.primary_container=mix(s.container,s.primary,if dark{0.14}else{0.06});s.on_primary_container=s.on_surface;
-        s.secondary_container=mix(s.container,s.primary,if dark{0.20}else{0.10});s.on_secondary_container=s.on_surface;
-        s.tertiary_container=s.container;s.on_tertiary_container=s.on_surface;s
+        let mix = |a: u32, b: u32, t: f64| {
+            let c = |n: u32| {
+                let x = ((a >> n) & 255u32) as f64;
+                let y = ((b >> n) & 255u32) as f64;
+                (x + (y - x) * t).round() as u32
+            };
+            c(16) << 16 | c(8) << 8 | c(0)
+        };
+        s.surface = if dark { 0x161618 } else { 0xf5f5f7 };
+        s.container = if dark { 0x242427 } else { 0xffffff };
+        s.high = if dark { 0x323236 } else { 0xebebef };
+        s.on_surface = if contrast {
+            if dark {
+                0xffffff
+            } else {
+                0x000000
+            }
+        } else if dark {
+            0xf5f5f7
+        } else {
+            0x1d1d1f
+        };
+        s.on_surface_variant = if contrast {
+            s.on_surface
+        } else if dark {
+            0xbdbdc5
+        } else {
+            0x626269
+        };
+        s.outline = if dark { 0x8b8b94 } else { 0x81818b };
+        s.outline_variant = if contrast {
+            s.outline
+        } else if dark {
+            0x45454c
+        } else {
+            0xdcdce2
+        };
+        s.primary_container = mix(s.container, s.primary, if dark { 0.14 } else { 0.06 });
+        s.on_primary_container = s.on_surface;
+        s.secondary_container = mix(s.container, s.primary, if dark { 0.20 } else { 0.10 });
+        s.on_secondary_container = s.on_surface;
+        s.tertiary_container = s.container;
+        s.on_tertiary_container = s.on_surface;
+        s
     }
-    pub fn player_selection(&self)->Vec<String>{self.setting("SelectedSources").as_array().map(|a|a.iter().filter_map(Value::as_str).map(str::to_owned).collect()).unwrap_or_else(||dotisle_domain::players::ALL.iter().map(|s|s.to_string()).collect())}
-    pub(crate) fn sync_player_filter(&mut self){
-        let mode=self.setting("PlayerResponseMode").as_str().unwrap_or("All").to_owned();let selected=self.player_selection();let browser=self.setting("BrowserMediaEnabled").as_bool().unwrap_or(false);
-        let mut ignored=Vec::new();
-        if mode=="Selected"{for id in dotisle_domain::players::ALL{if !selected.iter().any(|s|s.eq_ignore_ascii_case(id)){ignored.push(id.to_string());}}}
-        if !browser{ignored.push("Browser".to_string());}
-        self.native_state["settings"]["IgnoredSources"]=json!(ignored.clone());self.native_update("IgnoredSources",json!(ignored));
+    pub fn player_selection(&self) -> Vec<String> {
+        self.setting("SelectedSources")
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_else(|| {
+                dotisle_domain::players::ALL
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect()
+            })
     }
-    pub fn setting(&self,key:&str)->Value{if let Some(v)=self.preview_values.get(key){return v.clone()}let s=&self.native_state["settings"];if let Some(k)=key.strip_prefix("Motion"){s["Motion"][k].clone()}else if let Some(k)=key.strip_prefix("Spring"){s["Motion"]["Spring"][k].clone()}else{s[key].clone()}}
-    pub fn curve(&self)->Option<[f64;4]>{self.preview_curve.or_else(||serde_json::from_value(self.setting("MotionCurve")).ok())}
-    pub fn radius(&self)->f64{self.preview_radius.unwrap_or_else(||if self.radius_target==0{self.setting("CapsuleCornerRadius").as_f64().unwrap_or(20.)}else{self.setting("MotionRadius").as_f64().unwrap_or(30.)})}
-    pub fn satellite_tab(&self)->Option<u8>{if self.cloud_tab!=1&&self.current_timer().is_some(){Some(1)}else if self.cloud_tab!=0&&self.track(){Some(0)}else if self.cloud_tab!=2&&self.pending()>0{Some(2)}else{None}}
-    pub fn completion_active(&self)->bool{self.success_at.is_some_and(|t|t.elapsed()<Duration::from_millis(900))}
-    pub fn track(&self)->bool{self.snapshot["track"].is_object()}
-    pub fn playing(&self)->bool{self.snapshot["isPlaying"].as_bool().unwrap_or(false)}
-    pub fn title(&self)->&str{self.snapshot["track"]["title"].as_str().unwrap_or("此刻，留一点空白")}
-    pub fn artist(&self)->&str{self.snapshot["track"]["artist"].as_str().filter(|s|!s.is_empty()).unwrap_or("打开音乐播放器，点屿会自动连接")}
-    pub fn current_lyric(&self)->&str{if !self.track(){return "播放一首音乐，歌词会在这里出现"}if let Some(line)=self.snapshot["frame"]["currentLine"].as_str().map(str::trim).filter(|s|!s.is_empty()){return line}if self.snapshot["frame"]["isPureMusic"]==true{"纯音乐，请欣赏"}else{"等待当前歌词…"}}
-    pub fn current_timer(&self)->Option<&timers::Timer>{self.selected.as_ref().and_then(|id|self.timers.items.iter().find(|t|&t.id==id)).or_else(||self.timers.items.first())}
-    pub fn selected_timer(&self)->Option<&timers::Timer>{self.selected.as_ref().and_then(|id|self.timers.items.iter().find(|t|&t.id==id))}
-    pub fn pending(&self)->usize{let now=todos::Now::local();self.todos.items.iter().filter(|t|!t.done(&now)).count()}
-    pub fn message(&mut self,s:impl Into<String>){self.toast=Some((s.into(),Instant::now()));}
-    fn feedback(&mut self,result:Result<(),String>,ok:&str){match result{Ok(())=>self.message(ok),Err(e)=>self.message(e)}}
-    pub fn persist(&mut self)->Result<(),String>{if let Some(e)=self.prefs_error.clone(){return Err(e)}self.prefs.save(&self.data.join("preferences.json"))?;if let Some(b)=&self.backend{b.apply(self.prefs.backend());}Ok(())}
-    fn save_preferences(&mut self,old:Preferences){if let Err(e)=self.persist(){self.prefs=old;self.message(e);}}
-    pub fn tick(&mut self)->bool{if self.remote.is_some(){return self.native_tick();}
-        let mut changed=false;let packets=self.recv.as_ref().map(|r|r.try_iter().collect::<Vec<_>>()).unwrap_or_default();
-        for packet in packets{match packet{WorkerReply::Snapshot(value,art)=>{let same=value["track"]["id"]==self.snapshot["track"]["id"]&&value["track"]["title"]==self.snapshot["track"]["title"]&&value["track"]["artist"]==self.snapshot["track"]["artist"]&&value["sourceId"]==self.snapshot["sourceId"];if !same||value["coverVersion"]!=self.snapshot["coverVersion"]{self.artwork=None;}if let Some(a)=art{self.artwork=Some(a);}changed|=value!=self.snapshot;self.snapshot=value;},WorkerReply::Result(r)=>{match r{Ok(true)=>{},Ok(false)=>self.message("播放器未确认操作，请检查播放器状态"),Err(e)=>self.message(e)}changed=true;}}}
-        let now=awake_ms();let elapsed=now.saturating_sub(self.last_awake);self.last_awake=now;
-        let before=self.timers.items.iter().map(|t|t.elapsed_ms/1000).collect::<Vec<_>>();let events=self.timers.advance(elapsed);
-        changed|=before!=self.timers.items.iter().map(|t|t.elapsed_ms/1000).collect::<Vec<_>>();
-        for t in events{self.notice(format!("{} · {}",t.name,t.subtitle()));}
-        if self.last_due.elapsed()>=Duration::from_secs(1){self.last_due=Instant::now();match self.todos.poll(&todos::Now::local()){Ok(items)=>{for t in items{self.notice(format!("待办提醒 · {}",t.title));}},Err(e)=>{if self.toast.is_none(){self.message(e)}}}}
-        if self.last_save.elapsed()>=Duration::from_secs(15){self.last_save=Instant::now();if self.timers.items.iter().any(|t|t.running){if let Err(e)=self.timers.persist(){self.message(e)}}}
-        if self.toast.as_ref().is_some_and(|(_,t)|t.elapsed()>Duration::from_secs(6)){self.toast=None;self.undo=None;changed=true;}
+    pub(crate) fn sync_player_filter(&mut self) {
+        let mode = self
+            .setting("PlayerResponseMode")
+            .as_str()
+            .unwrap_or("All")
+            .to_owned();
+        let selected = self.player_selection();
+        let browser = self
+            .setting("BrowserMediaEnabled")
+            .as_bool()
+            .unwrap_or(false);
+        let mut ignored = Vec::new();
+        if mode == "Selected" {
+            for id in dotisle_domain::players::ALL {
+                if !selected.iter().any(|s| s.eq_ignore_ascii_case(id)) {
+                    ignored.push(id.to_string());
+                }
+            }
+        }
+        if !browser {
+            ignored.push("Browser".to_string());
+        }
+        self.native_state["settings"]["IgnoredSources"] = json!(ignored.clone());
+        self.native_update("IgnoredSources", json!(ignored));
+    }
+    pub fn setting(&self, key: &str) -> Value {
+        if let Some(v) = self.preview_values.get(key) {
+            return v.clone();
+        }
+        let s = &self.native_state["settings"];
+        if let Some(k) = key.strip_prefix("Motion") {
+            s["Motion"][k].clone()
+        } else if let Some(k) = key.strip_prefix("Spring") {
+            s["Motion"]["Spring"][k].clone()
+        } else {
+            s[key].clone()
+        }
+    }
+    pub fn curve(&self) -> Option<[f64; 4]> {
+        self.preview_curve
+            .or_else(|| serde_json::from_value(self.setting("MotionCurve")).ok())
+    }
+    pub fn radius(&self) -> f64 {
+        self.preview_radius.unwrap_or_else(|| {
+            if self.radius_target == 0 {
+                self.setting("CapsuleCornerRadius").as_f64().unwrap_or(20.)
+            } else {
+                self.setting("MotionRadius").as_f64().unwrap_or(30.)
+            }
+        })
+    }
+    pub fn satellite_tab(&self) -> Option<u8> {
+        if self.cloud_tab != 1 && self.current_timer().is_some() {
+            Some(1)
+        } else if self.cloud_tab != 0 && self.track() {
+            Some(0)
+        } else if self.cloud_tab != 2 && self.pending() > 0 {
+            Some(2)
+        } else {
+            None
+        }
+    }
+    pub fn completion_active(&self) -> bool {
+        self.success_at
+            .is_some_and(|t| t.elapsed() < Duration::from_millis(900))
+    }
+    pub fn track(&self) -> bool {
+        self.snapshot["track"].is_object()
+    }
+    pub fn playing(&self) -> bool {
+        self.snapshot["isPlaying"].as_bool().unwrap_or(false)
+    }
+    pub fn title(&self) -> &str {
+        self.snapshot["track"]["title"]
+            .as_str()
+            .unwrap_or("此刻，留一点空白")
+    }
+    pub fn artist(&self) -> &str {
+        self.snapshot["track"]["artist"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("打开音乐播放器，点屿会自动连接")
+    }
+    pub fn current_lyric(&self) -> &str {
+        if !self.track() {
+            return "播放一首音乐，歌词会在这里出现";
+        }
+        if let Some(line) = self.snapshot["frame"]["currentLine"]
+            .as_str()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return line;
+        }
+        if self.snapshot["frame"]["isPureMusic"] == true {
+            "纯音乐，请欣赏"
+        } else {
+            "等待当前歌词…"
+        }
+    }
+    pub fn current_timer(&self) -> Option<&timers::Timer> {
+        self.selected
+            .as_ref()
+            .and_then(|id| self.timers.items.iter().find(|t| &t.id == id))
+            .or_else(|| self.timers.items.first())
+    }
+    pub fn selected_timer(&self) -> Option<&timers::Timer> {
+        self.selected
+            .as_ref()
+            .and_then(|id| self.timers.items.iter().find(|t| &t.id == id))
+    }
+    pub fn pending(&self) -> usize {
+        let now = todos::Now::local();
+        self.todos.items.iter().filter(|t| !t.done(&now)).count()
+    }
+    pub fn message(&mut self, s: impl Into<String>) {
+        self.toast = Some((s.into(), Instant::now()));
+    }
+    fn feedback(&mut self, result: Result<(), String>, ok: &str) {
+        match result {
+            Ok(()) => self.message(ok),
+            Err(e) => self.message(e),
+        }
+    }
+    pub fn persist(&mut self) -> Result<(), String> {
+        if let Some(e) = self.prefs_error.clone() {
+            return Err(e);
+        }
+        self.prefs.save(&self.data.join("preferences.json"))?;
+        if let Some(b) = &self.backend {
+            b.apply(self.prefs.backend());
+        }
+        Ok(())
+    }
+    fn save_preferences(&mut self, old: Preferences) {
+        if let Err(e) = self.persist() {
+            self.prefs = old;
+            self.message(e);
+        }
+    }
+    pub fn tick(&mut self) -> bool {
+        if self.remote.is_some() {
+            return self.native_tick();
+        }
+        let mut changed = false;
+        let packets = self
+            .recv
+            .as_ref()
+            .map(|r| r.try_iter().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for packet in packets {
+            match packet {
+                WorkerReply::Snapshot(value, art) => {
+                    let same = value["track"]["id"] == self.snapshot["track"]["id"]
+                        && value["track"]["title"] == self.snapshot["track"]["title"]
+                        && value["track"]["artist"] == self.snapshot["track"]["artist"]
+                        && value["sourceId"] == self.snapshot["sourceId"];
+                    if !same || value["coverVersion"] != self.snapshot["coverVersion"] {
+                        self.artwork = None;
+                    }
+                    if let Some(a) = art {
+                        self.artwork = Some(a);
+                    }
+                    changed |= value != self.snapshot;
+                    self.snapshot = value;
+                }
+                WorkerReply::Result(r) => {
+                    match r {
+                        Ok(true) => {}
+                        Ok(false) => self.message("播放器未确认操作，请检查播放器状态"),
+                        Err(e) => self.message(e),
+                    }
+                    changed = true;
+                }
+            }
+        }
+        let now = awake_ms();
+        let elapsed = now.saturating_sub(self.last_awake);
+        self.last_awake = now;
+        let before = self
+            .timers
+            .items
+            .iter()
+            .map(|t| t.elapsed_ms / 1000)
+            .collect::<Vec<_>>();
+        let events = self.timers.advance(elapsed);
+        changed |= before
+            != self
+                .timers
+                .items
+                .iter()
+                .map(|t| t.elapsed_ms / 1000)
+                .collect::<Vec<_>>();
+        for t in events {
+            self.notice(format!("{} · {}", t.name, t.subtitle()));
+        }
+        if self.last_due.elapsed() >= Duration::from_secs(1) {
+            self.last_due = Instant::now();
+            match self.todos.poll(&todos::Now::local()) {
+                Ok(items) => {
+                    for t in items {
+                        self.notice(format!("待办提醒 · {}", t.title));
+                    }
+                }
+                Err(e) => {
+                    if self.toast.is_none() {
+                        self.message(e)
+                    }
+                }
+            }
+        }
+        if self.last_save.elapsed() >= Duration::from_secs(15) {
+            self.last_save = Instant::now();
+            if self.timers.items.iter().any(|t| t.running) {
+                if let Err(e) = self.timers.persist() {
+                    self.message(e)
+                }
+            }
+        }
+        if self
+            .toast
+            .as_ref()
+            .is_some_and(|(_, t)| t.elapsed() > Duration::from_secs(6))
+        {
+            self.toast = None;
+            self.undo = None;
+            changed = true;
+        }
         changed
     }
-    fn notice(&mut self,s:String){if self.notices.len()==32{self.notices.pop_front();}self.notices.push_back(s.clone());self.message(s);if self.prefs.reminder_sound&&!self.demo{unsafe{let _=windows::Win32::System::Diagnostics::Debug::MessageBeep(windows::Win32::UI::WindowsAndMessaging::MB_OK);}}}
-    pub fn dispatch(&mut self,a:Action){if crate::layout_editor::dispatch(self,&a){return}if self.widget_action(&a){return}if crate::tutorial::dispatch(self,&a){return}if self.remote.is_some()&&self.remote_action(&a){return}match a{
-        Action::OverviewCard(i)=>self.scroll=crate::overview::ring::nearest(self.scroll,i),Action::OverviewDrag|Action::LayoutElement(..)|Action::LayoutResize(..)|Action::LayoutNudge(..)|Action::LayoutWidth(_)|Action::LayoutUndo|Action::LayoutRedo|Action::LayoutAuto|Action::LayoutResetElement|Action::LayoutOpen|Action::LayoutTab(_)|Action::LayoutMove(..)|Action::LayoutDrag(_)|Action::LayoutModule(_)|Action::LayoutToggle(_)|Action::LayoutAlign(_)|Action::LayoutGap(_)|Action::LayoutCover(_)|Action::LayoutControl(_)|Action::LayoutStyle(..)|Action::LayoutReset|Action::LayoutDiscard|Action::LayoutApply=>{},
-        Action::QuickFocus|Action::NoticeFilter(_)|Action::WidgetAdd(..)|Action::WidgetAddStyle(..)|Action::WidgetSize(..)|Action::WidgetRemove(..)|Action::WidgetResize(..)|Action::WidgetFocus=>{},
-        Action::BackgroundPick=>{},Action::BackgroundReset=>{let old=self.prefs.clone();let i=crate::nothing::slot(self)as usize;self.prefs.backgrounds[i]=Default::default();self.save_preferences(old);self.refresh_background();},Action::BackgroundEnable(on)=>{let old=self.prefs.clone();let i=crate::nothing::slot(self)as usize;self.prefs.backgrounds[i].enabled=on;self.save_preferences(old);self.refresh_background();},Action::BackgroundMode(contain)=>{let old=self.prefs.clone();let i=crate::nothing::slot(self)as usize;self.prefs.backgrounds[i].mode=if contain{"Contain"}else{"Cover"}.into();self.save_preferences(old);},Action::BackgroundValue(key,value)=>self.background_value(key,value),
-        Action::ControlTheme(slot)=>{let old=self.prefs.clone();self.prefs.control_center_theme=crate::nothing::SLOTS[(slot as usize).min(crate::nothing::SLOTS.len()-1)].into();self.save_preferences(old);self.refresh_background();},
-        Action::NothingDynamic(on)=>{let old=self.prefs.clone();self.prefs.nothing_dynamic=on;self.save_preferences(old);},
-        Action::FontScope(slot)=>{let old=self.prefs.clone();self.prefs.font_scope=["Island","Center","Both"][slot as usize%3].into();self.save_preferences(old);},
-        Action::ThemeHandle(_)=>{},
-        Action::TutorialStart|Action::TutorialBack|Action::TutorialNext|Action::TutorialReplay|Action::TutorialFinish|Action::TutorialDemo(_)=>{},Action::RangeHandle(_,_,_,_)|Action::CurveHandle(_,_)|Action::RadiusHandle(_)|Action::ColorPad(_)|Action::ColorHue(_)=>{},Action::PickColor(key,title)=>self.open_picker(key,title),Action::ColorPreset(rgb)=>{if let Some(p)=&mut self.picker{p.set_rgb(rgb);}},Action::ColorReset=>{if let Some(p)=&mut self.picker{let default=p.default;p.set_rgb(default);}},Action::ColorField=>{if let Some(p)=&mut self.picker{p.cursor=p.hex.len();p.error.clear();}},Action::ColorClose=>self.picker=None,Action::ColorSave=>self.save_picker(),Action::FontPicker=>self.open_font_picker(),Action::FontSelect(family)=>self.select_font(family.clone()),Action::FontConfirm=>self.confirm_font(),Action::FontClose=>self.font_picker=None,Action::FontReset=>self.reset_font(),Action::FontField=>{},Action::WindowMinimize|Action::WindowMaximize=>{},Action::RadiusTarget(target)=>{self.radius_target=target.min(1);self.preview_radius=None;},Action::WindowClose=>self.exit=true,Action::IslandTab(tab)=>{self.island_tab=tab;self.scroll=0.;},Action::SourceToggle(id)=>{let mut ignored=self.native_state["settings"]["IgnoredSources"].as_array().cloned().unwrap_or_default();if ignored.iter().any(|v|v==&id){ignored.retain(|v|v!=&id);}else{ignored.push(json!(id));}self.native_state["settings"]["IgnoredSources"]=json!(ignored);},Action::EditSetting(key,title)=>{let value=self.setting(key);let value=if ["IgnoredSources","NotificationAllowedApps","NotificationBlockedApps"].contains(&key){value.as_array().map(|a|a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("; ")).unwrap_or_default()}else if key=="NeteaseCdpPort"{value.as_str().map(str::to_owned).or_else(||value.as_u64().map(|v|v.to_string())).unwrap_or_else(||"9223".into())}else{value.as_str().unwrap_or("").to_string()};self.dialog=Some(Dialog{kind:DialogKind::Setting(key),fields:vec![Field::new(title,value,4096)],active:0,daily:false,error:String::new(),preedit:String::new()});},Action::Details(i)=>{if i<3{let open=!self.details[i as usize];self.details[..3].fill(false);self.details[i as usize]=open;self.scroll=0.;}else if let Some(v)=self.details.get_mut(i as usize){*v=!*v;}},Action::PlayerMode(mode)=>{self.native_state["settings"]["PlayerResponseMode"]=json!(mode);self.native_update("PlayerResponseMode",json!(mode));self.sync_player_filter();},Action::SelectPlayer(id)=>{let mut selected=self.player_selection();if let Some(i)=selected.iter().position(|s|s.eq_ignore_ascii_case(&id)){selected.remove(i);}else{selected.push(id.clone());}self.native_state["settings"]["SelectedSources"]=json!(selected.clone());self.native_update("SelectedSources",json!(selected));self.sync_player_filter();},Action::BrowserMedia=>{let next=!self.setting("BrowserMediaEnabled").as_bool().unwrap_or(false);self.native_state["settings"]["BrowserMediaEnabled"]=json!(next);self.native_update("BrowserMediaEnabled",json!(next));self.sync_player_filter();},Action::NativeEdit(key,value)=>{if key=="Animation"{self.prefs.reduced_motion=value==false;}if key=="ControlCenterColorSource"{self.prefs.monet=true;}if let Some(k)=key.strip_prefix("Motion"){self.native_state["settings"]["Motion"][k]=value;}else if let Some(k)=key.strip_prefix("Spring"){self.native_state["settings"]["Motion"]["Spring"][k]=value;}else{self.native_state["settings"][key]=value;}},Action::NativeCommand(name,value)=>{if name=="soundSelect"{let prefix=value["category"].as_str().unwrap_or("");if dotisle_domain::sound_catalog::valid_prefix(prefix){if value["source"]=="Builtin"{self.native_state["settings"][format!("{prefix}Sound")]=value["kind"].clone();}self.native_state["settings"][format!("{prefix}SoundSource")]=value["source"].clone();self.details[..3].fill(false);self.scroll=0.;}}else if name=="resetBuiltinSounds"{for prefix in ["Notification","Todo","Device"]{if self.native_state["settings"][format!("{prefix}SoundSource")]!="Custom"{self.native_state["settings"][format!("{prefix}Sound")]=json!(dotisle_domain::sound_catalog::default_for(prefix));}}}},
-        Action::TimerPreferences=>self.edit_timer_preferences(),Action::WorkflowModules=>{self.dialog=Some(Dialog{kind:DialogKind::WorkflowModules,fields:vec![],active:0,daily:false,error:String::new(),preedit:String::new()});},Action::EditModule(index)=>self.edit_module(index),Action::RemoveModule(index)=>self.remove_module(index),Action::ModulePage(page)=>self.module_page=page,Action::QuickCommit=>{},Action::QuickReminder=>{self.quick_preview=Value::Null;self.dialog=Some(Dialog{kind:DialogKind::QuickReminder,fields:vec![Field::new("例如：20分钟后取快递",String::new(),300)],active:0,daily:false,error:String::new(),preedit:String::new()});},Action::IslandSettings(tab)=>{self.page=Page::Settings;self.island_tab=tab;self.settings_tab=128+tab;self.scroll=0.;},Action::EditRule(id)=>{let r=id.as_ref().and_then(|id|self.native_state["appRules"].as_array().and_then(|rs|rs.iter().find(|r|r["id"].as_str()==Some(id)))).cloned().unwrap_or(Value::Null);self.dialog=Some(Dialog{kind:DialogKind::Rule(id),fields:vec![Field::new("规则名称",r["name"].as_str().unwrap_or("").into(),60),Field::new("程序完整路径 · .exe",r["executablePath"].as_str().unwrap_or("").into(),260),Field::new("提醒内容",r["message"].as_str().unwrap_or("").into(),200),Field::new("进入提醒冷却 · 5 / 15 / 30 / 60 分钟",r["cooldownMinutes"].as_u64().unwrap_or(30).to_string(),3),Field::new("前台累计阈值 · 10–240 分钟",r["thresholdMinutes"].as_u64().unwrap_or(60).to_string(),3)],active:0,daily:r["trigger"]=="foregroundDaily",error:String::new(),preedit:String::new()});},Action::Navigate(page)=>{self.page=if page==Page::Music{Page::Home}else if page==Page::Island{self.settings_tab=128;Page::Settings}else{page};self.scroll=0.;self.palette=false;self.query.clear();},
-        Action::SettingsTab(tab)=>{self.page=Page::Settings;self.settings_tab=crate::settings_hub::destination(tab);if (128..135).contains(&tab){self.island_tab=tab-128;}self.scroll=0.;},Action::CloudExpand=>self.cloud_expanded=!self.cloud_expanded,Action::CloudTab(tab)=>{self.cloud_tab=tab;self.cloud_expanded=true;},Action::DragWindow=>{},
-        Action::Media(name)=>{if self.demo{self.snapshot["isPlaying"]=json!(!self.playing());}else if self.track(){if let Some(tx)=&self.send{let _=tx.send((name,0.));}}},
-        Action::Seek=>{},Action::Mode(mode)=>{self.mode=mode;self.selected=None;},Action::Preset(minutes)=>{self.timer_seconds=None;self.minutes=minutes;self.selected=None;},
-        Action::StartTimer=>{if self.mode==3{self.start_workflow();}else{let mode=["pomodoro","countdown","stopwatch"][self.mode.min(2)as usize];let r=self.timers.create(&json!({"mode":mode,"name":match self.mode{0=>"心无旁骛",1=>"留一点时间",_=>"每一刻都算数"},"duration":self.timer_seconds.unwrap_or(self.minutes*60),"focus":self.timer_seconds.unwrap_or(self.minutes*60),"rest":self.rest_seconds,"rounds":self.timer_rounds}));match r{Ok(id)=>{self.selected=Some(id);self.message("已开始计时");},Err(e)=>self.message(e)}}},
-        Action::SelectTimer(id)=>{if let Some(t)=self.timers.items.iter().find(|t|t.id==id){self.mode=match t.mode.as_str(){"countdown"=>1,"stopwatch"=>2,"workflow"=>3,_=>0};}self.selected=Some(id)},Action::Timer(id,operation)=>{let r=self.timers.action(&id,operation);self.feedback(r,match operation{"delete"=>"计时器已移除","reset"=>"计时器已重置",_=>"计时状态已更新"});},
-        Action::EditTodo(id)=>{let old=id.as_ref().and_then(|id|self.todos.items.iter().find(|t|&t.id==id));let now=todos::Now::local();self.dialog=Some(Dialog{kind:DialogKind::Todo(id.clone()),fields:vec![Field::new("要记住的事",old.map(|t|t.title.clone()).unwrap_or_default(),120),Field::new("日期 · YYYY-MM-DD",old.map(|t|t.date.clone()).unwrap_or(now.date),10),Field::new("时间 · HH:MM",old.map(|t|t.time.clone()).unwrap_or(now.time),5),Field::new("备注",old.map(|t|t.content.clone()).unwrap_or_default(),2048)],active:0,daily:old.is_some_and(|t|t.daily),error:String::new(),preedit:String::new()});},
-        Action::ToggleTodo(id)=>{let now=todos::Now::local();let done=self.todos.items.iter().find(|t|t.id==id).is_some_and(|t|t.done(&now));let r=self.todos.complete(&id,!done,&now);if r.is_ok()&&!done{self.success_at=Some(Instant::now());}self.feedback(r,if done{"已恢复待办"}else{"又完成了一件事"});},
-        Action::DeleteTodo(id)=>{let old=self.todos.items.iter().find(|t|t.id==id).cloned();let r=self.todos.delete(&id);if r.is_ok(){self.undo=old;}self.feedback(r,"待办已移除");},
-        Action::Undo=>{if let Some(todo)=self.undo.clone(){match self.todos.restore(todo){Ok(())=>{self.undo=None;self.message("已恢复待办");},Err(e)=>self.message(e)}}},
-        Action::SaveModal=>self.save_modal(),Action::CancelModal=>self.dialog=None,Action::Field(i)=>{if let Some(d)=&mut self.dialog{if i<d.fields.len(){d.active=i;d.preedit.clear();}}},Action::Daily=>{if let Some(d)=&mut self.dialog{d.daily=!d.daily;}},
-        Action::Pref(key)=>{let old=self.prefs.clone();match key{"dark"=>self.prefs.dark=!self.prefs.dark,"monet"=>self.prefs.monet=!self.prefs.monet,"translation"=>self.prefs.translation=!self.prefs.translation,"words"=>self.prefs.word_highlight=!self.prefs.word_highlight,"online"=>self.prefs.online=!self.prefs.online,"browser"=>self.prefs.include_browser=!self.prefs.include_browser,"motion"=>self.prefs.reduced_motion=!self.prefs.reduced_motion,"island"=>self.prefs.island=!self.prefs.island,"top"=>self.prefs.always_on_top=!self.prefs.always_on_top,"sound"=>self.prefs.reminder_sound=!self.prefs.reminder_sound,_=>{}}self.save_preferences(old);},
-        Action::Seed(seed)=>{let old=self.prefs.clone();self.prefs.seed=seed;self.prefs.monet=false;self.save_preferences(old);},Action::Offset(delta)=>{let old=self.prefs.clone();self.prefs.offset_ms=(self.prefs.offset_ms+delta).clamp(-5000,5000);self.save_preferences(old);},
-        Action::Import=>self.dialog=Some(Dialog{kind:DialogKind::Import,fields:vec![],active:0,daily:false,error:String::new(),preedit:String::new()}),
-        Action::Paths=>self.dialog=Some(Dialog{kind:DialogKind::Paths,fields:vec![Field::new("文件夹路径 · 多个路径以分号分隔",self.prefs.local_folders.join(";"),4096)],active:0,daily:false,error:String::new(),preedit:String::new()}),
-        Action::Palette=>{self.palette=!self.palette;self.query.clear();},Action::Quit=>self.exit=true,Action::OpenCenter=>self.show_center=true,
-        Action::WorkflowAddModule(index)=>self.workflow_add_module(index),Action::WorkflowStageNew=>self.workflow_open_stage(None),Action::WorkflowStageEdit(index)=>self.workflow_open_stage(Some(index)),Action::WorkflowStageDelete(index)=>self.workflow_delete_stage(index),Action::WorkflowStageMove(index,delta)=>self.workflow_move_stage(index,delta),Action::WorkflowStageNudge(index,delta)=>self.workflow_nudge_stage(index,delta),
-        Action::WorkflowSaveTemplate=>self.workflow_open_save(),Action::WorkflowTemplates=>self.workflow_open_templates(),Action::WorkflowLoadTemplate(id)=>self.workflow_load_template(&id),Action::WorkflowDeleteTemplate(id)=>self.workflow_delete_template(&id),Action::WorkflowDraftReset=>self.workflow_draft_reset(),Action::WorkflowEditCopy(id)=>self.workflow_edit_copy(&id),
-    }}
-    pub fn seek(&mut self,fraction:f64){if !fraction.is_finite()||!self.snapshot["canSeek"].as_bool().unwrap_or(false){return}if self.remote.is_some(){let seconds=self.snapshot["track"]["durationSeconds"].as_f64().unwrap_or(0.)*fraction.clamp(0.,1.);self.native_command("media",json!({"action":"seek","seconds":seconds}));return}if !self.snapshot["canSeek"].as_bool().unwrap_or(false){return}let seconds=self.snapshot["track"]["durationSeconds"].as_f64().unwrap_or(0.)*fraction.clamp(0.,1.);if self.demo{self.snapshot["positionSeconds"]=json!(seconds);}else if let Some(tx)=&self.send{let _=tx.send(("seek",seconds));}}
-    fn save_modal(&mut self){let Some(d)=self.dialog.clone()else{return};let result:Result<(),String>=match d.kind{
+    fn notice(&mut self, s: String) {
+        if self.notices.len() == 32 {
+            self.notices.pop_front();
+        }
+        self.notices.push_back(s.clone());
+        self.message(s);
+        if self.prefs.reminder_sound && !self.demo {
+            unsafe {
+                let _ = windows::Win32::System::Diagnostics::Debug::MessageBeep(
+                    windows::Win32::UI::WindowsAndMessaging::MB_OK,
+                );
+            }
+        }
+    }
+    pub fn dispatch(&mut self, a: Action) {
+        if crate::layout_editor::dispatch(self, &a) {
+            return;
+        }
+        if self.widget_action(&a) {
+            return;
+        }
+        if crate::tutorial::dispatch(self, &a) {
+            return;
+        }
+        if self.remote.is_some() && self.remote_action(&a) {
+            return;
+        }
+        match a {
+            Action::OverviewCard(i) => self.scroll = crate::overview::ring::nearest(self.scroll, i),
+            Action::OverviewDrag
+            | Action::LayoutElement(..)
+            | Action::LayoutResize(..)
+            | Action::LayoutNudge(..)
+            | Action::LayoutWidth(_)
+            | Action::LayoutUndo
+            | Action::LayoutRedo
+            | Action::LayoutAuto
+            | Action::LayoutResetElement
+            | Action::LayoutOpen
+            | Action::LayoutTab(_)
+            | Action::LayoutMove(..)
+            | Action::LayoutDrag(_)
+            | Action::LayoutModule(_)
+            | Action::LayoutToggle(_)
+            | Action::LayoutAlign(_)
+            | Action::LayoutGap(_)
+            | Action::LayoutCover(_)
+            | Action::LayoutControl(_)
+            | Action::LayoutStyle(..)
+            | Action::LayoutReset
+            | Action::LayoutDiscard
+            | Action::LayoutApply => {}
+            Action::QuickFocus
+            | Action::NoticeFilter(_)
+            | Action::WidgetAdd(..)
+            | Action::WidgetAddStyle(..)
+            | Action::WidgetSize(..)
+            | Action::WidgetRemove(..)
+            | Action::WidgetResize(..)
+            | Action::WidgetFocus
+            | Action::WidgetConfigure(_)
+            | Action::WidgetLaunch(_) => {}
+            Action::BackgroundPick => {}
+            Action::BackgroundReset => {
+                let old = self.prefs.clone();
+                let i = crate::themes::background_slot(self);
+                self.prefs.backgrounds[i] = Default::default();
+                self.save_preferences(old);
+                self.refresh_background();
+            }
+            Action::BackgroundEnable(on) => {
+                let old = self.prefs.clone();
+                let i = crate::themes::background_slot(self);
+                self.prefs.backgrounds[i].enabled = on;
+                self.save_preferences(old);
+                self.refresh_background();
+            }
+            Action::BackgroundMode(contain) => {
+                let old = self.prefs.clone();
+                let i = crate::themes::background_slot(self);
+                self.prefs.backgrounds[i].mode = if contain { "Contain" } else { "Cover" }.into();
+                self.save_preferences(old);
+            }
+            Action::BackgroundValue(key, value) => self.background_value(key, value),
+            Action::ControlTheme(slot) => {
+                let old = self.prefs.clone();
+                self.prefs.control_center_theme = crate::themes::SLOTS
+                    [(slot as usize).min(crate::themes::SLOTS.len() - 1)]
+                .into();
+                self.save_preferences(old);
+                self.refresh_background();
+            }
+
+            Action::FontScope(slot) => {
+                let old = self.prefs.clone();
+                self.prefs.font_scope = ["Island", "Center", "Both"][slot as usize % 3].into();
+                self.save_preferences(old);
+            }
+            Action::ThemeHandle(_) => {}
+            Action::TutorialStart
+            | Action::TutorialBack
+            | Action::TutorialNext
+            | Action::TutorialReplay
+            | Action::TutorialFinish
+            | Action::TutorialDemo(_) => {}
+            Action::RangeHandle(_, _, _, _)
+            | Action::CurveHandle(_, _)
+            | Action::RadiusHandle(_)
+            | Action::ColorPad(_)
+            | Action::ColorHue(_) => {}
+            Action::PickColor(key, title) => self.open_picker(key, title),
+            Action::ColorPreset(rgb) => {
+                if let Some(p) = &mut self.picker {
+                    p.set_rgb(rgb);
+                }
+            }
+            Action::ColorReset => {
+                if let Some(p) = &mut self.picker {
+                    let default = p.default;
+                    p.set_rgb(default);
+                }
+            }
+            Action::ColorField => {
+                if let Some(p) = &mut self.picker {
+                    p.cursor = p.hex.len();
+                    p.error.clear();
+                }
+            }
+            Action::ColorClose => self.picker = None,
+            Action::ColorSave => self.save_picker(),
+            Action::FontPicker => self.open_font_picker(),
+            Action::FontSelect(family) => self.select_font(family.clone()),
+            Action::FontConfirm => self.confirm_font(),
+            Action::FontClose => self.font_picker = None,
+            Action::FontReset => self.reset_font(),
+            Action::FontField => {}
+            Action::WindowMinimize | Action::WindowMaximize => {}
+            Action::RadiusTarget(target) => {
+                self.radius_target = target.min(1);
+                self.preview_radius = None;
+            }
+            Action::WindowClose => self.exit = true,
+            Action::IslandTab(tab) => {
+                self.island_tab = tab;
+                self.scroll = 0.;
+            }
+            Action::SourceToggle(id) => {
+                let mut ignored = self.native_state["settings"]["IgnoredSources"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                if ignored.iter().any(|v| v == &id) {
+                    ignored.retain(|v| v != &id);
+                } else {
+                    ignored.push(json!(id));
+                }
+                self.native_state["settings"]["IgnoredSources"] = json!(ignored);
+            }
+            Action::EditSetting(key, title) => {
+                let value = self.setting(key);
+                let value = if [
+                    "IgnoredSources",
+                    "NotificationAllowedApps",
+                    "NotificationBlockedApps",
+                ]
+                .contains(&key)
+                {
+                    value
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(Value::as_str)
+                                .collect::<Vec<_>>()
+                                .join("; ")
+                        })
+                        .unwrap_or_default()
+                } else if key == "NeteaseCdpPort" {
+                    value
+                        .as_str()
+                        .map(str::to_owned)
+                        .or_else(|| value.as_u64().map(|v| v.to_string()))
+                        .unwrap_or_else(|| "9223".into())
+                } else {
+                    value.as_str().unwrap_or("").to_string()
+                };
+                self.dialog = Some(Dialog {
+                    kind: DialogKind::Setting(key),
+                    fields: vec![Field::new(title, value, 4096)],
+                    active: 0,
+                    daily: false,
+                    error: String::new(),
+                    preedit: String::new(),
+                });
+            }
+            Action::Details(i) => {
+                if i < 3 {
+                    let open = !self.details[i as usize];
+                    self.details[..3].fill(false);
+                    self.details[i as usize] = open;
+                    self.scroll = 0.;
+                } else if let Some(v) = self.details.get_mut(i as usize) {
+                    *v = !*v;
+                }
+            }
+            Action::PlayerMode(mode) => {
+                self.native_state["settings"]["PlayerResponseMode"] = json!(mode);
+                self.native_update("PlayerResponseMode", json!(mode));
+                self.sync_player_filter();
+            }
+            Action::SelectPlayer(id) => {
+                let mut selected = self.player_selection();
+                if let Some(i) = selected.iter().position(|s| s.eq_ignore_ascii_case(&id)) {
+                    selected.remove(i);
+                } else {
+                    selected.push(id.clone());
+                }
+                self.native_state["settings"]["SelectedSources"] = json!(selected.clone());
+                self.native_update("SelectedSources", json!(selected));
+                self.sync_player_filter();
+            }
+            Action::BrowserMedia => {
+                let next = !self
+                    .setting("BrowserMediaEnabled")
+                    .as_bool()
+                    .unwrap_or(false);
+                self.native_state["settings"]["BrowserMediaEnabled"] = json!(next);
+                self.native_update("BrowserMediaEnabled", json!(next));
+                self.sync_player_filter();
+            }
+            Action::NativeEdit(key, value) => {
+                if key == "Animation" {
+                    self.prefs.reduced_motion = value == false;
+                }
+                if key == "ControlCenterColorSource" {
+                    self.prefs.monet = true;
+                }
+                if let Some(k) = key.strip_prefix("Motion") {
+                    self.native_state["settings"]["Motion"][k] = value;
+                } else if let Some(k) = key.strip_prefix("Spring") {
+                    self.native_state["settings"]["Motion"]["Spring"][k] = value;
+                } else {
+                    self.native_state["settings"][key] = value;
+                }
+            }
+            Action::NativeCommand(name, value) => {
+                if name == "soundSelect" {
+                    let prefix = value["category"].as_str().unwrap_or("");
+                    if dotisle_domain::sound_catalog::valid_prefix(prefix) {
+                        if value["source"] == "Builtin" {
+                            self.native_state["settings"][format!("{prefix}Sound")] =
+                                value["kind"].clone();
+                        }
+                        self.native_state["settings"][format!("{prefix}SoundSource")] =
+                            value["source"].clone();
+                        self.details[..3].fill(false);
+                        self.scroll = 0.;
+                    }
+                } else if name == "resetBuiltinSounds" {
+                    for prefix in ["Notification", "Todo", "Device"] {
+                        if self.native_state["settings"][format!("{prefix}SoundSource")] != "Custom"
+                        {
+                            self.native_state["settings"][format!("{prefix}Sound")] =
+                                json!(dotisle_domain::sound_catalog::default_for(prefix));
+                        }
+                    }
+                }
+            }
+            Action::TimerPreferences => self.edit_timer_preferences(),
+            Action::WorkflowModules => {
+                self.dialog = Some(Dialog {
+                    kind: DialogKind::WorkflowModules,
+                    fields: vec![],
+                    active: 0,
+                    daily: false,
+                    error: String::new(),
+                    preedit: String::new(),
+                });
+            }
+            Action::EditModule(index) => self.edit_module(index),
+            Action::RemoveModule(index) => self.remove_module(index),
+            Action::ModulePage(page) => self.module_page = page,
+            Action::QuickCommit => {}
+            Action::QuickReminder => {
+                self.quick_preview = Value::Null;
+                self.dialog = Some(Dialog {
+                    kind: DialogKind::QuickReminder,
+                    fields: vec![Field::new("例如：20分钟后取快递", String::new(), 300)],
+                    active: 0,
+                    daily: false,
+                    error: String::new(),
+                    preedit: String::new(),
+                });
+            }
+            Action::IslandSettings(tab) => {
+                self.page = Page::Settings;
+                self.island_tab = tab;
+                self.settings_tab = 128 + tab;
+                self.scroll = 0.;
+            }
+            Action::EditRule(id) => {
+                let r = id
+                    .as_ref()
+                    .and_then(|id| {
+                        self.native_state["appRules"]
+                            .as_array()
+                            .and_then(|rs| rs.iter().find(|r| r["id"].as_str() == Some(id)))
+                    })
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                self.dialog = Some(Dialog {
+                    kind: DialogKind::Rule(id),
+                    fields: vec![
+                        Field::new("规则名称", r["name"].as_str().unwrap_or("").into(), 60),
+                        Field::new(
+                            "程序完整路径 · .exe",
+                            r["executablePath"].as_str().unwrap_or("").into(),
+                            260,
+                        ),
+                        Field::new("提醒内容", r["message"].as_str().unwrap_or("").into(), 200),
+                        Field::new(
+                            "进入提醒冷却 · 5 / 15 / 30 / 60 分钟",
+                            r["cooldownMinutes"].as_u64().unwrap_or(30).to_string(),
+                            3,
+                        ),
+                        Field::new(
+                            "前台累计阈值 · 10–240 分钟",
+                            r["thresholdMinutes"].as_u64().unwrap_or(60).to_string(),
+                            3,
+                        ),
+                    ],
+                    active: 0,
+                    daily: r["trigger"] == "foregroundDaily",
+                    error: String::new(),
+                    preedit: String::new(),
+                });
+            }
+            Action::Navigate(page) => {
+                self.page = if page == Page::Music {
+                    Page::Home
+                } else if page == Page::Island {
+                    self.settings_tab = 128;
+                    Page::Settings
+                } else {
+                    page
+                };
+                self.scroll = 0.;
+                self.palette = false;
+                self.query.clear();
+            }
+            Action::SettingsTab(tab) => {
+                self.page = Page::Settings;
+                self.settings_tab = crate::settings_hub::destination(tab);
+                if (128..135).contains(&tab) {
+                    self.island_tab = tab - 128;
+                }
+                self.scroll = 0.;
+            }
+            Action::CloudExpand => self.cloud_expanded = !self.cloud_expanded,
+            Action::CloudTab(tab) => {
+                self.cloud_tab = tab;
+                self.cloud_expanded = true;
+            }
+            Action::DragWindow => {}
+            Action::Media(name) => {
+                if self.demo {
+                    self.snapshot["isPlaying"] = json!(!self.playing());
+                } else if self.track() {
+                    if let Some(tx) = &self.send {
+                        let _ = tx.send((name, 0.));
+                    }
+                }
+            }
+            Action::Seek => {}
+            Action::Mode(mode) => {
+                self.mode = mode;
+                self.selected = None;
+            }
+            Action::Preset(minutes) => {
+                self.timer_seconds = None;
+                self.minutes = minutes;
+                self.selected = None;
+            }
+            Action::StartTimer => {
+                if self.mode == 3 {
+                    self.start_workflow();
+                } else {
+                    let mode = ["pomodoro", "countdown", "stopwatch"][self.mode.min(2) as usize];
+                    let r=self.timers.create(&json!({"mode":mode,"name":match self.mode{0=>"心无旁骛",1=>"留一点时间",_=>"每一刻都算数"},"duration":self.timer_seconds.unwrap_or(self.minutes*60),"focus":self.timer_seconds.unwrap_or(self.minutes*60),"rest":self.rest_seconds,"rounds":self.timer_rounds}));
+                    match r {
+                        Ok(id) => {
+                            self.selected = Some(id);
+                            self.message("已开始计时");
+                        }
+                        Err(e) => self.message(e),
+                    }
+                }
+            }
+            Action::SelectTimer(id) => {
+                if let Some(t) = self.timers.items.iter().find(|t| t.id == id) {
+                    self.mode = match t.mode.as_str() {
+                        "countdown" => 1,
+                        "stopwatch" => 2,
+                        "workflow" => 3,
+                        _ => 0,
+                    };
+                }
+                self.selected = Some(id)
+            }
+            Action::Timer(id, operation) => {
+                let r = self.timers.action(&id, operation);
+                self.feedback(
+                    r,
+                    match operation {
+                        "delete" => "计时器已移除",
+                        "reset" => "计时器已重置",
+                        _ => "计时状态已更新",
+                    },
+                );
+            }
+            Action::EditTodo(id) => {
+                let old = id
+                    .as_ref()
+                    .and_then(|id| self.todos.items.iter().find(|t| &t.id == id));
+                let now = todos::Now::local();
+                self.dialog = Some(Dialog {
+                    kind: DialogKind::Todo(id.clone()),
+                    fields: vec![
+                        Field::new(
+                            "要记住的事",
+                            old.map(|t| t.title.clone()).unwrap_or_default(),
+                            120,
+                        ),
+                        Field::new(
+                            "日期 · YYYY-MM-DD",
+                            old.map(|t| t.date.clone()).unwrap_or(now.date),
+                            10,
+                        ),
+                        Field::new(
+                            "时间 · HH:MM",
+                            old.map(|t| t.time.clone()).unwrap_or(now.time),
+                            5,
+                        ),
+                        Field::new(
+                            "备注",
+                            old.map(|t| t.content.clone()).unwrap_or_default(),
+                            2048,
+                        ),
+                    ],
+                    active: 0,
+                    daily: old.is_some_and(|t| t.daily),
+                    error: String::new(),
+                    preedit: String::new(),
+                });
+            }
+            Action::ToggleTodo(id) => {
+                let now = todos::Now::local();
+                let done = self
+                    .todos
+                    .items
+                    .iter()
+                    .find(|t| t.id == id)
+                    .is_some_and(|t| t.done(&now));
+                let r = self.todos.complete(&id, !done, &now);
+                if r.is_ok() && !done {
+                    self.success_at = Some(Instant::now());
+                }
+                self.feedback(
+                    r,
+                    if done {
+                        "已恢复待办"
+                    } else {
+                        "又完成了一件事"
+                    },
+                );
+            }
+            Action::DeleteTodo(id) => {
+                let old = self.todos.items.iter().find(|t| t.id == id).cloned();
+                let r = self.todos.delete(&id);
+                if r.is_ok() {
+                    self.undo = old;
+                }
+                self.feedback(r, "待办已移除");
+            }
+            Action::Undo => {
+                if let Some(todo) = self.undo.clone() {
+                    match self.todos.restore(todo) {
+                        Ok(()) => {
+                            self.undo = None;
+                            self.message("已恢复待办");
+                        }
+                        Err(e) => self.message(e),
+                    }
+                }
+            }
+            Action::SaveModal => self.save_modal(),
+            Action::CancelModal => self.dialog = None,
+            Action::Field(i) => {
+                if let Some(d) = &mut self.dialog {
+                    if i < d.fields.len() {
+                        d.active = i;
+                        d.preedit.clear();
+                    }
+                }
+            }
+            Action::Daily => {
+                if let Some(d) = &mut self.dialog {
+                    d.daily = !d.daily;
+                }
+            }
+            Action::Pref(key) => {
+                let old = self.prefs.clone();
+                match key {
+                    "dark" => self.prefs.dark = !self.prefs.dark,
+                    "monet" => self.prefs.monet = !self.prefs.monet,
+                    "translation" => self.prefs.translation = !self.prefs.translation,
+                    "words" => self.prefs.word_highlight = !self.prefs.word_highlight,
+                    "online" => self.prefs.online = !self.prefs.online,
+                    "browser" => self.prefs.include_browser = !self.prefs.include_browser,
+                    "motion" => self.prefs.reduced_motion = !self.prefs.reduced_motion,
+                    "island" => self.prefs.island = !self.prefs.island,
+                    "top" => self.prefs.always_on_top = !self.prefs.always_on_top,
+                    "sound" => self.prefs.reminder_sound = !self.prefs.reminder_sound,
+                    _ => {}
+                }
+                self.save_preferences(old);
+            }
+            Action::Seed(seed) => {
+                let old = self.prefs.clone();
+                self.prefs.seed = seed;
+                self.prefs.monet = false;
+                self.save_preferences(old);
+            }
+            Action::Offset(delta) => {
+                let old = self.prefs.clone();
+                self.prefs.offset_ms = (self.prefs.offset_ms + delta).clamp(-5000, 5000);
+                self.save_preferences(old);
+            }
+            Action::Import => {
+                self.dialog = Some(Dialog {
+                    kind: DialogKind::Import,
+                    fields: vec![],
+                    active: 0,
+                    daily: false,
+                    error: String::new(),
+                    preedit: String::new(),
+                })
+            }
+            Action::Paths => {
+                self.dialog = Some(Dialog {
+                    kind: DialogKind::Paths,
+                    fields: vec![Field::new(
+                        "文件夹路径 · 多个路径以分号分隔",
+                        self.prefs.local_folders.join(";"),
+                        4096,
+                    )],
+                    active: 0,
+                    daily: false,
+                    error: String::new(),
+                    preedit: String::new(),
+                })
+            }
+            Action::Palette => {
+                self.palette = !self.palette;
+                self.query.clear();
+            }
+            Action::Quit => self.exit = true,
+            Action::OpenCenter => self.show_center = true,
+            Action::WorkflowAddModule(index) => self.workflow_add_module(index),
+            Action::WorkflowStageNew => self.workflow_open_stage(None),
+            Action::WorkflowStageEdit(index) => self.workflow_open_stage(Some(index)),
+            Action::WorkflowStageDelete(index) => self.workflow_delete_stage(index),
+            Action::WorkflowStageMove(index, delta) => self.workflow_move_stage(index, delta),
+            Action::WorkflowStageNudge(index, delta) => self.workflow_nudge_stage(index, delta),
+            Action::WorkflowSaveTemplate => self.workflow_open_save(),
+            Action::WorkflowTemplates => self.workflow_open_templates(),
+            Action::WorkflowLoadTemplate(id) => self.workflow_load_template(&id),
+            Action::WorkflowDeleteTemplate(id) => self.workflow_delete_template(&id),
+            Action::WorkflowDraftReset => self.workflow_draft_reset(),
+            Action::WorkflowEditCopy(id) => self.workflow_edit_copy(&id),
+        }
+    }
+    pub fn seek(&mut self, fraction: f64) {
+        if !fraction.is_finite() || !self.snapshot["canSeek"].as_bool().unwrap_or(false) {
+            return;
+        }
+        if self.remote.is_some() {
+            let seconds = self.snapshot["track"]["durationSeconds"]
+                .as_f64()
+                .unwrap_or(0.)
+                * fraction.clamp(0., 1.);
+            self.native_command("media", json!({"action":"seek","seconds":seconds}));
+            return;
+        }
+        if !self.snapshot["canSeek"].as_bool().unwrap_or(false) {
+            return;
+        }
+        let seconds = self.snapshot["track"]["durationSeconds"]
+            .as_f64()
+            .unwrap_or(0.)
+            * fraction.clamp(0., 1.);
+        if self.demo {
+            self.snapshot["positionSeconds"] = json!(seconds);
+        } else if let Some(tx) = &self.send {
+            let _ = tx.send(("seek", seconds));
+        }
+    }
+    fn save_modal(&mut self) {
+        let Some(d) = self.dialog.clone() else { return };
+        let result:Result<(),String>=match d.kind{DialogKind::Widget(ref id)=>self.save_widget_config(id,&d),
         DialogKind::Todo(id)=>self.todos.save(&json!({"id":id.clone().unwrap_or_default(),"title":d.fields[0].value,"date":d.fields[1].value,"time":d.fields[2].value,"content":d.fields[3].value,"daily":d.daily,"color":id.as_ref().and_then(|id|self.todos.items.iter().find(|t|&t.id==id)).map(|t|t.color.as_str()).unwrap_or("#B6CCB7")})).map(|_|()),
         DialogKind::TimerPreferences=>self.save_timer_preferences(&d),DialogKind::WorkflowModule(index)=>self.save_module(&d,index),DialogKind::WorkflowModules=>Ok(()),DialogKind::QuickReminder=>Err("快速提醒需要连接主程序后解析。".into()),DialogKind::Rule(_)=>Err("应用提醒需要连接主程序后保存。".into()),DialogKind::Setting(key)=>{if key=="NeteaseCdpPort"{let raw=d.fields[0].value.trim();match raw.parse::<u32>(){Ok(port)if(1024..=65535).contains(&port)=>{self.native_state["settings"][key]=json!(port.to_string());Ok(())},_=>Err("端口需要 1024–65535 的数字".into())}}else{self.native_state["settings"][key]=json!(d.fields[0].value);Ok(())}},DialogKind::Paths=>{let paths=d.fields[0].value.split(';').map(str::trim).filter(|s|!s.is_empty()).map(str::to_owned).collect::<Vec<_>>();if paths.iter().any(|s|!PathBuf::from(s).is_dir()){Err("请填写存在的文件夹路径".into())}else{let old=self.prefs.clone();self.prefs.local_folders=paths;let result=self.persist();if result.is_err(){self.prefs=old;}result}},
         DialogKind::Import=>{let source=PathBuf::from(std::env::var_os("APPDATA").unwrap_or_default()).join("LyricIsland");match preferences::import_legacy(&source,&self.data){Ok(p)=>{self.prefs=p;self.todos=todos::Store::new(self.data.join("todos.json"));self.timers=timers::Store::new(self.data.join("timers.json"));if let Some(b)=&self.backend{b.apply(self.prefs.backend());}Ok(())},Err(e)=>Err(e)}},DialogKind::WorkflowStage(_)=>self.submit_stage_dialog(),DialogKind::WorkflowTemplate(_)=>self.submit_template_dialog(),DialogKind::WorkflowTemplates=>{self.dialog=None;Ok(())}
-    };match result{Ok(())=>{let closed=self.dialog.as_ref().is_some_and(|d|matches!(d.kind,DialogKind::WorkflowTemplates));self.dialog=None;self.message(if closed{"模板库已关闭"}else{"已保存"});},Err(e)=>{if let Some(d)=&mut self.dialog{d.error=e;}}}}
-    pub fn input(&mut self,text:&str){if self.dialog.as_ref().is_some_and(|d|matches!(d.kind,DialogKind::QuickReminder)){self.quick_preview=Value::Null;}if self.palette{self.query.extend(text.chars().filter(|c|!c.is_control()).take(60usize.saturating_sub(self.query.chars().count())));}else if let Some(d)=&mut self.dialog{if let Some(f)=d.fields.get_mut(d.active){if f.selected{f.value.clear();f.cursor=0;f.selected=false;}let remaining=f.max.saturating_sub(f.value.chars().count());let value=text.chars().filter(|c|!c.is_control()).take(remaining).collect::<String>();f.cursor=f.cursor.min(f.value.len());f.value.insert_str(f.cursor,&value);f.cursor+=value.len();d.error.clear();d.preedit.clear();}}}
-    pub fn select_all(&mut self){if let Some(d)=&mut self.dialog{if let Some(f)=d.fields.get_mut(d.active){f.selected=true;}}}
-    pub fn edit_key(&mut self,key:&str){if self.dialog.as_ref().is_some_and(|d|matches!(d.kind,DialogKind::QuickReminder)){self.quick_preview=Value::Null;}if let Some(d)=&mut self.dialog{if let Some(f)=d.fields.get_mut(d.active){f.cursor=f.cursor.min(f.value.len());match key{"Home"=>f.cursor=0,"End"=>f.cursor=f.value.len(),"Left"=>f.cursor=f.value[..f.cursor].char_indices().last().map(|(i,_)|i).unwrap_or(0),"Right"=>f.cursor=f.value[f.cursor..].chars().next().map(|c|f.cursor+c.len_utf8()).unwrap_or(f.cursor),"Delete"=>{if f.selected{f.value.clear();f.cursor=0;}else if let Some(c)=f.value[f.cursor..].chars().next(){f.value.replace_range(f.cursor..f.cursor+c.len_utf8(),"");}},_=>{}}f.selected=false;}}}
-    pub fn backspace(&mut self){if self.dialog.as_ref().is_some_and(|d|matches!(d.kind,DialogKind::QuickReminder)){self.quick_preview=Value::Null;}if self.palette{self.query.pop();}else if let Some(d)=&mut self.dialog{if let Some(f)=d.fields.get_mut(d.active){if f.selected{f.value.clear();f.cursor=0;f.selected=false;}else{f.cursor=f.cursor.min(f.value.len());if let Some((i,_))=f.value[..f.cursor].char_indices().last(){f.value.replace_range(i..f.cursor,"");f.cursor=i;}}}}}
-    pub fn shutdown(&mut self){if self.remote.is_some(){self.remote=None;return}if let Err(e)=self.timers.persist(){lyric_backend::io::log(&self.data.join("Logs"),"PERSIST_ERROR",&e);}self.send=None;if let Some(b)=&self.backend{b.close();}}
+    };
+        match result {
+            Ok(()) => {
+                let closed = self
+                    .dialog
+                    .as_ref()
+                    .is_some_and(|d| matches!(d.kind, DialogKind::WorkflowTemplates));
+                self.dialog = None;
+                self.message(if closed {
+                    "模板库已关闭"
+                } else {
+                    "已保存"
+                });
+            }
+            Err(e) => {
+                if let Some(d) = &mut self.dialog {
+                    d.error = e;
+                }
+            }
+        }
+    }
+    pub fn input(&mut self, text: &str) {
+        if self
+            .dialog
+            .as_ref()
+            .is_some_and(|d| matches!(d.kind, DialogKind::QuickReminder))
+        {
+            self.quick_preview = Value::Null;
+        }
+        if self.palette {
+            self.query.extend(
+                text.chars()
+                    .filter(|c| !c.is_control())
+                    .take(60usize.saturating_sub(self.query.chars().count())),
+            );
+        } else if let Some(d) = &mut self.dialog {
+            if let Some(f) = d.fields.get_mut(d.active) {
+                if f.selected {
+                    f.value.clear();
+                    f.cursor = 0;
+                    f.selected = false;
+                }
+                let remaining = f.max.saturating_sub(f.value.chars().count());
+                let value = text
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .take(remaining)
+                    .collect::<String>();
+                f.cursor = f.cursor.min(f.value.len());
+                f.value.insert_str(f.cursor, &value);
+                f.cursor += value.len();
+                d.error.clear();
+                d.preedit.clear();
+            }
+        }
+    }
+    pub fn select_all(&mut self) {
+        if let Some(d) = &mut self.dialog {
+            if let Some(f) = d.fields.get_mut(d.active) {
+                f.selected = true;
+            }
+        }
+    }
+    pub fn edit_key(&mut self, key: &str) {
+        if self
+            .dialog
+            .as_ref()
+            .is_some_and(|d| matches!(d.kind, DialogKind::QuickReminder))
+        {
+            self.quick_preview = Value::Null;
+        }
+        if let Some(d) = &mut self.dialog {
+            if let Some(f) = d.fields.get_mut(d.active) {
+                f.cursor = f.cursor.min(f.value.len());
+                match key {
+                    "Home" => f.cursor = 0,
+                    "End" => f.cursor = f.value.len(),
+                    "Left" => {
+                        f.cursor = f.value[..f.cursor]
+                            .char_indices()
+                            .last()
+                            .map(|(i, _)| i)
+                            .unwrap_or(0)
+                    }
+                    "Right" => {
+                        f.cursor = f.value[f.cursor..]
+                            .chars()
+                            .next()
+                            .map(|c| f.cursor + c.len_utf8())
+                            .unwrap_or(f.cursor)
+                    }
+                    "Delete" => {
+                        if f.selected {
+                            f.value.clear();
+                            f.cursor = 0;
+                        } else if let Some(c) = f.value[f.cursor..].chars().next() {
+                            f.value.replace_range(f.cursor..f.cursor + c.len_utf8(), "");
+                        }
+                    }
+                    _ => {}
+                }
+                f.selected = false;
+            }
+        }
+    }
+    pub fn backspace(&mut self) {
+        if self
+            .dialog
+            .as_ref()
+            .is_some_and(|d| matches!(d.kind, DialogKind::QuickReminder))
+        {
+            self.quick_preview = Value::Null;
+        }
+        if self.palette {
+            self.query.pop();
+        } else if let Some(d) = &mut self.dialog {
+            if let Some(f) = d.fields.get_mut(d.active) {
+                if f.selected {
+                    f.value.clear();
+                    f.cursor = 0;
+                    f.selected = false;
+                } else {
+                    f.cursor = f.cursor.min(f.value.len());
+                    if let Some((i, _)) = f.value[..f.cursor].char_indices().last() {
+                        f.value.replace_range(i..f.cursor, "");
+                        f.cursor = i;
+                    }
+                }
+            }
+        }
+    }
+    pub fn shutdown(&mut self) {
+        if self.remote.is_some() {
+            self.remote = None;
+            return;
+        }
+        if let Err(e) = self.timers.persist() {
+            lyric_backend::io::log(&self.data.join("Logs"), "PERSIST_ERROR", &e);
+        }
+        self.send = None;
+        if let Some(b) = &self.backend {
+            b.close();
+        }
+    }
 }

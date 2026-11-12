@@ -1,91 +1,1051 @@
 //! Shared Material components and a matching hit/focus tree in logical pixels.
-use vello::{Scene,kurbo::{Rect,Affine},peniko::{Fill}};
+use crate::{
+    draw::{self, Icon, Text},
+    model::Action,
+};
 use dotisle_domain::monet::Scheme;
-use crate::{draw::{self,Text,Icon},model::Action};
-use dotisle_render::progress::{self,BarStyle,Look,ThumbStyle};
-#[derive(Clone,Debug)]pub struct Hit{pub rect:Rect,pub action:Action,pub label:String,pub enabled:bool}
-pub struct Ui<'a>{pub selection_values:std::collections::HashMap<String,f64>,pub motion_targets:Vec<(String,f64)>,pub press_layers:Vec<f64>,pub switches:std::collections::HashMap<String,f64>,pub state_layers:Vec<f32>,pub scene:&'a mut Scene,pub text:&'a mut Text,pub s:Scheme,pub hits:Vec<Hit>,pub pointer:(f64,f64),pub focus:Option<usize>,pub pressed:Option<usize>,pub clip:Rect,pub nothing:bool,pub miuix:bool,pub terminal:bool,pub pixel:bool,pub swiss:bool,
+use dotisle_render::progress::{self, BarStyle, Look, ThumbStyle};
+use vello::{
+    kurbo::{Affine, Rect, Shape},
+    peniko::Fill,
+    Scene,
+};
+#[derive(Clone, Debug)]
+pub struct Hit {
+    pub rect: Rect,
+    pub action: Action,
+    pub label: String,
+    pub enabled: bool,
+}
+pub struct Ui<'a> {
+    pub selection_values: std::collections::HashMap<String, f64>,
+    pub motion_targets: Vec<(String, f64)>,
+    pub press_layers: Vec<f64>,
+    pub switches: std::collections::HashMap<String, f64>,
+    pub state_layers: Vec<f32>,
+    pub scene: &'a mut Scene,
+    pub text: &'a mut Text,
+    pub s: Scheme,
+    pub hits: Vec<Hit>,
+    pub pointer: (f64, f64),
+    pub focus: Option<usize>,
+    pub pressed: Option<usize>,
+    pub clip: Rect,
+    pub miuix: bool,
+    pub terminal: bool,
+    pub pixel: bool,
+    pub swiss: bool,
     /// Replacement face for already-fixed text nodes; `None` keeps the pinned default.
-    pub face:Option<String>}
-impl<'a> Ui<'a>{
-    pub fn selection(&mut self,action:&Action,selected:bool)->f64{if self.nothing||self.terminal||self.pixel||self.swiss{return if selected{1.}else{0.}}let key=match action{Action::NativeEdit(key,serde_json::Value::Bool(_))=>format!("switch:{key}"),_=>format!("selection:{action:?}")};let target=if selected{1.}else{0.};self.motion_targets.push((key.clone(),target));self.selection_values.get(&key).copied().unwrap_or(target).clamp(0.,1.)}
-    fn press(&self,index:Option<usize>)->f64{index.and_then(|i|self.press_layers.get(i)).copied().unwrap_or(if index.is_some()&&self.pressed==index{1.}else{0.}).clamp(0.,1.)}
-    fn mix(a:u32,b:u32,t:f64)->u32{let t=t.clamp(0.,1.);let c=|n:u32|{let x=((a>>n)&255)as f64;let y=((b>>n)&255)as f64;(x+(y-x)*t).round()as u32};c(16)<<16|c(8)<<8|c(0)}
-    pub fn label(&mut self,text:&str,x:f64,y:f64,size:f32,rgb:u32,bold:bool,max:f64){
-        let size=if self.pixel{if size>=28.{36.}else if size>=20.{24.}else{12.}}else if self.nothing{if size>=36.{40.}else if size>=24.{24.}else if size>=14.{16.}else{12.}}else{size};
+    pub face: Option<String>,
+}
+impl<'a> Ui<'a> {
+    pub fn selection(&mut self, action: &Action, selected: bool) -> f64 {
+        if self.terminal || self.pixel || self.swiss {
+            return if selected { 1. } else { 0. };
+        }
+        let key = match action {
+            Action::NativeEdit(key, serde_json::Value::Bool(_)) => format!("switch:{key}"),
+            _ => format!("selection:{action:?}"),
+        };
+        let target = if selected { 1. } else { 0. };
+        self.motion_targets.push((key.clone(), target));
+        self.selection_values
+            .get(&key)
+            .copied()
+            .unwrap_or(target)
+            .clamp(0., 1.)
+    }
+    fn press(&self, index: Option<usize>) -> f64 {
+        index
+            .and_then(|i| self.press_layers.get(i))
+            .copied()
+            .unwrap_or(if index.is_some() && self.pressed == index {
+                1.
+            } else {
+                0.
+            })
+            .clamp(0., 1.)
+    }
+    fn mix(a: u32, b: u32, t: f64) -> u32 {
+        let t = t.clamp(0., 1.);
+        let c = |n: u32| {
+            let x = ((a >> n) & 255) as f64;
+            let y = ((b >> n) & 255) as f64;
+            (x + (y - x) * t).round() as u32
+        };
+        c(16) << 16 | c(8) << 8 | c(0)
+    }
+    pub fn label(&mut self, text: &str, x: f64, y: f64, size: f32, rgb: u32, bold: bool, max: f64) {
+        let size = if self.pixel {
+            if size >= 28. {
+                36.
+            } else if size >= 20. {
+                24.
+            } else {
+                12.
+            }
+        } else {
+            size
+        };
         // Only nodes whose layout came from a fixed rect take the replacement face;
         // the pinned metrics in `Text` are never switched globally.
-        if let Some(face)=self.face.clone(){let face=if self.swiss&&size>=20.{if text.is_ascii(){"Source Serif 4".to_string()}else{"Noto Serif SC".to_string()}}else if self.nothing&&size>=36.{"Doto".to_string()}else if self.nothing&&size<=12.{"Space Mono".to_string()}else{face};self.text.draw_face_fixed(self.scene,&face,text,x,y,size,0xff000000|rgb,if bold{if self.swiss{700}else if self.nothing{500}else{600}}else{400},max);}
-        else{self.text.draw(self.scene,text,x,y,size,rgb,bold,max);}
+        if let Some(face) = self.face.clone() {
+            let face = if self.swiss && size >= 20. {
+                if text.is_ascii() {
+                    "Source Serif 4".to_string()
+                } else {
+                    "Noto Serif SC".to_string()
+                }
+            } else {
+                face
+            };
+            self.text.draw_face_fixed(
+                self.scene,
+                &face,
+                text,
+                x,
+                y,
+                size,
+                0xff000000 | rgb,
+                if bold {
+                    if self.swiss {
+                        700
+                    } else {
+                        600
+                    }
+                } else {
+                    400
+                },
+                max,
+            );
+        } else {
+            self.text.draw(self.scene, text, x, y, size, rgb, bold, max);
+        }
     }
-    pub fn center(&mut self,text:&str,r:Rect,size:f32,rgb:u32,bold:bool){
-        let size=if self.pixel{if size>=28.{36.}else if size>=20.{24.}else{12.}}else if self.nothing{if size>=36.{40.}else if size>=24.{24.}else if size>=14.{16.}else{12.}}else{size};
-        if let Some(face)=self.face.clone(){
-            let face=if self.swiss&&size>=20.{if text.is_ascii(){"Source Serif 4".to_string()}else{"Noto Serif SC".to_string()}}else if self.nothing&&size>=36.{"Doto".to_string()}else if self.nothing&&(size<=12.||text.chars().all(|c|c.is_ascii_digit()||":.%+- /".contains(c))){"Space Mono".to_string()}else{face};
-            let width=if self.nothing||self.terminal||self.pixel||self.swiss||self.miuix{self.text.face_width(&face,text,size,if bold{if self.swiss{700}else if self.miuix{600}else{500}}else{400})}else{self.text.measure(text,size,bold)};let x=r.x0+(r.width()-width.min(r.width()-8.))/2.;
-            self.text.draw_face_fixed(self.scene,&face,text,x,r.y0+(r.height()-size as f64*1.35)/2.,size,0xff000000|rgb,if bold{if self.swiss{700}else if self.nothing{500}else{600}}else{400},(r.width()-8.).max(1.));
-        }else{self.text.centered(self.scene,text,r,size,rgb,bold);}
+    pub fn center(&mut self, text: &str, r: Rect, size: f32, rgb: u32, bold: bool) {
+        let size = if self.pixel {
+            if size >= 28. {
+                36.
+            } else if size >= 20. {
+                24.
+            } else {
+                12.
+            }
+        } else {
+            size
+        };
+        if let Some(face) = self.face.clone() {
+            let face = if self.swiss && size >= 20. {
+                if text.is_ascii() {
+                    "Source Serif 4".to_string()
+                } else {
+                    "Noto Serif SC".to_string()
+                }
+            } else {
+                face
+            };
+            let width = if self.terminal || self.pixel || self.swiss || self.miuix {
+                self.text.face_width(
+                    &face,
+                    text,
+                    size,
+                    if bold {
+                        if self.swiss {
+                            700
+                        } else if self.miuix {
+                            600
+                        } else {
+                            500
+                        }
+                    } else {
+                        400
+                    },
+                )
+            } else {
+                self.text.measure(text, size, bold)
+            };
+            let x = r.x0 + (r.width() - width.min(r.width() - 8.)) / 2.;
+            self.text.draw_face_fixed(
+                self.scene,
+                &face,
+                text,
+                x,
+                r.y0 + (r.height() - size as f64 * 1.35) / 2.,
+                size,
+                0xff000000 | rgb,
+                if bold {
+                    if self.swiss {
+                        700
+                    } else {
+                        600
+                    }
+                } else {
+                    400
+                },
+                (r.width() - 8.).max(1.),
+            );
+        } else {
+            self.text.centered(self.scene, text, r, size, rgb, bold);
+        }
     }
     /// Measure the exact face and weight used by `label_alpha`.
-    pub fn measure_alpha(&mut self,text:&str,size:f32,bold:bool)->f64{
-        if let Some(face)=self.face.clone(){let face=if self.swiss&&size>=20.{if text.is_ascii(){"Source Serif 4".to_string()}else{"Noto Serif SC".to_string()}}else if self.nothing&&size>=36.{"Doto".to_string()}else if self.nothing&&size<=12.{"Space Mono".to_string()}else{face};self.text.face_width(&face,text,size,if bold{if self.swiss{700}else if self.nothing{500}else{600}}else{400})}else{self.text.measure(text,size,bold)}
+    pub fn measure_alpha(&mut self, text: &str, size: f32, bold: bool) -> f64 {
+        if let Some(face) = self.face.clone() {
+            let face = if self.swiss && size >= 20. {
+                if text.is_ascii() {
+                    "Source Serif 4".to_string()
+                } else {
+                    "Noto Serif SC".to_string()
+                }
+            } else {
+                face
+            };
+            self.text.face_width(
+                &face,
+                text,
+                size,
+                if bold {
+                    if self.swiss {
+                        700
+                    } else {
+                        600
+                    }
+                } else {
+                    400
+                },
+            )
+        } else {
+            self.text.measure(text, size, bold)
+        }
     }
-    pub fn trailing_label(&mut self,text:&str,right:f64,y:f64,size:f32,rgb:u32,bold:bool,max:f64){
-        let width=self.measure_alpha(text,size,bold).min(max);
-        self.label_alpha(text,right-width,y,size,rgb,1.,bold,width+0.5);
+    pub fn trailing_label(
+        &mut self,
+        text: &str,
+        right: f64,
+        y: f64,
+        size: f32,
+        rgb: u32,
+        bold: bool,
+        max: f64,
+    ) {
+        let width = self.measure_alpha(text, size, bold).min(max);
+        self.label_alpha(text, right - width, y, size, rgb, 1., bold, width + 0.5);
     }
     /// Same geometry and metrics as `label`, only the ink alpha changes (drag previews).
-    pub fn label_alpha(&mut self,text:&str,x:f64,y:f64,size:f32,rgb:u32,alpha:f64,bold:bool,max:f64){
-        let argb=(((alpha.clamp(0.,1.)*255.).round()as u32)<<24)|rgb;
-        if let Some(face)=self.face.clone(){let face=if self.swiss&&size>=20.{if text.is_ascii(){"Source Serif 4".to_string()}else{"Noto Serif SC".to_string()}}else if self.nothing&&size>=36.{"Doto".to_string()}else if self.nothing&&size<=12.{"Space Mono".to_string()}else{face};self.text.draw_face_fixed(self.scene,&face,text,x,y,size,argb,if bold{if self.swiss{700}else if self.nothing{500}else{600}}else{400},max);}
-        else{self.text.draw_argb(self.scene,text,x,y,size,argb,bold,max);}
-    }
-    pub fn center_alpha(&mut self,text:&str,r:Rect,size:f32,rgb:u32,alpha:f64,bold:bool){
-        let argb=(((alpha.clamp(0.,1.)*255.).round()as u32)<<24)|rgb;
-        if let Some(face)=self.face.clone(){
-            let face=if self.swiss&&size>=20.{if text.is_ascii(){"Source Serif 4".to_string()}else{"Noto Serif SC".to_string()}}else if self.nothing&&size>=36.{"Doto".to_string()}else if self.nothing&&(size<=12.||text.chars().all(|c|c.is_ascii_digit()||":.%+- /".contains(c))){"Space Mono".to_string()}else{face};
-            let width=if self.nothing||self.terminal||self.pixel||self.swiss||self.miuix{self.text.face_width(&face,text,size,if bold{if self.swiss{700}else if self.miuix{600}else{500}}else{400})}else{self.text.measure(text,size,bold)};let x=r.x0+(r.width()-width.min(r.width()-8.))/2.;
-            self.text.draw_face_fixed(self.scene,&face,text,x,r.y0+(r.height()-size as f64*1.35)/2.,size,argb,if bold{if self.swiss{700}else if self.nothing{500}else{600}}else{400},(r.width()-8.).max(1.));
-        }else{let width=self.text.measure(text,size,bold);self.text.draw_argb(self.scene,text,r.x0+(r.width()-width.min(r.width()-8.))/2.,r.y0+(r.height()-size as f64*1.35)/2.,size,argb,bold,r.width()-8.);}
-    }
-    pub fn icon(&mut self,kind:Icon,x:f64,y:f64,size:f64,rgb:u32){if self.swiss{crate::swiss::icon(self.scene,kind,x,y,size,rgb);}else if self.pixel{crate::pixel::icon(self.scene,kind,x,y,size,rgb);}else if self.terminal{crate::terminal::icon(self.scene,self.text,kind,x,y,size,rgb);}else if self.nothing||self.miuix{crate::theme_icons::icon(self.scene,kind,x,y,size,rgb,self.miuix);}else{draw::icon(self.scene,kind,x,y,size,rgb);}}
-    pub fn panel(&mut self,r:Rect,rgb:u32){if self.swiss{crate::swiss::panel(self.scene,r,rgb,self.s.outline_variant);return}if self.miuix{crate::miuix::surface(self.scene,r,16.,rgb);return}if self.pixel{crate::pixel::panel(self.scene,r,rgb,self.s.outline);return}let radius=if self.terminal||self.pixel||self.swiss{0.}else if self.nothing{12.}else if self.miuix{32.}else{24.};if self.miuix{self.scene.draw_blurred_rounded_rect(Affine::translate((0.,4.)),r,draw::alpha(0x171923,0.06),radius,6.);}draw::fill(self.scene,r,radius,rgb);if !self.nothing&&!self.terminal{self.scene.stroke(&vello::kurbo::Stroke::new(0.65),Affine::IDENTITY,draw::alpha(self.s.on_surface,if self.s.surface<0x808080{0.075}else{0.045}),None,&draw::continuous_rect(r,radius));}if self.terminal{draw::outline(self.scene,r,0.,self.s.outline,1.);}else if self.nothing{draw::outline(self.scene,r,radius,crate::nothing::border(self.s.surface<0x808080),1.);}}
-    pub fn hit(&mut self,r:Rect,label:&str,action:Action,enabled:bool)->Option<usize>{let r=r.intersect(self.clip);if r.width()<=0.||r.height()<=0.{return None}let index=self.hits.len();self.hits.push(Hit{rect:r,action,label:label.into(),enabled});Some(index)}
-    pub fn state(&mut self,r:Rect,radius:f64,index:Option<usize>,foreground:u32){let radius=if self.terminal||self.pixel||self.swiss{0.}else{radius};let Some(index)=index else{return};let hovered=r.contains(self.pointer);let target=if self.pressed==Some(index){0.12}else if self.focus==Some(index){0.10}else if hovered{0.08}else{0.};let opacity=self.state_layers.get(index).copied().unwrap_or(target).clamp(0.,0.16);if opacity>0.{self.scene.fill(Fill::NonZero,Affine::IDENTITY,draw::alpha(foreground,opacity),None,&dotisle_render::draw::continuous_rect(r,radius));}if self.focus==Some(index){draw::outline(self.scene,r.inflate(3.,3.),radius+3.,self.s.primary,2.);}}
-    pub fn button(&mut self,r:Rect,label:&str,icon:Option<Icon>,action:Action,tonal:bool,enabled:bool){
-
-
-        if self.swiss||self.miuix{let hit=self.hit(r,label,action,enabled);let p=if enabled&&!self.swiss{self.press(hit)}else{0.};let r=r.inset((r.width()*0.012*p,r.height()*0.012*p));let(bg,fg)=if !enabled{(self.s.high,self.s.on_surface_variant)}else if self.swiss{if tonal{(self.s.container,self.s.on_surface)}else{(self.s.on_surface,self.s.container)}}else if tonal{(self.s.high,self.s.on_surface)}else{(self.s.primary,self.s.on_primary)};if self.swiss{draw::fill(self.scene,r,0.,bg);draw::outline(self.scene,r,0.,if enabled{self.s.on_surface}else{self.s.outline},1.);}else{crate::miuix::surface(self.scene,r,16.,bg);}self.state(r,if self.swiss{0.}else{16.},hit,fg);if let Some(icon)=icon{self.icon(icon,r.x0+16.,r.center().y-10.,20.,fg);self.center(label,Rect::new(r.x0+30.,r.y0,r.x1,r.y1),14.,fg,true);}else{self.center(label,r,14.,fg,true);}return}
-        if self.pixel{let(bg,fg)=if !enabled{(self.s.high,self.s.on_surface_variant)}else if tonal{(self.s.high,self.s.on_surface)}else{(self.s.primary,self.s.on_primary)};let hit=self.hit(r,label,action,enabled);crate::pixel::panel(self.scene,r,bg,self.s.outline);self.state(r,0.,hit,fg);if let Some(icon)=icon{self.icon(icon,r.x0+14.,r.center().y-10.,20.,fg);self.center(label,Rect::new(r.x0+26.,r.y0,r.x1,r.y1),12.,fg,false);}else{self.center(label,r,12.,fg,false);}return}
-        if self.terminal{let(bg,fg)=if !enabled{(self.s.high,self.s.on_surface_variant)}else if tonal{(self.s.high,self.s.on_surface)}else{(self.s.primary,self.s.on_primary)};let hit=self.hit(r,label,action,enabled);draw::fill(self.scene,r,0.,bg);draw::outline(self.scene,r,0.,if enabled{self.s.primary}else{self.s.outline},1.);self.state(r,0.,hit,fg);let command=if let Some(icon)=icon{format!("[{} {label}]",crate::terminal::glyph(icon))}else{format!("[{label}]")};self.center(&command,r,13.,fg,false);return}
-        let(bg,fg)=if !enabled{(self.s.high,self.s.on_surface_variant)}else if tonal{(self.s.secondary_container,self.s.on_secondary_container)}else{(self.s.primary,self.s.on_primary)};
-        let i=self.hit(r,label,action,enabled);let p=if enabled&&!self.nothing{self.press(i)}else{0.};let r=r.inset((r.width()*0.008*p,r.height()*0.008*p));let radius=r.height()/2.;draw::fill(self.scene,r,radius,bg);if self.nothing&&tonal&&enabled{draw::outline(self.scene,r,radius,self.s.outline_variant,1.);}if enabled{self.state(r,radius,i,fg);}
-        if let Some(icon)=icon{self.icon(icon,r.x0+18.,r.center().y-10.,20.,fg);self.center(label,Rect::new(r.x0+35.,r.y0,r.x1-8.,r.y1),14.,fg,true);}else{self.center(label,r,14.,fg,true);}
-    }
-    pub fn icon_button(&mut self,r:Rect,kind:Icon,label:&str,action:Action,filled:bool,enabled:bool){if self.swiss||self.miuix{let hit=self.hit(r,label,action,enabled);let bg=if filled&&enabled{self.s.primary}else if !enabled{self.s.high}else{self.s.container};let fg=if !enabled{self.s.on_surface_variant}else if filled{self.s.on_primary}else{self.s.on_surface};if self.swiss{draw::fill(self.scene,r,0.,bg);if !filled{draw::outline(self.scene,r,0.,self.s.outline_variant,1.);}}else{crate::miuix::surface(self.scene,r,16.,bg);}self.state(r,if self.swiss{0.}else{16.},hit,fg);self.icon(kind,r.center().x-12.,r.center().y-12.,24.,fg);return}if self.pixel{let hit=self.hit(r,label,action,enabled);let bg=if filled&&enabled{self.s.primary}else{self.s.container};let fg=if !enabled{self.s.outline}else if filled{self.s.on_primary}else{self.s.on_surface};crate::pixel::panel(self.scene,r,bg,self.s.outline);self.state(r,0.,hit,fg);self.icon(kind,r.center().x-12.,r.center().y-12.,24.,fg);return}if self.terminal{let hit=self.hit(r,label,action,enabled);let fg=if !enabled{self.s.outline}else if filled{self.s.on_primary}else{self.s.primary};if filled{draw::fill(self.scene,r,0.,self.s.primary);}draw::outline(self.scene,r,0.,if enabled{self.s.outline}else{self.s.high},1.);self.state(r,0.,hit,fg);self.icon(kind,r.center().x-12.,r.center().y-12.,24.,fg);return}let shape=if !self.nothing&&filled&&matches!(kind,Icon::Play|Icon::Pause){self.selection(&action,matches!(kind,Icon::Pause))}else{0.};let fg=if filled{self.s.on_primary}else{self.s.on_surface_variant};let i=self.hit(r,label,action,enabled);let p=if enabled&&!self.nothing{self.press(i)}else{0.};let r=r.inset((r.width()*0.015*p,r.height()*0.015*p));let radius=(r.height()/2.-(r.height()*0.2)*shape-6.*p).max(8.);if filled{draw::fill(self.scene,r,radius,if enabled{self.s.primary}else{self.s.high});}if enabled{self.state(r,radius,i,fg);}self.icon(kind,r.center().x-12.,r.center().y-12.,24.,if enabled{fg}else{self.s.outline});}
-    pub fn chip(&mut self,r:Rect,label:&str,selected:bool,action:Action){if self.swiss||self.miuix{let hit=self.hit(r,label,action,true);let bg=if selected{if self.swiss{self.s.primary}else{self.s.secondary_container}}else{self.s.high};let fg=if selected{if self.swiss{self.s.on_primary}else{self.s.on_secondary_container}}else{self.s.on_surface_variant};if self.swiss{draw::fill(self.scene,r,0.,bg);}else{crate::miuix::surface(self.scene,r,12.,bg);}self.state(r,if self.swiss{0.}else{12.},hit,fg);self.center(label,r,14.,fg,selected);return}if self.pixel{let hit=self.hit(r,label,action,true);crate::pixel::panel(self.scene,r,if selected{self.s.primary}else{self.s.container},self.s.outline);self.state(r,0.,hit,self.s.on_surface);self.center(label,r,12.,if selected{self.s.on_primary}else{self.s.on_surface_variant},false);return}if self.terminal{let hit=self.hit(r,label,action,true);draw::fill(self.scene,r,0.,if selected{self.s.primary}else{self.s.container});draw::outline(self.scene,r,0.,self.s.outline,1.);self.state(r,0.,hit,self.s.on_surface);self.center(&format!("{} {label}",if selected{">"}else{" "}),r,13.,if selected{self.s.on_primary}else{self.s.on_surface_variant},false);return}let t=self.selection(&action,selected);let i=self.hit(r,label,action,true);let p=if self.nothing{0.}else{self.press(i)};let r=r.inset((1.5*p,1.*p));let radius=if self.nothing{8.}else{12.+(r.height()/2.-12.)*t-4.*p};draw::fill(self.scene,r,radius,Self::mix(self.s.container,self.s.secondary_container,t));if t<0.999{draw::outline(self.scene,r,radius,Self::mix(self.s.outline,self.s.secondary_container,t),1.);}self.state(r,radius,i,self.s.on_surface);if t>0.001&&r.width()>110.{let size=16.*(0.8+0.2*t);self.scene.push_layer(vello::peniko::Mix::Normal,t as f32,Affine::IDENTITY,&r);self.icon(Icon::Check,r.x0+10.,r.center().y-size/2.,size,self.s.on_secondary_container);self.scene.pop_layer();}let shift=if r.width()>110.{8.*t}else{0.};self.center(label,Rect::new(r.x0+shift,r.y0,r.x1+shift,r.y1),14.,Self::mix(self.s.on_surface_variant,self.s.on_secondary_container,t),selected);}
-    pub fn toggle(&mut self,r:Rect,title:&str,detail:&str,on:bool,action:Action){
-        self.label(title,r.x0,r.y0+9.,16.,self.s.on_surface,false,r.width()-100.);self.label(detail,r.x0,r.y0+36.,12.,self.s.on_surface_variant,false,r.width()-100.);
-
-        if self.swiss||self.miuix{let t=self.selection(&action,on);let hit=self.hit(r,title,action,true);let control=draw::rect(r.x1-49.,r.center().y-14.,49.,28.);let track=Self::mix(self.s.outline_variant,self.s.primary,t);draw::fill(self.scene,control,if self.swiss{0.}else{14.},track);if self.swiss{draw::fill(self.scene,draw::rect(control.x0+4.+21.*t,control.y0+4.,20.,20.),0.,self.s.on_primary);}else{draw::circle(self.scene,control.x0+14.+21.*t,control.center().y,10.,0xFFFFFF);}self.state(control,if self.swiss{0.}else{14.},hit,self.s.on_surface);return}
-        if self.pixel{let hit=self.hit(r,title,action,true);let control=draw::rect(r.x1-38.,r.center().y-14.,28.,28.);crate::pixel::panel(self.scene,control,if on{self.s.primary}else{self.s.high},self.s.outline);if on{self.icon(Icon::Check,control.x0+4.,control.y0+4.,20.,self.s.on_primary);}self.state(control,0.,hit,self.s.on_surface);return}
-        if self.terminal{let hit=self.hit(r,title,action,true);let control=draw::rect(r.x1-76.,r.center().y-18.,72.,36.);draw::outline(self.scene,control,0.,if on{self.s.primary}else{self.s.outline},1.);self.center(if on{"[ON]"}else{"[OFF]"},control,13.,if on{self.s.primary}else{self.s.on_surface_variant},false);self.state(control,0.,hit,self.s.on_surface);return}
-        if !self.nothing{
-            let t=self.selection(&action,on);let hit=self.hit(r,title,action,true);let p=self.press(hit);let control=draw::rect(r.x1-51.,r.center().y-15.5,51.,31.);let dark=self.s.surface<0x808080;
-            draw::fill(self.scene,control,15.5,Self::mix(if dark{0x55555c}else{0xd3d3d9},self.s.primary,t));
-            let thumb=draw::rect(control.x0+2.+20.*t,control.y0+2.,27.,27.);self.scene.draw_blurred_rounded_rect(Affine::translate((0.,1.)),thumb,draw::alpha(0,0.16),13.5,2.);
-            draw::fill(self.scene,thumb.inset((-0.6*p,0.)),13.5,0xffffff);self.state(control,15.5,hit,self.s.on_surface);return
+    pub fn label_alpha(
+        &mut self,
+        text: &str,
+        x: f64,
+        y: f64,
+        size: f32,
+        rgb: u32,
+        alpha: f64,
+        bold: bool,
+        max: f64,
+    ) {
+        let argb = (((alpha.clamp(0., 1.) * 255.).round() as u32) << 24) | rgb;
+        if let Some(face) = self.face.clone() {
+            let face = if self.swiss && size >= 20. {
+                if text.is_ascii() {
+                    "Source Serif 4".to_string()
+                } else {
+                    "Noto Serif SC".to_string()
+                }
+            } else {
+                face
+            };
+            self.text.draw_face_fixed(
+                self.scene,
+                &face,
+                text,
+                x,
+                y,
+                size,
+                argb,
+                if bold {
+                    if self.swiss {
+                        700
+                    } else {
+                        600
+                    }
+                } else {
+                    400
+                },
+                max,
+            );
+        } else {
+            self.text
+                .draw_argb(self.scene, text, x, y, size, argb, bold, max);
         }
-        let t=self.selection(&action,on);let i=self.hit(r,title,action,true);let p=if self.nothing{0.}else{self.press(i)};let switch=draw::rect(r.x1-56.,r.center().y-16.,52.,32.);let dark=self.s.surface<0x808080;
-        let track=if self.nothing{Self::mix(crate::nothing::track_off(dark),self.s.primary,t)}else{Self::mix(self.s.high,self.s.primary,t)};draw::fill(self.scene,switch,16.,track);if self.nothing{draw::outline(self.scene,switch,16.,Self::mix(crate::nothing::track_thumb(dark),self.s.outline_variant,t),1.5);}else if t<0.999&&!self.miuix{draw::outline(self.scene,switch,16.,Self::mix(self.s.on_surface_variant,self.s.primary,t),1.5);}
-        let center=switch.x0+16.+20.*t;let radius=if self.miuix||self.nothing{12.}else{8.+4.*t+1.5*p};let thumb=if self.miuix{if t>0.5{0xFFFFFF}else{0x747986}}else if self.nothing&&t<0.5{crate::nothing::track_thumb(dark)}else{Self::mix(self.s.on_surface_variant,self.s.on_primary,t)};draw::circle(self.scene,center,switch.center().y,radius,thumb);if t>0.5&&!self.miuix&&!self.nothing{self.scene.push_layer(vello::peniko::Mix::Normal,((t-0.5)*2.)as f32,Affine::IDENTITY,&switch);self.icon(Icon::Check,center-8.,switch.y0+8.,16.,self.s.primary);self.scene.pop_layer();}self.state(switch,16.,i,self.s.on_surface);
     }
-    pub fn slider(&mut self,r:Rect,fraction:f64,enabled:bool,phase:f64,spin:f64,bar:BarStyle,thumb:ThumbStyle){
+    pub fn center_alpha(
+        &mut self,
+        text: &str,
+        r: Rect,
+        size: f32,
+        rgb: u32,
+        alpha: f64,
+        bold: bool,
+    ) {
+        let argb = (((alpha.clamp(0., 1.) * 255.).round() as u32) << 24) | rgb;
+        if let Some(face) = self.face.clone() {
+            let face = if self.swiss && size >= 20. {
+                if text.is_ascii() {
+                    "Source Serif 4".to_string()
+                } else {
+                    "Noto Serif SC".to_string()
+                }
+            } else {
+                face
+            };
+            let width = if self.terminal || self.pixel || self.swiss || self.miuix {
+                self.text.face_width(
+                    &face,
+                    text,
+                    size,
+                    if bold {
+                        if self.swiss {
+                            700
+                        } else if self.miuix {
+                            600
+                        } else {
+                            500
+                        }
+                    } else {
+                        400
+                    },
+                )
+            } else {
+                self.text.measure(text, size, bold)
+            };
+            let x = r.x0 + (r.width() - width.min(r.width() - 8.)) / 2.;
+            self.text.draw_face_fixed(
+                self.scene,
+                &face,
+                text,
+                x,
+                r.y0 + (r.height() - size as f64 * 1.35) / 2.,
+                size,
+                argb,
+                if bold {
+                    if self.swiss {
+                        700
+                    } else {
+                        600
+                    }
+                } else {
+                    400
+                },
+                (r.width() - 8.).max(1.),
+            );
+        } else {
+            let width = self.text.measure(text, size, bold);
+            self.text.draw_argb(
+                self.scene,
+                text,
+                r.x0 + (r.width() - width.min(r.width() - 8.)) / 2.,
+                r.y0 + (r.height() - size as f64 * 1.35) / 2.,
+                size,
+                argb,
+                bold,
+                r.width() - 8.,
+            );
+        }
+    }
+    pub fn icon(&mut self, kind: Icon, x: f64, y: f64, size: f64, rgb: u32) {
+        if self.swiss {
+            crate::swiss::icon(self.scene, kind, x, y, size, rgb);
+        } else if self.pixel {
+            crate::pixel::icon(self.scene, kind, x, y, size, rgb);
+        } else if self.terminal {
+            crate::terminal::icon(self.scene, self.text, kind, x, y, size, rgb);
+        } else if self.miuix {
+            crate::theme_icons::icon(self.scene, kind, x, y, size, rgb, self.miuix);
+        } else {
+            draw::icon(self.scene, kind, x, y, size, rgb);
+        }
+    }
+    pub fn panel(&mut self, r: Rect, rgb: u32) {
+        if self.swiss {
+            crate::swiss::panel(self.scene, r, rgb, self.s.outline_variant);
+            return;
+        }
+        if self.miuix {
+            crate::miuix::surface(self.scene, r, 16., rgb);
+            return;
+        }
+        if self.pixel {
+            crate::pixel::panel(self.scene, r, rgb, self.s.outline);
+            return;
+        }
+        let radius = if self.terminal || self.pixel || self.swiss {
+            0.
+        } else if self.miuix {
+            32.
+        } else {
+            24.
+        };
+        if self.miuix {
+            self.scene.draw_blurred_rounded_rect(
+                Affine::translate((0., 4.)),
+                r,
+                draw::alpha(0x171923, 0.06),
+                radius,
+                6.,
+            );
+        }
+        draw::fill(self.scene, r, radius, rgb);
+        if !self.terminal {
+            self.scene.stroke(
+                &vello::kurbo::Stroke::new(0.65),
+                Affine::IDENTITY,
+                draw::alpha(
+                    self.s.on_surface,
+                    if self.s.surface < 0x808080 {
+                        0.075
+                    } else {
+                        0.045
+                    },
+                ),
+                None,
+                &draw::continuous_rect(r, radius),
+            );
+        }
+        if self.terminal {
+            draw::outline(self.scene, r, 0., self.s.outline, 1.);
+        }
+    }
+    pub fn hit(&mut self, r: Rect, label: &str, action: Action, enabled: bool) -> Option<usize> {
+        let r = r.intersect(self.clip);
+        if r.width() <= 0. || r.height() <= 0. {
+            return None;
+        }
+        let index = self.hits.len();
+        self.hits.push(Hit {
+            rect: r,
+            action,
+            label: label.into(),
+            enabled,
+        });
+        Some(index)
+    }
+    pub fn state(&mut self, r: Rect, radius: f64, index: Option<usize>, foreground: u32) {
+        self.state_layer(r, radius, index, foreground, false);
+    }
+    fn rounded_state(&mut self, r: Rect, radius: f64, index: Option<usize>, foreground: u32) {
+        self.state_layer(r, radius, index, foreground, true);
+    }
+    fn state_layer(
+        &mut self,
+        r: Rect,
+        radius: f64,
+        index: Option<usize>,
+        foreground: u32,
+        circular: bool,
+    ) {
+        let radius = if self.terminal || self.pixel || self.swiss {
+            0.
+        } else {
+            radius
+        };
+        let Some(index) = index else { return };
+        let hovered = r.contains(self.pointer);
+        let target = if self.pressed == Some(index) {
+            0.12
+        } else if self.focus == Some(index) {
+            0.10
+        } else if hovered {
+            0.08
+        } else {
+            0.
+        };
+        let opacity = self
+            .state_layers
+            .get(index)
+            .copied()
+            .unwrap_or(target)
+            .clamp(0., 0.16);
+        if opacity > 0. {
+            let shape = if circular {
+                draw::rounded_rect(r, radius).to_path(0.1)
+            } else {
+                draw::continuous_rect(r, radius)
+            };
+            self.scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                draw::alpha(foreground, opacity),
+                None,
+                &shape,
+            );
+        }
+        if self.focus == Some(index) {
+            let outline = if circular {
+                draw::outline_rounded
+            } else {
+                draw::outline
+            };
+            outline(
+                self.scene,
+                r.inflate(3., 3.),
+                radius + 3.,
+                self.s.primary,
+                2.,
+            );
+        }
+    }
+    pub fn button(
+        &mut self,
+        r: Rect,
+        label: &str,
+        icon: Option<Icon>,
+        action: Action,
+        tonal: bool,
+        enabled: bool,
+    ) {
+        if self.swiss || self.miuix {
+            let hit = self.hit(r, label, action, enabled);
+            let p = if enabled && !self.swiss {
+                self.press(hit)
+            } else {
+                0.
+            };
+            let r = r.inset((r.width() * 0.012 * p, r.height() * 0.012 * p));
+            let (bg, fg) = if !enabled {
+                (self.s.high, self.s.on_surface_variant)
+            } else if self.swiss {
+                if tonal {
+                    (self.s.container, self.s.on_surface)
+                } else {
+                    (self.s.on_surface, self.s.container)
+                }
+            } else if tonal {
+                (self.s.high, self.s.on_surface)
+            } else {
+                (self.s.primary, self.s.on_primary)
+            };
+            if self.swiss {
+                draw::fill(self.scene, r, 0., bg);
+                draw::outline(
+                    self.scene,
+                    r,
+                    0.,
+                    if enabled {
+                        self.s.on_surface
+                    } else {
+                        self.s.outline
+                    },
+                    1.,
+                );
+            } else {
+                crate::miuix::surface(self.scene, r, 16., bg);
+            }
+            self.state(r, if self.swiss { 0. } else { 16. }, hit, fg);
+            if let Some(icon) = icon {
+                self.icon(icon, r.x0 + 16., r.center().y - 10., 20., fg);
+                self.center(
+                    label,
+                    Rect::new(r.x0 + 30., r.y0, r.x1, r.y1),
+                    14.,
+                    fg,
+                    true,
+                );
+            } else {
+                self.center(label, r, 14., fg, true);
+            }
+            return;
+        }
+        if self.pixel {
+            let (bg, fg) = if !enabled {
+                (self.s.high, self.s.on_surface_variant)
+            } else if tonal {
+                (self.s.high, self.s.on_surface)
+            } else {
+                (self.s.primary, self.s.on_primary)
+            };
+            let hit = self.hit(r, label, action, enabled);
+            crate::pixel::panel(self.scene, r, bg, self.s.outline);
+            self.state(r, 0., hit, fg);
+            if let Some(icon) = icon {
+                self.icon(icon, r.x0 + 14., r.center().y - 10., 20., fg);
+                self.center(
+                    label,
+                    Rect::new(r.x0 + 26., r.y0, r.x1, r.y1),
+                    12.,
+                    fg,
+                    false,
+                );
+            } else {
+                self.center(label, r, 12., fg, false);
+            }
+            return;
+        }
+        if self.terminal {
+            let (bg, fg) = if !enabled {
+                (self.s.high, self.s.on_surface_variant)
+            } else if tonal {
+                (self.s.high, self.s.on_surface)
+            } else {
+                (self.s.primary, self.s.on_primary)
+            };
+            let hit = self.hit(r, label, action, enabled);
+            draw::fill(self.scene, r, 0., bg);
+            draw::outline(
+                self.scene,
+                r,
+                0.,
+                if enabled {
+                    self.s.primary
+                } else {
+                    self.s.outline
+                },
+                1.,
+            );
+            self.state(r, 0., hit, fg);
+            let command = if let Some(icon) = icon {
+                format!("[{} {label}]", crate::terminal::glyph(icon))
+            } else {
+                format!("[{label}]")
+            };
+            self.center(&command, r, 13., fg, false);
+            return;
+        }
+        let (bg, fg) = if !enabled {
+            (self.s.high, self.s.on_surface_variant)
+        } else if tonal {
+            (self.s.secondary_container, self.s.on_secondary_container)
+        } else {
+            (self.s.primary, self.s.on_primary)
+        };
+        let i = self.hit(r, label, action, enabled);
+        let p = if enabled { self.press(i) } else { 0. };
+        let r = r.inset((r.width() * 0.008 * p, r.height() * 0.008 * p));
+        let radius = r.height() / 2.;
+        draw::fill(self.scene, r, radius, bg);
 
-        let look=Look{fg:0xff000000|self.s.primary,track:0xff000000|self.s.outline,dot:0xff000000|self.s.on_surface_variant};
-        progress::draw(self.scene,r,fraction,if enabled{phase}else{0.},1.,22.,1.,if enabled{spin}else{0.},look,bar,thumb);
-        let i=self.hit(r,"播放进度",Action::Seek,enabled);if self.focus==i&&i.is_some(){draw::outline(self.scene,r.inflate(2.,2.),12.,self.s.primary,2.);}
+        if enabled {
+            self.state(r, radius, i, fg);
+        }
+        if let Some(icon) = icon {
+            self.icon(icon, r.x0 + 18., r.center().y - 10., 20., fg);
+            self.center(
+                label,
+                Rect::new(r.x0 + 35., r.y0, r.x1 - 8., r.y1),
+                14.,
+                fg,
+                true,
+            );
+        } else {
+            self.center(label, r, 14., fg, true);
+        }
     }
-    pub fn clip(&mut self,r:Rect){self.clip=r;self.scene.push_clip_layer(Affine::IDENTITY,&r);}
-    pub fn end_clip(&mut self,window:Rect){self.scene.pop_layer();self.clip=window;}
+    pub fn icon_button(
+        &mut self,
+        r: Rect,
+        kind: Icon,
+        label: &str,
+        action: Action,
+        filled: bool,
+        enabled: bool,
+    ) {
+        if self.swiss || self.miuix {
+            let hit = self.hit(r, label, action, enabled);
+            let bg = if filled && enabled {
+                self.s.primary
+            } else if !enabled {
+                self.s.high
+            } else {
+                self.s.container
+            };
+            let fg = if !enabled {
+                self.s.on_surface_variant
+            } else if filled {
+                self.s.on_primary
+            } else {
+                self.s.on_surface
+            };
+            if self.swiss {
+                draw::fill(self.scene, r, 0., bg);
+                if !filled {
+                    draw::outline(self.scene, r, 0., self.s.outline_variant, 1.);
+                }
+            } else {
+                crate::miuix::surface(self.scene, r, 16., bg);
+            }
+            self.state(r, if self.swiss { 0. } else { 16. }, hit, fg);
+            self.icon(kind, r.center().x - 12., r.center().y - 12., 24., fg);
+            return;
+        }
+        if self.pixel {
+            let hit = self.hit(r, label, action, enabled);
+            let bg = if filled && enabled {
+                self.s.primary
+            } else {
+                self.s.container
+            };
+            let fg = if !enabled {
+                self.s.outline
+            } else if filled {
+                self.s.on_primary
+            } else {
+                self.s.on_surface
+            };
+            crate::pixel::panel(self.scene, r, bg, self.s.outline);
+            self.state(r, 0., hit, fg);
+            self.icon(kind, r.center().x - 12., r.center().y - 12., 24., fg);
+            return;
+        }
+        if self.terminal {
+            let hit = self.hit(r, label, action, enabled);
+            let fg = if !enabled {
+                self.s.outline
+            } else if filled {
+                self.s.on_primary
+            } else {
+                self.s.primary
+            };
+            if filled {
+                draw::fill(self.scene, r, 0., self.s.primary);
+            }
+            draw::outline(
+                self.scene,
+                r,
+                0.,
+                if enabled { self.s.outline } else { self.s.high },
+                1.,
+            );
+            self.state(r, 0., hit, fg);
+            self.icon(kind, r.center().x - 12., r.center().y - 12., 24., fg);
+            return;
+        }
+        let shape = if filled && matches!(kind, Icon::Play | Icon::Pause) {
+            self.selection(&action, matches!(kind, Icon::Pause))
+        } else {
+            0.
+        };
+        let fg = if filled {
+            self.s.on_primary
+        } else {
+            self.s.on_surface_variant
+        };
+        let i = self.hit(r, label, action, enabled);
+        let p = if enabled { self.press(i) } else { 0. };
+        let r = r.inset((r.width() * 0.015 * p, r.height() * 0.015 * p));
+        let radius = (r.height() / 2. - (r.height() * 0.2) * shape - 6. * p).max(8.);
+        if filled {
+            draw::fill(
+                self.scene,
+                r,
+                radius,
+                if enabled { self.s.primary } else { self.s.high },
+            );
+        }
+        if enabled {
+            self.state(r, radius, i, fg);
+        }
+        self.icon(
+            kind,
+            r.center().x - 12.,
+            r.center().y - 12.,
+            24.,
+            if enabled { fg } else { self.s.outline },
+        );
+    }
+    pub fn chip(&mut self, r: Rect, label: &str, selected: bool, action: Action) {
+        if self.swiss || self.miuix {
+            let hit = self.hit(r, label, action, true);
+            let bg = if selected {
+                if self.swiss {
+                    self.s.primary
+                } else {
+                    self.s.secondary_container
+                }
+            } else {
+                self.s.high
+            };
+            let fg = if selected {
+                if self.swiss {
+                    self.s.on_primary
+                } else {
+                    self.s.on_secondary_container
+                }
+            } else {
+                self.s.on_surface_variant
+            };
+            if self.swiss {
+                draw::fill(self.scene, r, 0., bg);
+            } else {
+                crate::miuix::surface(self.scene, r, 12., bg);
+            }
+            self.state(r, if self.swiss { 0. } else { 12. }, hit, fg);
+            self.center(label, r, 14., fg, selected);
+            return;
+        }
+        if self.pixel {
+            let hit = self.hit(r, label, action, true);
+            crate::pixel::panel(
+                self.scene,
+                r,
+                if selected {
+                    self.s.primary
+                } else {
+                    self.s.container
+                },
+                self.s.outline,
+            );
+            self.state(r, 0., hit, self.s.on_surface);
+            self.center(
+                label,
+                r,
+                12.,
+                if selected {
+                    self.s.on_primary
+                } else {
+                    self.s.on_surface_variant
+                },
+                false,
+            );
+            return;
+        }
+        if self.terminal {
+            let hit = self.hit(r, label, action, true);
+            draw::fill(
+                self.scene,
+                r,
+                0.,
+                if selected {
+                    self.s.primary
+                } else {
+                    self.s.container
+                },
+            );
+            draw::outline(self.scene, r, 0., self.s.outline, 1.);
+            self.state(r, 0., hit, self.s.on_surface);
+            self.center(
+                &format!("{} {label}", if selected { ">" } else { " " }),
+                r,
+                13.,
+                if selected {
+                    self.s.on_primary
+                } else {
+                    self.s.on_surface_variant
+                },
+                false,
+            );
+            return;
+        }
+        let t = self.selection(&action, selected);
+        let i = self.hit(r, label, action, true);
+        let p = self.press(i);
+        let r = r.inset((1.5 * p, 1. * p));
+        let radius = 12. + (r.height() / 2. - 12.) * t - 4. * p;
+        draw::fill(
+            self.scene,
+            r,
+            radius,
+            Self::mix(self.s.container, self.s.secondary_container, t),
+        );
+        if t < 0.999 {
+            draw::outline(
+                self.scene,
+                r,
+                radius,
+                Self::mix(self.s.outline, self.s.secondary_container, t),
+                1.,
+            );
+        }
+        self.state(r, radius, i, self.s.on_surface);
+        if t > 0.001 && r.width() > 110. {
+            let size = 16. * (0.8 + 0.2 * t);
+            self.scene
+                .push_layer(vello::peniko::Mix::Normal, t as f32, Affine::IDENTITY, &r);
+            self.icon(
+                Icon::Check,
+                r.x0 + 10.,
+                r.center().y - size / 2.,
+                size,
+                self.s.on_secondary_container,
+            );
+            self.scene.pop_layer();
+        }
+        let shift = if r.width() > 110. { 8. * t } else { 0. };
+        self.center(
+            label,
+            Rect::new(r.x0 + shift, r.y0, r.x1 + shift, r.y1),
+            14.,
+            Self::mix(self.s.on_surface_variant, self.s.on_secondary_container, t),
+            selected,
+        );
+    }
+    pub fn toggle(&mut self, r: Rect, title: &str, detail: &str, on: bool, action: Action) {
+        self.label(
+            title,
+            r.x0,
+            r.y0 + 9.,
+            16.,
+            self.s.on_surface,
+            false,
+            r.width() - 100.,
+        );
+        self.label(
+            detail,
+            r.x0,
+            r.y0 + 36.,
+            12.,
+            self.s.on_surface_variant,
+            false,
+            r.width() - 100.,
+        );
+
+        if self.swiss || self.miuix {
+            let t = self.selection(&action, on);
+            let hit = self.hit(r, title, action, true);
+            let control = draw::rect(r.x1 - 49., r.center().y - 14., 49., 28.);
+            let track = Self::mix(self.s.outline_variant, self.s.primary, t);
+            draw::fill_rounded(
+                self.scene,
+                control,
+                if self.swiss { 0. } else { 14. },
+                track,
+            );
+            if self.swiss {
+                draw::fill_rounded(
+                    self.scene,
+                    draw::rect(control.x0 + 4. + 21. * t, control.y0 + 4., 20., 20.),
+                    0.,
+                    self.s.on_primary,
+                );
+            } else {
+                draw::circle(
+                    self.scene,
+                    control.x0 + 14. + 21. * t,
+                    control.center().y,
+                    10.,
+                    0xFFFFFF,
+                );
+            }
+            self.rounded_state(
+                control,
+                if self.swiss { 0. } else { 14. },
+                hit,
+                self.s.on_surface,
+            );
+            return;
+        }
+        if self.pixel {
+            let hit = self.hit(r, title, action, true);
+            let control = draw::rect(r.x1 - 38., r.center().y - 14., 28., 28.);
+            crate::pixel::panel(
+                self.scene,
+                control,
+                if on { self.s.primary } else { self.s.high },
+                self.s.outline,
+            );
+            if on {
+                self.icon(
+                    Icon::Check,
+                    control.x0 + 4.,
+                    control.y0 + 4.,
+                    20.,
+                    self.s.on_primary,
+                );
+            }
+            self.rounded_state(control, 0., hit, self.s.on_surface);
+            return;
+        }
+        if self.terminal {
+            let hit = self.hit(r, title, action, true);
+            let control = draw::rect(r.x1 - 76., r.center().y - 18., 72., 36.);
+            draw::outline_rounded(
+                self.scene,
+                control,
+                0.,
+                if on { self.s.primary } else { self.s.outline },
+                1.,
+            );
+            self.center(
+                if on { "[ON]" } else { "[OFF]" },
+                control,
+                13.,
+                if on {
+                    self.s.primary
+                } else {
+                    self.s.on_surface_variant
+                },
+                false,
+            );
+            self.rounded_state(control, 0., hit, self.s.on_surface);
+            return;
+        }
+
+        let t = self.selection(&action, on);
+        let hit = self.hit(r, title, action, true);
+        let p = self.press(hit);
+        let control = draw::rect(r.x1 - 51., r.center().y - 15.5, 51., 31.);
+        let dark = self.s.surface < 0x808080;
+        draw::fill_rounded(
+            self.scene,
+            control,
+            15.5,
+            Self::mix(if dark { 0x55555c } else { 0xd3d3d9 }, self.s.primary, t),
+        );
+        let thumb = draw::rect(control.x0 + 2. + 20. * t, control.y0 + 2., 27., 27.);
+        self.scene.draw_blurred_rounded_rect(
+            Affine::translate((0., 1.)),
+            thumb,
+            draw::alpha(0, 0.16),
+            13.5,
+            2.,
+        );
+        draw::circle(
+            self.scene,
+            thumb.center().x,
+            thumb.center().y,
+            13.5 + 0.3 * p,
+            0xffffff,
+        );
+        self.rounded_state(control, 15.5, hit, self.s.on_surface);
+        return;
+    }
+    pub fn slider(
+        &mut self,
+        r: Rect,
+        fraction: f64,
+        enabled: bool,
+        phase: f64,
+        spin: f64,
+        bar: BarStyle,
+        thumb: ThumbStyle,
+    ) {
+        let look = Look {
+            fg: 0xff000000 | self.s.primary,
+            track: 0xff000000 | self.s.outline,
+            dot: 0xff000000 | self.s.on_surface_variant,
+        };
+        progress::draw(
+            self.scene,
+            r,
+            fraction,
+            if enabled { phase } else { 0. },
+            1.,
+            22.,
+            1.,
+            if enabled { spin } else { 0. },
+            look,
+            bar,
+            thumb,
+        );
+        let i = self.hit(r, "播放进度", Action::Seek, enabled);
+        if self.focus == i && i.is_some() {
+            draw::outline(self.scene, r.inflate(2., 2.), 12., self.s.primary, 2.);
+        }
+    }
+    pub fn clip(&mut self, r: Rect) {
+        self.clip = r;
+        self.scene.push_clip_layer(Affine::IDENTITY, &r);
+    }
+    pub fn end_clip(&mut self, window: Rect) {
+        self.scene.pop_layer();
+        self.clip = window;
+    }
 }

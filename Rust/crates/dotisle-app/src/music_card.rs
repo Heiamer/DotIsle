@@ -407,7 +407,7 @@ pub fn capture(
     model.tutorial = None;
     model.toast = None;
     model.prefs.control_center_theme = "Original".into();
-    crate::nothing::end_transition();
+    crate::themes::end_transition();
     for dark in [false, true] {
         model.prefs.dark = dark;
         for (width, height) in [(900., 680.), (1200., 800.)] {
