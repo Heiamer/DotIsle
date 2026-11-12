@@ -15,8 +15,16 @@ def await_state(app, predicate, timeout=120):
         time.sleep(.1)
     raise AssertionError(f'Module state timed out: {last}')
 
+def request_ready(app, command, value):
+    deadline=time.monotonic()+120
+    while True:
+        reply=app.request(command,value)
+        if reply.get('success') or '校验正在进行' not in reply.get('message',''): return reply
+        if time.monotonic()>=deadline: return reply
+        await_state(app,lambda v:v.get('moduleManagement',{}).get('phase')!='checking')
+
 def stage(app, source, expected=True):
-    reply=app.request('moduleStage',dict(id='focus',path=str(source.resolve())))
+    reply=request_ready(app,'moduleStage',dict(id='focus',path=str(source.resolve())))
     assert reply['success'],reply
     result=await_state(app,lambda v:v.get('moduleManagement',{}).get('phase') in ('staged','failed'))
     phase=result['moduleManagement']['phase']
@@ -27,7 +35,7 @@ def apply(app, success=True):
     previous=app.request('state')['processId']
     journal=app.data/'module-update-result.json'
     old=journal.read_bytes() if journal.exists() else None
-    reply=app.request('moduleApply',dict(callerSettingsPid=0))
+    reply=request_ready(app,'moduleApply',dict(callerSettingsPid=0))
     assert reply['success'],reply
     deadline=time.monotonic()+150; result=None
     while time.monotonic()<deadline:
@@ -60,7 +68,7 @@ def run(a):
         assert any(t['id']==identifier and 'DLL-PROBE' in t['subtitle'] for t in state['timers']),state['timers']
         assert sha(runtime/'dotisle_core.dll')==report['coreHashBefore']
         report['checks'].append('focus-only DLL changes behavior while CORE remains byte-identical')
-        reply=app.request('moduleRollback',dict(id='focus'));assert reply['success'],reply
+        reply=request_ready(app,'moduleRollback',dict(id='focus'));assert reply['success'],reply
         await_state(app,lambda v:v.get('moduleManagement',{}).get('phase') in ('staged','failed'))
         assert app.request('state')['moduleManagement']['phase']=='staged'
         state,result=apply(app);assert sha(focus)==original
