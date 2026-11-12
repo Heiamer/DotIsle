@@ -1854,20 +1854,19 @@ pub fn verify_motion_editor(data: &std::path::Path) -> Result<(), String> {
     model.page = Page::Island;
     model.island_tab = 3;
     let mut app = App::new(model);
-    let view = views::render(
-        &app.model,
-        &mut app.text,
-        1200.,
-        800.,
-        &views::ViewState::default(),
-    );
-    let curve = view
-        .hits
-        .iter()
-        .find(|h| matches!(h.action, Action::CurveHandle(0, _)))
-        .ok_or("curve handle is missing")?
-        .action
-        .clone();
+    // The glow switches precede the motion editor. Find both real controls by scrolling,
+    // rather than assuming a page offset that changes when settings are added.
+    let mut controls=None;
+    for _ in 0..32 {
+        let view=views::render(&app.model,&mut app.text,1200.,800.,&views::ViewState::default());
+        let curve=view.hits.iter().find(|h|matches!(h.action,Action::CurveHandle(0,_))).map(|h|h.action.clone());
+        let radius=view.hits.iter().find(|h|matches!(h.action,Action::RadiusHandle(_))).map(|h|h.action.clone());
+        if let(Some(curve),Some(radius))=(curve,radius){controls=Some((curve,radius));break;}
+        if app.model.scroll>=view.max_scroll{break;}
+        app.model.scroll=(app.model.scroll+120.).min(view.max_scroll);
+    }
+    app.scroll_target=app.model.scroll;app.scroll_motion.snap(app.model.scroll);
+    let(curve,radius)=controls.ok_or("motion controls are unreachable after scrolling")?;
     let Action::CurveHandle(_, b) = curve else {
         unreachable!()
     };
@@ -1878,13 +1877,7 @@ pub fn verify_motion_editor(data: &std::path::Path) -> Result<(), String> {
     if (c[0] - 0.4).abs() > 1e-6 || (c[1] - 0.2).abs() > 1e-6 {
         return Err("curve drag uses the wrong coordinate space".into());
     }
-    let radius = view
-        .hits
-        .iter()
-        .find(|h| matches!(h.action, Action::RadiusHandle(_)))
-        .ok_or("radius handle is missing")?
-        .action
-        .clone();
+
     let Action::RadiusHandle(b) = radius else {
         unreachable!()
     };
