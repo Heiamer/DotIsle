@@ -1,7 +1,7 @@
 [package]
 autobins = false
 name = "dotisle-app"
-version = "3.5.1"
+version = "3.5.2"
 edition.workspace = true
 license.workspace = true
 

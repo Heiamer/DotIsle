@@ -6,7 +6,7 @@ members = ["crates/dotisle-lyrics", "crates/dotisle-widgets", "crates/dotisle-gl
 exclude = ["vendor/material-colors-0.4.2", "vendor/wgpu-hal-29.0.4", "vendor/vello_hybrid-0.2.0"]
 
 [workspace.package]
-version = "3.5.1"
+version = "3.5.2"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
