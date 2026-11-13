@@ -69,8 +69,10 @@ def run(a):
         assert sha(runtime/'dotisle_core.dll')==report['coreHashBefore']
         report['checks'].append('focus-only DLL changes behavior while CORE remains byte-identical')
         reply=request_ready(app,'moduleRollback',dict(id='focus'));assert reply['success'],reply
-        await_state(app,lambda v:v.get('moduleManagement',{}).get('phase') in ('staged','failed'))
-        assert app.request('state')['moduleManagement']['phase']=='staged'
+        observed=await_state(app,lambda v:v.get('moduleManagement',{}).get('phase') in ('staged','failed'))
+        current=app.request('state')
+        journal=app.data/'module-update-result.json'
+        assert current['moduleManagement']['phase']=='staged',dict(observed=observed['moduleManagement'],current=current['moduleManagement'],journal=journal.read_text(encoding='utf-8') if journal.exists() else None,backup=(app.data/'Cache/ModuleBackups/focus/previous.dll').exists())
         state,result=apply(app);assert sha(focus)==original
         assert all('DLL-PROBE' not in t['subtitle'] for t in state['timers'])
         report['checks'].append('previous DLL can be restored through the same transactional interface')
