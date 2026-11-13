@@ -183,6 +183,8 @@ def run(args):
             assert app.act(flow, 'pause')['success']
             saved = app.timer(flow)
             assert saved['workflow']['stageIndex'] == 1
+            report['snapshots']['workflowSaved'] = saved
+            report['snapshots']['timersFileBeforeRestart'] = json.loads((app.data / 'timers.json').read_text(encoding='utf-8'))
             report['checks'].append('Duplicate skip rejected; rest retained; next cannot bypass a running stage; pause/resume stable')
             print('PASS: workflow duplicate actions and pause/resume', flush=True)
 
@@ -190,8 +192,10 @@ def run(args):
             time.sleep(.15)
             app.start()
             restored = app.timer(flow)
-            assert not restored['running'] and restored['workflow']['stageIndex'] == 1
-            assert restored['elapsedMs'] == saved['elapsedMs']
+            report['snapshots']['workflowRestored'] = restored
+            report['snapshots']['timersFileAfterRestart'] = json.loads((app.data / 'timers.json').read_text(encoding='utf-8'))
+            assert not restored['running'] and restored['workflow']['stageIndex'] == 1, restored
+            assert restored['elapsedMs'] == saved['elapsedMs'], {'saved': saved, 'restored': restored}
             assert app.act(flow, 'resume')['success']
             assert app.act(flow, 'skip')['success']
             assert app.timer(flow)['workflow']['stageIndex'] == 2
