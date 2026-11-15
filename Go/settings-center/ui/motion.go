@@ -102,7 +102,7 @@ func (a *App) opening(c *ui.Context, w, h float32) {
 		if !reduced {
 			versionAlpha = motionEase(float32(clampF64((elapsed/sigSlow()-.62)/.22, 0, 1)))
 		}
-		CenteredText(c, stateString(a.State, "5.0.0-rc3", "version"), 0, wordY+wordH+28, w, 24, 12, s.OnSurfaceVariant, false).Opacity(versionAlpha)
+		CenteredText(c, stateString(a.State, "5.0.0", "version"), 0, wordY+wordH+28, w, 24, 12, s.OnSurfaceVariant, false).Opacity(versionAlpha)
 	})
 	c.AnimationFrame()
 }

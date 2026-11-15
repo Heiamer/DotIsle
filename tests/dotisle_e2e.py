@@ -36,9 +36,9 @@ class PipeClient:
 
     def request(self, command, value=None, timeout_s=8.0):
         # One connection per request: the island serves a single pipe instance
-        # sequentially, and Python's buffered file layer misbehaves across
-        # request/response pairs on one handle.
-        deadline = time.time() + 2.0
+        # sequentially, and the control center's first state read can occupy it
+        # while the desktop host starts. Wait long enough for that handoff.
+        deadline = time.time() + 10.0
         f = None
         while time.time() < deadline:
             try:
