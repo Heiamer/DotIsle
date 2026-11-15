@@ -13,7 +13,7 @@ pub const LAUNCHER_PAYLOAD_RESOURCE: &str = "LyricIsland.Payload.zip";
 pub const INSTALLED_MARKER: &str = "Installed.json";
 
 pub fn required_runtime() -> &'static [&'static str] {
-    &["LyricIsland.exe", "LyricIsland.Settings.exe", "LyricIsland.Updater.exe", "Assets/Fonts/GoogleSansFlex-Regular.ttf", "Assets/Fonts/GoogleSansFlex-Medium.ttf", "Assets/Fonts/GoogleSansFlex-SemiBold.ttf", "Assets/Fonts/GoogleSansFlex-Bold.ttf", "Assets/Fonts/NotoSansSC.ttf", "Assets/Fonts/NotoSansJP.ttf"]
+    &["dotisle_focus.dll","dotisle_todos.dll","dotisle_music.dll","dotisle_lyrics.dll","dotisle_notifications.dll","dotisle_history.dll","dotisle_automation.dll","dotisle_devices.dll","dotisle_osd.dll","dotisle_sound.dll","dotisle_widgets.dll","dotisle_themes.dll","dotisle_glow.dll","dotisle_core.dll", "dotisle_settings.dll", "LyricIsland.exe", "LyricIsland.Settings.exe", "LyricIsland.Updater.exe", "Assets/Fonts/GoogleSansFlex-Regular.ttf", "Assets/Fonts/GoogleSansFlex-Medium.ttf", "Assets/Fonts/GoogleSansFlex-SemiBold.ttf", "Assets/Fonts/GoogleSansFlex-Bold.ttf", "Assets/Fonts/NotoSansSC.ttf", "Assets/Fonts/NotoSansJP.ttf"]
 }
 
 pub fn read_marker(target: &Path) -> Result<Value> { paths::read_json(&target.join(INSTALLED_MARKER)) }

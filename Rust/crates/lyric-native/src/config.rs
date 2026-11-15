@@ -7,11 +7,17 @@ pub fn defaults() -> Value {
     defaults["MusicGlowMode"] = json!("Breath");
     defaults["StartupSignatureEnabled"] = json!(true);
     defaults["StartupGreetingEnabled"] = json!(true);
+    defaults["VerificationCodeEnabled"] = json!(true);
+    for key in ["WeChatMessageHintsEnabled","FeishuMessageHintsEnabled","DingTalkMessageHintsEnabled","WeComMessageHintsEnabled"] { defaults[key]=json!(true); }
+    defaults["WeatherAlertsEnabled"] = json!(true);
+    defaults["WeatherCity"] = json!("");
     defaults["ControlCenterColorSource"] = json!("Content");
     defaults["IslandColorSource"] = json!("Content");
     defaults["IslandDynamicSeedColor"] = json!("#B1E8D1");
     defaults["DynamicColorHighContrast"] = json!(false);
     defaults["ControlCenterMonetEnabled"] = json!(true);
+    defaults["ControlCenterDynamicColorEnabled"] = json!(false);
+    defaults["ControlCenterCustomColor"] = json!("#9ABFE8");
     defaults["ProgressBarStyle"] = json!("Wavy");
     defaults["ProgressBarThumb"] = json!("Pill");
     defaults["ProgressBarThumbEnabled"] = json!(false);
@@ -436,7 +442,7 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         | "AcrylicCapsuleOpacity" => Some((0., 100.)),
         _ => None,
     };
-    let value = if key == "IslandDynamicSeedColor" {
+    let value = if key == "IslandDynamicSeedColor" || key == "ControlCenterCustomColor" {
         let c = value.as_str().ok_or("invalid colour")?;
         if c.len() != 7 || !c.starts_with('#') || !c[1..].bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err("invalid colour".into());
@@ -527,6 +533,7 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         "GlassRefractionEnabled",
         "DynamicColorHighContrast",
         "ControlCenterMonetEnabled",
+        "ControlCenterDynamicColorEnabled",
         "MiniAutoContrast",
         "LyricColorFromCover",
         "AutoCheckUpdatesEnabled",
@@ -548,6 +555,12 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         "Animation",
         "StartupSignatureEnabled",
         "StartupGreetingEnabled",
+        "VerificationCodeEnabled",
+        "WeChatMessageHintsEnabled",
+        "FeishuMessageHintsEnabled",
+        "DingTalkMessageHintsEnabled",
+        "WeComMessageHintsEnabled",
+        "WeatherAlertsEnabled",
         "HoverExpand",
         "ClickAnywhereExpand",
         "WordHighlight",
@@ -600,6 +613,11 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
     }
     // The settings window's own appearance. The capsule is dark by design, so this never reaches
     // the renderer — it is persisted here purely so the choice survives a restart.
+    else if key == "WeatherCity" {
+        let city=value.as_str().ok_or("城市名称无效")?.trim();
+        if city.chars().count()>100||city.chars().any(char::is_control){return Err("城市名称过长或包含无效字符".into())}
+        json!(city)
+    }
     else if key == "SettingsTheme" {
         let s = value.as_str().ok_or("invalid theme")?;
         if !["System", "Light", "Dark"].contains(&s) {
@@ -1439,6 +1457,26 @@ mod translation_button_tests {
 #[cfg(test)]
 mod expressive_preferences {
     use super::*;
+    #[test]
+    fn pastel_beta_is_explicit_and_message_preferences_round_trip() {
+        let path=std::env::temp_dir().join(format!("dotisle-pastel-message-{}.json",std::process::id()));
+        std::fs::write(&path,br#"{"ControlCenterMonetEnabled":true}"#).unwrap();
+        let mut s=load(&path);
+        assert_eq!(s["ControlCenterDynamicColorEnabled"],false);
+        s=validate_setting(json!({"key":"ControlCenterDynamicColorEnabled","value":true,"settings":s})).unwrap();
+        s=validate_setting(json!({"key":"ControlCenterCustomColor","value":"#A9D8C2","settings":s})).unwrap();
+        for key in ["WeChatMessageHintsEnabled","FeishuMessageHintsEnabled","DingTalkMessageHintsEnabled","WeComMessageHintsEnabled"] {
+            assert_eq!(s[key],true);
+            s=validate_setting(json!({"key":key,"value":false,"settings":s})).unwrap();
+        }
+        std::fs::write(&path,serde_json::to_vec(&s).unwrap()).unwrap();
+        let restored=load(&path);
+        assert_eq!(restored["ControlCenterDynamicColorEnabled"],true);
+        assert_eq!(restored["ControlCenterCustomColor"],"#A9D8C2");
+        for key in ["WeChatMessageHintsEnabled","FeishuMessageHintsEnabled","DingTalkMessageHintsEnabled","WeComMessageHintsEnabled"] {assert_eq!(restored[key],false);}
+        assert!(validate_setting(json!({"key":"ControlCenterCustomColor","value":"green","settings":restored})).is_err());
+        std::fs::remove_file(path).unwrap();
+    }
     #[test]
     fn centre_monet_and_lyric_colour_are_independent_and_persist_false() {
         let d = defaults();

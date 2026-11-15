@@ -24,7 +24,18 @@ impl Remote {
         std::thread::spawn(move || {
             // Connect immediately. A missing native process is started once on this worker.
             if let Err(_) = request("state", Value::Null) {
-                if let Some(native) = std::env::current_exe()
+                // One failed state request must not be read as "island absent" (3.5.2 withdrawal):
+                // while the single-instance mutex is held, retry the pipe instead of spawning a
+                // second island, which used to trigger the duplicate-instance dialog.
+                if lyric_backend::io::island_running() {
+                    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                    while std::time::Instant::now() < deadline {
+                        if request("state", Value::Null).is_ok() {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(150));
+                    }
+                } else if let Some(native) = std::env::current_exe()
                     .ok()
                     .and_then(|p| p.parent().map(|p| p.join("LyricIsland.exe")))
                     .filter(|p| p.is_file())
@@ -46,15 +57,18 @@ impl Remote {
             crate::shell::wake();
             loop {
                 // Drain queued commands before waiting. Auto-reset events coalesce signals,
-                // so waiting once per command adds 240 ms for every queued slider change.
+                // so waiting once per command adds a full interval for every queued slider
+                // change. 90 ms matches the island's own poll cadence so desktop widget
+                // lyrics track the island frame instead of trailing it (wakes also arrive
+                // from the island whenever the lyric frame changes).
                 let command = match commands.try_recv() {
                     Ok(v) => Some(v),
                     Err(mpsc::TryRecvError::Disconnected) => break,
                     Err(mpsc::TryRecvError::Empty) => {
                         if let Some(w) = &waiter {
-                            w.wait(240);
+                            w.wait(90);
                         } else {
-                            std::thread::sleep(Duration::from_millis(240));
+                            std::thread::sleep(Duration::from_millis(90));
                         }
                         commands.try_recv().ok()
                     }

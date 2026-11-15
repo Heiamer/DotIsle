@@ -1,3 +1,7 @@
+## 5.0 控制中心字体
+
+Go 原生控制中心使用内嵌 HarmonyOS Sans / HarmonyOS Sans SC（Regular、Medium、Bold）。许可见 `licenses/HarmonyOS-Sans-LICENSE.txt`；其他原生界面的字体说明如下。
+
 # 字体与许可
 
 西文与数字使用 **Google Sans Flex**，中文界面使用 **Noto Sans SC**，日文行使用 **Noto Sans JP**。字体随软件和源码提供，无需安装到 Windows。Google Sans Flex 不含中日韩字形，中文与日文自动回退到 Noto 字体——与 Pixel / Android 的渲染栈一致。

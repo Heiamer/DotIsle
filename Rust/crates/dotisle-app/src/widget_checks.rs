@@ -121,6 +121,7 @@ pub fn run(out: &std::path::Path, text: &mut Text, gpu: &mut Gpu) -> Result<Vec<
                     (-1., -1.),
                     true,
                     0.,
+                    None,
                 );
                 let (w, h) = size.dimensions();
                 if view
@@ -523,6 +524,7 @@ fn verify_independent_styles(
             (-1., -1.),
             false,
             0.,
+            None,
         );
         let name = format!("independent-{style:?}.png");
         let reference = out.join(&name);
@@ -542,6 +544,7 @@ fn verify_independent_styles(
                 (-1., -1.),
                 false,
                 0.,
+                None,
             );
             let path = out.join("independent-comparison.png");
             gpu.capture(&v.scene, 352, 352, &path)?;

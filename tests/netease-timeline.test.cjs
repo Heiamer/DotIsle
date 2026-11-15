@@ -4,7 +4,7 @@ const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const path = require('node:path');
-const source = fs.readFileSync(path.join(__dirname, '../Rust/crates/lyric-backend/src/netease_timeline.js'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '../Rust/crates/dotisle-music/src/netease_timeline.js'), 'utf8');
 function fixture(change = () => {}) {
   const playing = {resourceType:'track', resourceTrackId:71, playingState:2, playId:'71_live',
     curPlaying:{track:{id:71,name:'雾中的灯',duration:180000,artists:[{name:'测试歌手'}],album:{name:'海岸'}}}};

@@ -1,0 +1,2 @@
+# Keep Go formatting stable on Windows runners and local checkouts.
+Go/**/*.go text eol=lf

@@ -11,16 +11,21 @@ mod glass;
 mod material_preview;
 mod mini_contrast;
 mod motion_preview;
-mod notification_store;
+
 mod startup_preview;
 mod surface;
 mod update_activity;
 mod window_level;
+use std::os::windows::process::CommandExt;
 pub const DISPLAY_VERSION: &str = env!("CARGO_PKG_VERSION");
 mod activities;
 mod app_icon;
 mod app_rules;
 mod banner;
+mod capsule_alert;
+mod verification_code;
+mod volume;
+mod screen_time;
 mod compact;
 mod config;
 mod devices;
@@ -31,6 +36,8 @@ mod glow_preview;
 mod history;
 mod immersive_preview;
 mod island_glow;
+mod module_canvas;
+mod module_updates;
 mod layout;
 mod liquid_preview;
 mod liquid_timer;
@@ -46,7 +53,7 @@ mod theme_accent;
 mod timers;
 mod todos;
 mod vello_surface;
-mod weather_http;
+
 mod widget_data;
 mod widget_metrics;
 use base64::Engine;
@@ -196,6 +203,12 @@ unsafe extern "C" fn settings_callback(request: *const c_char) -> *mut c_char {
 struct App {
     banner: banner::Banner,
     osd_banner: banner::Banner,
+    alerts: capsule_alert::Hub,
+    device_watch: capsule_alert::DeviceWatch,
+    weather_watch: capsule_alert::WeatherWatch,
+    screen_time: screen_time::Tracker,
+    plugins: dotisle_domain::plugins::Registry,
+    last_context_poll: Instant,
     osd: osd::Hub,
     pending_osd: u32,
     notification_preview: bool,
@@ -235,6 +248,7 @@ struct App {
     held: bool,
     hover_since: Instant,
     tooltip_visible: bool,
+    volume: volume::Volume,
     hover: i32,
     pressed: i32,
     seeking: bool,
@@ -260,6 +274,8 @@ struct App {
     last_history_prune: Instant,
     queue: std::collections::VecDeque<Queued>,
     pending_page: Option<String>,
+    pending_request: u64,
+    pending_center_action: Value,
     updates: update_activity::Hub,
     update_return: String,
     update_until: Option<Instant>,
@@ -298,12 +314,15 @@ struct App {
     /// When the steady playback loop last drew. See `frame_pacing::CONTINUOUS_FPS`.
     continuous_last: Instant,
     glow: island_glow::State,
+    module_updates:module_updates::Manager,
     widget_data: widget_data::Hub,
     desktop_widgets: dotisle_domain::desktop_widgets::Store,
     widget_metrics: widget_metrics::Hub,
     last_widget_host: Instant,
     greeting_pending: bool,
     settings_process: Option<std::process::Child>,
+    center_process: Option<std::process::Child>,
+    settings_wake: Option<io::SettingsWake>,
     renderer_generation: u64,
     render_frames: u64,
     error: Option<String>,
@@ -343,6 +362,7 @@ struct App {
 }
 impl App {
     fn new(base: PathBuf, data: PathBuf, demo: bool) -> Self {
+        lyric_backend::updates::set_runtime_version(DISPLAY_VERSION);
         // Demo builds paint a synthetic track, but a font probe must still resolve the real
         // settings.json + preferences.json so the island honours fontScope exactly as shipping does.
         let settings = if demo && std::env::var_os("LYRICISLAND_FONT_PROBE").is_none() {
@@ -362,6 +382,7 @@ impl App {
                 data.join("Logs"),
             ))
         };
+        let module_updates=module_updates::Manager::new(&base,&data,demo);
         let now = Instant::now();
         let snapshot = if demo {
             json!({"track":{"id":"demo","title":"晚风电台","artist":"DotIsle","sourceApp":"演示","durationSeconds":236.},"isPlaying":true,"positionSeconds":83.,"canSeek":true,"frame":{"currentLine":"景色は移ろい瞬く間に変わる","currentTranslation":"景色转瞬即逝","nextLine":"変わらないものはない","wordScanProgress":0.4}})
@@ -418,6 +439,8 @@ impl App {
         );
         rules.baseline_now(foreground.path.as_deref(), foreground.segment);
         let usage_date = todo_now.date.clone();
+        let plugins=dotisle_domain::plugins::Registry::new(data.join("plugins.json"));
+        let screen_time = screen_time::Tracker::new(if demo {PathBuf::new()}else{data.join("screen-time.json")},awake_ms());
         let mut history = history::Store::new(if demo {
             PathBuf::new()
         } else {
@@ -491,6 +514,7 @@ impl App {
             held: false,
             hover_since: now,
             tooltip_visible: false,
+            volume: volume::Volume::default(),
             hover: 0,
             pressed: 0,
             seeking: false,
@@ -516,6 +540,8 @@ impl App {
             last_history_prune: now,
             queue: std::collections::VecDeque::new(),
             pending_page: None,
+            pending_request: 0,
+            pending_center_action: Value::Null,
             devices: devices::Hub::default(),
             timers,
             selected: "music".into(),
@@ -550,12 +576,21 @@ impl App {
             dirty: true,
             continuous_last: now - Duration::from_secs(1),
             glow: Default::default(),
+            module_updates,
             widget_data,
             desktop_widgets,
             widget_metrics: Default::default(),
             last_widget_host: now - Duration::from_secs(6),
             greeting_pending: false,
+            alerts: Default::default(),
+            device_watch: Default::default(),
+            weather_watch: Default::default(),
+            screen_time,
+            plugins,
+            last_context_poll: now-Duration::from_secs(2),
             settings_process: None,
+            center_process: None,
+            settings_wake: io::SettingsWake::new(),
             renderer_generation: 0,
             render_frames: 0,
             error: None,
@@ -644,6 +679,7 @@ impl App {
         for t in &self.timers.items {
             components.push(format!("timer:{}", t.id));
         }
+        components.extend(self.plugins.island_ids());
         if components.is_empty() {
             components.push("music".into());
         }
@@ -693,6 +729,10 @@ impl App {
                 tasks,
                 ..Default::default()
             })
+        } else if let Some(id) = id.strip_prefix("plugin:") {
+            let p=self.plugins.get(id)?;let blocks:Vec<dotisle_domain::plugins::ResolvedBlock>=serde_json::from_value(p["views"]["island"].clone()).ok()?;
+            let value=blocks.iter().find(|b|b.kind=="metric"||b.kind=="text").map(|b|b.text.clone()).unwrap_or_default();
+            Some(activities::Panel{kind:4,title:p["name"].as_str().unwrap_or(id).into(),value,blocks,..Default::default()})
         } else if let Some(id) = id.strip_prefix("timer:") {
             self.timers
                 .items
@@ -765,6 +805,7 @@ impl App {
     fn can_swipe(&self, hit: i32) -> bool {
         self.flag("SwipeActivities", true)
             && !self.banner.visible()
+            && !self.alerts.visible()
             && self.components.len() > 1
             && matches!(hit, 0 | 1 | 13 | 40..=42)
     }
@@ -886,6 +927,7 @@ impl App {
         }
     }
     fn card_height(&self) -> f64 {
+        if let Some(p)=self.panel.as_ref().filter(|p|p.kind==4){return 70.+p.blocks.iter().map(|b|match b.kind.as_str(){"metric"=>56.,"progress"=>40.,"divider"=>12.,_=>28.}).sum::<f64>()}
         self.music_geometry().height
     }
     fn music_target(&self) -> f64 {
@@ -1039,6 +1081,8 @@ impl App {
             && !self.base_needed()
             && !self.banner.visible()
             && !self.osd_banner.visible()
+            && !self.alerts.visible()
+            && !self.alerts.pending()
             && self.queue.is_empty()
         {
             self.display_wanted = false;
@@ -1139,6 +1183,8 @@ impl App {
     /// fonts) alive for the whole session, which dominated the app's memory
     /// footprint even though the window was never opened.
     fn show_settings_page(&mut self, page: &str) {
+        self.pending_request=self.pending_request.wrapping_add(1);
+        self.pending_center_action=Value::Null;
         self.pending_page = Some(if page.is_empty() {
             self.settings["ControlCenterStartPage"]
                 .as_str()
@@ -1147,20 +1193,30 @@ impl App {
         } else {
             page.to_owned()
         });
-        if widget_metrics::host_running(&self.data)
-            || self
-                .settings_process
-                .as_mut()
-                .is_some_and(|p| p.try_wait().ok().flatten().is_none())
+        // A running MyGo center picks up pendingPage from its next state refresh,
+        // so waking it is enough. The Rust settings host is a separate process.
+        if self
+            .center_process
+            .as_mut()
+            .is_some_and(|p| p.try_wait().ok().flatten().is_none())
         {
             if let Some(wake) = io::SettingsWake::new() {
                 wake.signal();
             }
             return;
         }
-        let exe = self.base.join("LyricIsland.Settings.exe");
+        // The visible control center prefers the MyGo front-end when it ships in the
+        // runtime; the Rust settings exe stays the desktop-widget host either way.
+        let center = self.base.join("LyricIsland.Center.exe");
+        let mygo = center.is_file();
+        let exe = if mygo {
+            center
+        } else {
+            self.base.join("LyricIsland.Settings.exe")
+        };
         if exe.exists() {
-            self.settings_process = std::process::Command::new(exe)
+            let spawned = std::process::Command::new(exe)
+                .creation_flags(0x08000000)
                 .env(
                     "LYRICISLAND_TEST_PIPE",
                     std::env::var("LYRICISLAND_TEST_PIPE")
@@ -1170,6 +1226,11 @@ impl App {
                 .current_dir(&self.base)
                 .spawn()
                 .ok();
+            if mygo {
+                self.center_process = spawned;
+            } else {
+                self.settings_process = spawned;
+            }
         } else {
             self.error = Some("设置组件缺失，请完整解压运行包".into());
         }
@@ -1198,6 +1259,7 @@ impl App {
             return;
         }
         self.settings_process = std::process::Command::new(exe)
+                .creation_flags(0x08000000)
             .arg("--warm")
             .env(
                 "LYRICISLAND_TEST_PIPE",
@@ -1660,6 +1722,7 @@ impl App {
         }
     }
     fn poll(&mut self) {
+        if self.plugins.refresh(false){self.refresh_components();self.dirty=true;if let Some(wake)=&self.settings_wake{wake.signal();}}
         let previous = self.snapshot.clone();
         self.last_poll = Instant::now();
         if let Some(b) = &self.backend {
@@ -1698,6 +1761,14 @@ impl App {
             }
             self.sync_bottom_material();
             self.dirty = true;
+        }
+        // Desktop widget lyrics must follow the island frame: wake the settings process so
+        // its poll loop refreshes the second-hand snapshot right away instead of waiting out
+        // its cadence (widget lyrics used to trail the island by hundreds of milliseconds).
+        if self.snapshot["frame"] != previous["frame"] {
+            if let Some(wake) = &self.settings_wake {
+                wake.signal();
+            }
         }
         let version = self.snapshot["coverVersion"].as_u64().unwrap_or(0);
         if version != self.cover_version {
@@ -1782,7 +1853,7 @@ impl App {
                 valid,
                 self.snapshot["isPlaying"] == true,
                 self.flag("HideWhenPaused", true),
-                self.timers.items.iter().any(|t| t.running && !t.finished) || self.updates.busy(),
+                self.timers.items.iter().any(|t| t.running && !t.finished) || self.updates.busy() || !self.plugins.island_ids().is_empty(),
                 self.banner.visible() || self.osd_banner.visible() || self.updates.busy(),
                 !self.queue.is_empty(),
                 self.held,
@@ -1838,7 +1909,7 @@ impl App {
             valid,
             self.snapshot["isPlaying"] == true,
             self.flag("HideWhenPaused", true),
-            self.timers.items.iter().any(|t| t.running && !t.finished) || self.updates.busy(),
+            self.timers.items.iter().any(|t| t.running && !t.finished) || self.updates.busy() || !self.plugins.island_ids().is_empty(),
             false,
             false,
             self.held,
@@ -1848,6 +1919,8 @@ impl App {
     fn finish_transient(&mut self) {
         if !self.banner.visible()
             && !self.osd_banner.visible()
+            && !self.alerts.visible()
+            && !self.alerts.pending()
             && self.queue.is_empty()
             && !self.base_needed()
         {
@@ -1859,45 +1932,33 @@ impl App {
             self.dirty = true;
         }
     }
+    fn weather_city(&self)->String {
+        let city=self.settings["WeatherCity"].as_str().unwrap_or("").trim();
+        if !city.is_empty(){city.into()}else{self.desktop_widgets.items.iter()
+            .find(|p|p.kind==dotisle_domain::desktop_widgets::Kind::Weather&&!p.config.city.trim().is_empty())
+            .map(|p|p.config.city.trim().to_owned()).unwrap_or_default()}
+    }
     fn show_greeting(&mut self) {
-        if self.user_hidden || self.flag("PauseNotifications", false) {
-            return;
-        }
-        unsafe {
-            if let Err(e) = self.ensure_renderer() {
-                self.error = Some(e.to_string());
-                return;
-            }
-        }
-        let local = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
-        let title = match local.wHour {
-            5..=10 => "早上好",
-            11..=13 => "中午好",
-            14..=17 => "下午好",
-            18..=22 => "晚上好",
-            _ => "夜深了",
-        };
-        let notice = notifications::Notice {
-            app_id: "LyricIsland.Greeting".into(),
-            app_name: "点屿".into(),
-            title: title.into(),
-            body: "点屿已就绪".into(),
-            ..Default::default()
-        };
-        let (base, radius) = self.shape();
-        let now = self.start.elapsed().as_secs_f64();
-        self.osd_banner.show_compact(
-            notice,
-            base,
-            radius,
-            self.layout.host.w,
-            now,
-            self.flag("Animation", true),
-        );
-        self.osd_banner.hold_until(now + 2.4);
-        self.hide_at = None;
-        self.fade(1.);
-        self.dirty = true;
+        if self.user_hidden||self.flag("PauseNotifications",false){return}
+        let local=unsafe{windows::Win32::System::SystemInformation::GetLocalTime()};
+        let title=match local.wHour{5..=10=>"早上好",11..=13=>"中午好",14..=17=>"下午好",18..=22=>"晚上好",_=>"夜深了"};
+        let usage=self.screen_time.snapshot();
+        let yesterday=usage["yesterdayMs"].as_u64().map(|v|format!("昨日用机 {}",screen_time::duration(v))).unwrap_or("昨日暂无用机记录".into());
+        let weather=&self.widget_data.value["island-weather"];
+        let detail=if let Some(t)=weather["temperature"].as_f64().filter(|_|weather["stale"]!=true){
+            let city=weather["city"].as_str().unwrap_or("");let condition=weather_description(weather["code"].as_u64().unwrap_or(255));
+            let range=match(weather["high"].as_f64(),weather["low"].as_f64()){(Some(h),Some(l))=>format!(" · {l:.0}°–{h:.0}°"),_=>String::new()};
+            format!("{city} · {condition} {t:.0}°{range}")
+        }else if self.weather_city().is_empty(){"设置城市，开启今日天气".into()}else{"今日天气暂不可用".into()};
+        let mut alert=capsule_alert::Alert::new("greeting".into(),"Sun",title.into(),format!("{yesterday}\n{detail}"));
+        alert.width=432.;alert.height=104.;alert.hold=8.;self.alerts.enqueue(alert);
+    }
+    fn enqueue_device(&mut self,event:&devices::Event){
+        let telemetry=self.device_watch.lookup(&event.key);
+        let id=telemetry.map(|d|d.id.as_str()).unwrap_or(&event.key);
+        let name=telemetry.map(|d|d.name.as_str()).unwrap_or(&event.label);
+        let level=telemetry.and_then(|d|d.battery_percent);
+        self.alerts.enqueue(capsule_alert::Alert::device(id,event.kind.key(),name,event.connected,level,false));
     }
     fn music_controls_visible(&self) -> bool {
         self.music_custom.enabled
@@ -1908,6 +1969,10 @@ impl App {
     fn hit(&self, x: f64, y: f64) -> i32 {
         if self.opacity < 0.01 {
             return -1;
+        }
+        if self.alerts.visible(){
+            let(r,rad,_)=self.alerts.banner.presentation(self.start.elapsed().as_secs_f64());
+            return if inside_round_rect(r,rad,x,y){60}else{-1};
         }
         if self.banner.visible() {
             let (r, radius, _) = self.banner.presentation(self.start.elapsed().as_secs_f64());
@@ -1967,7 +2032,7 @@ impl App {
                     if layout::todo_footer(w, self.layout.card.h).contains(x, y) {
                         return 7;
                     }
-                } else {
+                } else if !self.selected.starts_with("plugin:") {
                     if layout::timer_close(w).contains(x, y) {
                         return 53;
                     }
@@ -2044,7 +2109,9 @@ impl App {
         // The click-through visual HWND retains the complete GPU surface, including
         // shadows. This separate, undrawn HWND receives input only inside the
         // animated contour. No alpha readback or cursor polling is required.
-        let (r, radius) = if self.banner.visible() {
+        let (r, radius) = if self.alerts.visible(){
+            let(r,rad,_)=self.alerts.banner.presentation(self.start.elapsed().as_secs_f64());(r,rad)
+        } else if self.banner.visible() {
             let (r, radius, _) = self.banner.presentation(self.start.elapsed().as_secs_f64());
             (r, radius)
         } else {
@@ -2054,6 +2121,7 @@ impl App {
         let satellite = if !self.mini()
             && !self.expanded
             && !self.banner.visible()
+            && !self.alerts.visible()
             && self.components.len() > 1
         {
             self.layout.satellite()
@@ -2138,7 +2206,19 @@ impl App {
         self.update_until = None;
     }
     unsafe fn activate(&mut self, id: i32) {
+        if id==60{
+            let code=self.alerts.active.as_ref().and_then(|a|a.code.clone());
+            if let Some(code)=code{
+                let result=verification_code::copy(&code,self.hwnd);
+                if let Some(a)=self.alerts.active.as_mut(){a.detail=match result{Ok(())=>"已复制验证码".into(),Err(e)=>e};}
+                self.alerts.banner.hold_until(self.start.elapsed().as_secs_f64()+1.8);
+            }else{
+                let(r,rad)=self.shape();self.alerts.dismiss(r,rad,self.start.elapsed().as_secs_f64(),self.flag("Animation",true));
+            }
+            self.dirty=true;return
+        }
         match id {
+            volume::BUTTON => {self.volume.refresh(true);self.tooltip_visible=true;self.dirty=true;},
             50 => match self.updates.phase() {
                 "available" => {
                     self.request(json!({"version":1,"command":"updateDownload"}));
@@ -2476,12 +2556,15 @@ impl App {
         let (osd_rect, osd_radius, osd_mix) = self
             .osd_banner
             .presentation(self.start.elapsed().as_secs_f64());
+        let (alert_rect,alert_radius,alert_mix)=self.alerts.banner.presentation(self.start.elapsed().as_secs_f64());
         Scene {
+            alert: self.alerts.active.as_ref().filter(|_|self.alerts.visible()),
+            alert_rect, alert_radius, alert_mix,
             glow: self.glow.frame(
                 self.start.elapsed().as_secs_f64() * 1000.,
                 self.flag("Animation", true),
             ),
-            transient_only: (self.banner.visible() || self.osd_banner.visible())
+            transient_only: (self.banner.visible() || self.osd_banner.visible() || self.alerts.visible())
                 && !self.base_needed(),
             custom_geometry: if self.music_custom.enabled || self.custom_from.is_some() {
                 Some(self.music_geometry())
@@ -2531,6 +2614,8 @@ impl App {
             translation_button: self.flag("TranslationButton", true),
             translation_enabled: self.flag("Translation", true),
             translation_tooltip: self.tooltip_visible,
+            volume_level: self.volume.level,
+            volume_muted: self.volume.muted,
             tool_theme: theme_accent::resolve(&self.settings),
             material: crate::renderer::Material::expanded(&self.settings, self.mini()),
             drag_panel: self.drag_panel.as_ref(),
@@ -2748,6 +2833,10 @@ impl App {
                 return;
             }
         }
+        if self.alerts.visible(){
+            if preview{self.alerts=Default::default();}
+            else{self.enqueue(Queued{notice,todo,chime});return;}
+        }
         // The banner height below is measured once, so the renderer must exist here
         // even when the island was fully retired a moment ago.
         unsafe {
@@ -2848,7 +2937,7 @@ impl App {
         let now = self.start.elapsed().as_secs_f64();
         // A message the user is reading always wins; the hint is transient and is dropped
         // instead of cutting the notification short.
-        if self.banner.visible() {
+        if self.banner.visible() || self.alerts.visible() {
             if !preview {
                 return;
             }
@@ -2941,12 +3030,7 @@ impl App {
         }
     }
     unsafe fn tick(&mut self) -> Result<()> {
-        if self.greeting_pending {
-            self.greeting_pending = false;
-            if !self.banner.visible() && self.queue.is_empty() {
-                self.show_greeting();
-            }
-        }
+        if self.module_updates.tick(){self.dirty=true;}
         self.ensure_widget_host();
         if self.opacity > 0.001 {
             self.last_visible = Instant::now();
@@ -3012,13 +3096,8 @@ impl App {
             keyboard: self.flag("KeyboardConnectionRemindersEnabled", true),
         };
         for event in self.devices.poll(&gates) {
-            let notice = event.notice();
-            self.enqueue(Queued {
-                notice: notice.clone(),
-                todo: Some(format!("device:{}", event.key)),
-                chime: true,
-            });
-            self.record_history("device", &notice, None);
+            if !self.user_hidden{self.enqueue_device(&event);}
+            self.record_history("device", &event.notice(), None);
         }
         if self.flag("SystemStateHintsEnabled", true) && !self.flag("PauseNotifications", false) {
             for hint in self.osd.poll(true, true) {
@@ -3076,7 +3155,34 @@ impl App {
             self.dirty = true;
         }
         self.advance_timers(Instant::now());
-        self.widget_data.poll(&self.desktop_widgets.items);
+        if self.last_context_poll.elapsed()>=Duration::from_secs(1){
+            self.last_context_poll=Instant::now();
+            if !self.demo{self.screen_time.poll(awake_ms(),self.session_locked);}
+            self.widget_metrics.poll();
+            let mut placements=self.desktop_widgets.items.clone();let city=self.weather_city();
+            if !city.is_empty(){
+                placements.push(dotisle_domain::desktop_widgets::Placement{id:"island-weather".into(),kind:dotisle_domain::desktop_widgets::Kind::Weather,
+                    size:Default::default(),style:Default::default(),config:dotisle_domain::widget_config::Config{city,..Default::default()},x:0,y:0,revision:1});
+            }
+            self.widget_data.poll(&placements);
+            let m=&self.widget_metrics.value;
+            let device_alerts=self.device_watch.update(&m.wireless_devices,m.wireless_updated_at,m.wireless_status=="ready");
+            if gates.master&&!self.user_hidden{
+                for alert in device_alerts{
+                    let allowed=match alert.icon.as_str(){"Headphones"=>gates.headphones,"Speaker"=>gates.speaker,"Mouse"=>gates.mouse,"Keyboard"=>gates.keyboard,"Gamepad"=>gates.gamepad,_=>true};
+                    if allowed{self.alerts.enqueue(alert);}
+                }
+            }
+            let epoch=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+            if self.flag("WeatherAlertsEnabled",true)&&!self.flag("PauseNotifications",false)&&!self.user_hidden{
+                for alert in self.weather_watch.poll(&self.widget_data.value["island-weather"],epoch){self.alerts.enqueue(alert);}
+            }
+        }
+        if self.greeting_pending{
+            let waiting=!self.weather_city().is_empty()&&self.widget_data.value["island-weather"]["temperature"].is_null()
+                &&self.start.elapsed()<Duration::from_secs(8);
+            if !waiting{self.greeting_pending=false;self.show_greeting();}
+        }
         if self.last_checkpoint.elapsed() >= Duration::from_secs(15) {
             if self.timers.items.iter().any(|t| t.running) {
                 let _ = self.timers.persist();
@@ -3136,6 +3242,12 @@ impl App {
             .unwrap_or_default();
         for event in events {
             match event {
+                notifications::Event::MessageHint(hint) => {
+                    let policy=notifications::Policy::from_settings(&self.settings);
+                    if policy.should_show()&&policy.permits(&hint.app_id,&hint.app_name)&&!self.user_hidden&&!self.session_locked{
+                        self.alerts.enqueue(capsule_alert::Alert::message(&hint.app_id,&hint.app_name,hint.icon.as_deref()));
+                    }
+                }
                 notifications::Event::State(state) => {
                     self.notification_state = state;
                 }
@@ -3144,14 +3256,16 @@ impl App {
                 notifications::Event::Notice(notice) => {
                     let policy = notifications::Policy::from_settings(&self.settings);
                     if policy.should_show() && policy.permits(&notice.app_id, &notice.app_name) {
-                        if !self.user_hidden {
-                            self.enqueue(Queued {
-                                notice: notice.clone(),
-                                todo: None,
-                                chime: true,
-                            });
+                        let code=if self.flag("VerificationCodeEnabled",true){verification_code::extract(&notice.title,&notice.body)}else{None};
+                        if let Some(code)=code{
+                            if !self.user_hidden&&!self.session_locked{
+                                let mut alert=capsule_alert::Alert::new(format!("otp:{}:{code}",notice.app_id),"Code",notice.app_name.clone(),"点击复制验证码".into());
+                                alert.trailing=code.clone();alert.code=Some(code);alert.hold=12.;alert.width=364.;alert.height=72.;self.alerts.enqueue(alert);
+                            }
+                        }else{
+                            if !self.user_hidden{self.enqueue(Queued{notice:notice.clone(),todo:None,chime:true});}
+                            self.record_history("notice", &notice, None);
                         }
-                        self.record_history("notice", &notice, None);
                     }
                 }
             }
@@ -3241,6 +3355,7 @@ impl App {
             self.dirty = true;
         }
         let target_height = self.card_height();
+        if target_height+72.>self.layout.host.h {self.layout.host.h=target_height+72.;unsafe{let _=self.position();}}
         if (self.layout.card.h - target_height).abs() > 0.01 {
             let weight = if self.selected == "music" && self.panel.is_none() {
                 1.
@@ -3351,7 +3466,8 @@ impl App {
             self.hover_since = Instant::now();
             self.dirty = true;
         }
-        let tooltip = hit == 6 && self.hover_since.elapsed() >= Duration::from_millis(450);
+        if hit == volume::BUTTON {let old=(self.volume.level,self.volume.muted);self.volume.refresh(false);if old!=(self.volume.level,self.volume.muted){self.dirty=true}} else {self.volume.leave();}
+        let tooltip = (hit == 6 || hit == volume::BUTTON) && self.hover_since.elapsed() >= Duration::from_millis(450);
         if self.tooltip_visible != tooltip {
             self.tooltip_visible = tooltip;
             self.dirty = true;
@@ -3413,6 +3529,22 @@ impl App {
                 self.banner_todo = None;
                 self.last_poll = Instant::now() - Duration::from_secs(1);
                 self.finish_transient();
+            }
+        }
+        if self.alerts.visible(){
+            let(r,rad)=self.shape();
+            if self.flag("PauseNotifications",false)||self.user_hidden||self.session_locked{
+                self.alerts.clear(r,rad,self.start.elapsed().as_secs_f64(),self.flag("Animation",true));
+            }
+            self.alerts.tick(r,rad,self.start.elapsed().as_secs_f64(),self.flag("Animation",true));self.dirty=true;
+            if !self.alerts.visible(){self.finish_transient();}
+        }
+        if !self.banner.visible()&&!self.osd_banner.visible()&&!self.alerts.visible()
+            &&!self.user_hidden&&!self.session_locked&&!self.flag("PauseNotifications",false){
+            let(r,rad)=self.shape();
+            if self.alerts.pending(){self.ensure_renderer()?;}
+            if self.alerts.begin(r,rad,self.layout.host.w,self.layout.capsule.y,self.start.elapsed().as_secs_f64(),self.flag("Animation",true)){
+                self.hide_at=None;self.fade(1.);self.dirty=true;
             }
         }
         if self.osd_banner.visible() {
@@ -3522,7 +3654,7 @@ impl App {
             self.poll_app_rules();
         }
         // One banner at a time; the next one starts once the previous is gone.
-        if !self.banner.visible() && !self.user_hidden && !self.flag("PauseNotifications", false) {
+        if !self.banner.visible() && !self.osd_banner.visible() && !self.alerts.visible() && !self.alerts.pending() && !self.user_hidden && !self.flag("PauseNotifications", false) {
             if let Some(q) = self.queue.pop_front() {
                 self.show_notice(q.notice, false, q.todo, q.chime);
             }
@@ -3573,6 +3705,11 @@ impl App {
             self.advance_timers(Instant::now());
         }
         match command {
+            "moduleRefresh"=>{self.module_updates.refresh();json!({"success":true})},
+            "moduleStage"=>match self.module_updates.stage(r["value"]["id"].as_str().unwrap_or(""),r["value"]["path"].as_str().unwrap_or("")){Ok(())=>json!({"success":true,"message":"正在校验模块"}),Err(e)=>json!({"success":false,"message":e})},
+            "moduleRollback"=>match self.module_updates.rollback(r["value"]["id"].as_str().unwrap_or("")){Ok(())=>json!({"success":true,"message":"正在校验备份"}),Err(e)=>json!({"success":false,"message":e})},
+            "moduleCancel"=>match self.module_updates.cancel(){Ok(())=>json!({"success":true}),Err(e)=>json!({"success":false,"message":e})},
+            "moduleApply"=>match self.module_updates.apply(r["value"]["callerSettingsPid"].as_u64().unwrap_or(0)as u32){Ok(())=>json!({"success":true}),Err(e)=>json!({"success":false,"message":e})},
             "media" => {
                 let name = r["value"]["action"].as_str().unwrap_or("");
                 if !["toggle", "previous", "next", "seek"].contains(&name) {
@@ -3666,15 +3803,21 @@ impl App {
                 json!({"success":true})
             }
             "state" => {
-                self.widget_metrics.poll();
+                // Refresh the music snapshot so the desktop widget receives the lyric frame
+                // of this instant instead of the GUI loop's stale one (same-thread as poll).
+                self.poll();
+
                 self.todo_now = todos::Now::local();
                 let t = &self.snapshot["track"];
-                let mut state = json!({"success":true,"version":DISPLAY_VERSION,"settings":self.settings,"softwareUpdate":self.updates.state,"updateChannel":self.updates.channel(),"settingsDark":match self.settings["SettingsTheme"].as_str().unwrap_or("System"){"Dark"=>true,"Light"=>false,_=>theme_accent::system_dark()},"dataDirectory":self.data.to_string_lossy(),"musicPreview":self.music_preview(),"activeSource":self.snapshot["activeSource"],"nativeStatus":self.snapshot["nativeStatus"],"title":t["title"],"artist":t["artist"],"songId":t["songId"],"player":t["sourceApp"],"position":self.snapshot["positionSeconds"],"duration":t["durationSeconds"],"timeline":self.snapshot["clockStatus"],"lyricSource":self.snapshot["lyricSource"],"isPlaying":self.snapshot["isPlaying"],"canSeek":self.snapshot["canSeek"],"seekStatus":self.snapshot["seekStatus"],"neteaseAttention":lyric_backend::netease_control::attention_diagnostics(),"mediaCommand":self.snapshot["mediaCommand"],"expanded":self.expanded,"islandEnabled":!self.user_hidden,"islandVisible":self.opacity>0.001,"processId":std::process::id(),"windowLevel":unsafe{window_level::snapshot(self.visual_hwnd,self.hwnd)},"glassCaptures":self.renderer.as_ref().map_or(0,Renderer::glass_captures),"rendererGeneration":self.renderer_generation,"renderFrames":self.render_frames,"renderer":"Vello Hybrid 0.2 / wgpu 29","lastError":self.error,"notificationState":self.notification_state,"notificationVisible":self.banner.visible(),"notificationGeometry":self.notification_geometry(),"osdVisible":self.osd_banner.visible()||self.bottom_osd.visible(),"bottomOsdVisible":self.bottom_osd.visible(),"systemState":self.osd.status(),"todos":self.todos.list(&self.todo_now),"todoError":self.todos.error,"today":self.todo_now.date,"now":self.todo_now.time,"pendingPage":self.pending_page,"islandGeometry":{"mini":self.mini(),"capsule":self.layout.capsule,"card":self.layout.card,"satellite":!self.mini()&&self.components.len()>1,"horizontalGestures":self.flag("SwipeActivities",true)},"miniContrast":{"enabled":self.mini()&&self.flag("MiniAutoContrast",true)&&self.settings["MiniMaterial"]=="Glass","sampledLuminance":self.mini_contrast.sampled,"darkText":self.mini_contrast.dark,"foreground":format!("#{:06X}",self.mini_contrast.ink()&0xffffff)},"compactTargetWidth":self.compact_size.width_target,"compactWidth":self.compact_size.width,"compactHeight":self.compact_size.height,"compactSecondary":self.compact_secondary,"timers":self.timers.list(),"timerError":self.timers.error,"widgetData":self.widget_data.value,"desktopWidgets":self.desktop_widgets.list(),"desktopWidgetError":self.desktop_widgets.error,"systemMetrics":self.widget_metrics.value,"activeComponent":self.selected,"components":self.components,"notificationHistory":self.history.list(),"historyError":self.history.error,"quickHotkey":self.settings["QuickReminderHotkey"],"pendingAction":self.pending_action,"sessionLocked":self.session_locked,"focusResume":self.focus_resume.as_ref().map(|r|json!({"generation":r.generation,"ids":r.ids,"prompted":r.prompted})),"templates":self.templates.list(),"workflowTemplateError":self.templates.error,"appRules":self.rules.list(&self.todo_now.date),"appRuleError":self.rules.error,"foreground":{"path":self.foreground.path,"name":self.foreground.name,"unreadable":self.foreground.unreadable},"lockWatch":true});
+                let mut module_versions=dotisle_module_api::versions();module_versions["core"]=json!(DISPLAY_VERSION);
+                let mut state = json!({"success":true,"version":DISPLAY_VERSION,"bundleVersion":lyric_backend::updates::installed_version(),"settings":self.settings,"moduleManagement":self.module_updates.state,"moduleVersions":module_versions,"moduleErrors":dotisle_module_api::initialization_errors(),"moduleReady":dotisle_module_api::initialization_errors().as_object().is_some_and(|m|m.is_empty()),"softwareUpdate":self.updates.state,"updateChannel":self.updates.channel(),"settingsDark":match self.settings["SettingsTheme"].as_str().unwrap_or("System"){"Dark"=>true,"Light"=>false,_=>theme_accent::system_dark()},"dataDirectory":self.data.to_string_lossy(),"musicPreview":self.music_preview(),"activeSource":self.snapshot["activeSource"],"nativeStatus":self.snapshot["nativeStatus"],"title":t["title"],"artist":t["artist"],"songId":t["songId"],"player":t["sourceApp"],"position":self.snapshot["positionSeconds"],"duration":t["durationSeconds"],"timeline":self.snapshot["clockStatus"],"lyricSource":self.snapshot["lyricSource"],"isPlaying":self.snapshot["isPlaying"],"canSeek":self.snapshot["canSeek"],"seekStatus":self.snapshot["seekStatus"],"neteaseAttention":lyric_backend::netease_control::attention_diagnostics(),"mediaCommand":self.snapshot["mediaCommand"],"expanded":self.expanded,"islandEnabled":!self.user_hidden,"islandVisible":self.opacity>0.001,"processId":std::process::id(),"windowLevel":unsafe{window_level::snapshot(self.visual_hwnd,self.hwnd)},"glassCaptures":self.renderer.as_ref().map_or(0,Renderer::glass_captures),"rendererGeneration":self.renderer_generation,"renderFrames":self.render_frames,"renderer":"Vello Hybrid 0.2 / wgpu 29","lastError":self.error,"notificationState":self.notification_state,"notificationVisible":self.banner.visible(),"notificationGeometry":self.notification_geometry(),"osdVisible":self.osd_banner.visible()||self.bottom_osd.visible(),"bottomOsdVisible":self.bottom_osd.visible(),"systemState":self.osd.status(),"todos":self.todos.list(&self.todo_now),"todoError":self.todos.error,"today":self.todo_now.date,"now":self.todo_now.time,"pendingPage":self.pending_page,"pendingRequestId":self.pending_request,"pendingCenterAction":self.pending_center_action,"centerFrontend":if self.base.join("LyricIsland.Center.exe").is_file(){"go"}else{"rust"},"islandGeometry":{"mini":self.mini(),"capsule":self.layout.capsule,"card":self.layout.card,"satellite":!self.mini()&&self.components.len()>1,"horizontalGestures":self.flag("SwipeActivities",true)},"miniContrast":{"enabled":self.mini()&&self.flag("MiniAutoContrast",true)&&self.settings["MiniMaterial"]=="Glass","sampledLuminance":self.mini_contrast.sampled,"darkText":self.mini_contrast.dark,"foreground":format!("#{:06X}",self.mini_contrast.ink()&0xffffff)},"compactTargetWidth":self.compact_size.width_target,"compactWidth":self.compact_size.width,"compactHeight":self.compact_size.height,"compactSecondary":self.compact_secondary,"timers":self.timers.list(),"timerError":self.timers.error,"screenTime":self.screen_time.snapshot(),"weather":self.widget_data.value["island-weather"],"capsuleAlertVisible":self.alerts.visible(),"widgetData":self.widget_data.value,"desktopWidgets":self.desktop_widgets.list(),"desktopWidgetError":self.desktop_widgets.error,"systemMetrics":self.widget_metrics.value,"activeComponent":self.selected,"components":self.components,"notificationHistory":self.history.list(),"historyError":self.history.error,"quickHotkey":self.settings["QuickReminderHotkey"],"pendingAction":self.pending_action,"sessionLocked":self.session_locked,"focusResume":self.focus_resume.as_ref().map(|r|json!({"generation":r.generation,"ids":r.ids,"prompted":r.prompted})),"templates":self.templates.list(),"workflowTemplateError":self.templates.error,"appRules":self.rules.list(&self.todo_now.date),"appRuleError":self.rules.error,"foreground":{"path":self.foreground.path,"name":self.foreground.name,"unreadable":self.foreground.unreadable},"lockWatch":true});
                 state["glassRefraction"] = self
                     .renderer
                     .as_ref()
                     .map(|r| r.glass_status())
                     .unwrap_or(json!({"active":false,"samples":0}));
+                state["plugins"] = self.plugins.state.clone();
+                state["pluginError"] = json!(self.plugins.error);
                 state["systemAccent"] = json!(theme_accent::system_accent());
                 state
             }
@@ -3714,7 +3857,7 @@ impl App {
             }
             "updateChannel" => {
                 match self.updates.set_channel(r["value"].as_str().unwrap_or("")) {
-                    Ok(()) => json!({"success":true,"message":"已切换更新通道"}),
+                    Ok(()) => json!({"success":true,"message":"已切换更新渠道"}),
                     Err(e) => json!({"success":false,"message":e}),
                 }
             }
@@ -3803,7 +3946,7 @@ impl App {
                     devices::Kind::Usb => "U 盘 · 示例设备",
                 };
                 let e = devices::Event::new("preview".into(), kind, connected, label.into());
-                self.show_notice(e.notice(), true, Some("device:preview".into()), true);
+                self.enqueue_device(&e);
                 json!({"success":true})
             }
             "osdPreview" => {
@@ -3816,6 +3959,13 @@ impl App {
                 let on = r["value"]["on"].as_bool().unwrap_or(true);
                 self.show_osd(osd::Hint { kind, on }, true);
                 json!({"success":true})
+            }
+            "pluginInstall" | "pluginEnable" | "pluginRemove" => {
+                let result=match r["command"].as_str().unwrap_or(""){
+                    "pluginInstall"=>self.plugins.install(Path::new(r["value"]["path"].as_str().unwrap_or(""))),
+                    "pluginEnable"=>r["value"]["enabled"].as_bool().ok_or("缺少启用状态".to_string()).and_then(|enabled|self.plugins.change(r["value"]["id"].as_str().unwrap_or(""),Some(enabled))),
+                    _=>self.plugins.change(r["value"]["id"].as_str().unwrap_or(""),None),
+                };self.refresh_components();self.dirty=true;match result{Ok(())=>json!({"success":true,"plugins":self.plugins.state}),Err(e)=>json!({"success":false,"message":e})}
             }
             "widgetLaunch" => widget_data::launch(
                 &self.desktop_widgets.items,
@@ -4086,7 +4236,11 @@ impl App {
                 }
             }
             "pageSeen" => {
-                self.pending_page = None;
+                // A delayed acknowledgement must not consume a newer request.
+                if r["value"]["requestId"].as_u64().is_none_or(|id|id==self.pending_request){
+                    self.pending_page = None;
+                    self.pending_center_action=Value::Null;
+                }
                 json!({"success":true})
             }
             "collectLogs" => {
@@ -4202,7 +4356,16 @@ impl App {
                 }
             }
             "settings" => {
-                self.show_settings_page(r["value"]["page"].as_str().unwrap_or(""));
+                let action=r["value"]["action"].as_str().unwrap_or("");
+                let id=r["value"]["id"].as_str().unwrap_or("");
+                let page=match action{
+                    "todoEdit" if id.is_empty()||self.todos.items.iter().any(|t|t.id==id)=>"todos",
+                    "widgetConfigure" if self.desktop_widgets.items.iter().any(|p|p.id==id)=>"widgets",
+                    ""=>r["value"]["page"].as_str().unwrap_or(""),
+                    _=>return json!({"success":false,"message":"目标已移除或请求无效"}),
+                };
+                self.show_settings_page(page);
+                if !action.is_empty(){self.pending_center_action=json!({"action":action,"id":id});}
                 json!({"success":true})
             }
             "exit" => {
@@ -4518,6 +4681,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     let _ = EndPaint(hwnd, &p);
                     a.dirty = true;
                     return LRESULT(0);
+                }
+                WM_MOUSEWHEEL => {
+                    let mut point=POINT{x:lparam.0 as u16 as i16 as i32,y:(lparam.0>>16) as u16 as i16 as i32};
+                    let _=ScreenToClient(hwnd,&mut point);
+                    let scale=GetDpiForWindow(hwnd).max(96) as f64/96.;
+                    if a.hit(point.x as f64/scale,point.y as f64/scale)==volume::BUTTON {
+                        a.volume.wheel((wparam.0>>16) as u16 as i16);a.hover=volume::BUTTON;a.hover_since=Instant::now()-Duration::from_millis(450);a.tooltip_visible=true;a.dirty=true;return LRESULT(0);
+                    }
                 }
                 WM_LBUTTONDOWN => {
                     let s = GetDpiForWindow(hwnd).max(96) as f64 / 96.;
@@ -5421,7 +5592,8 @@ fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
             // worse than staying quiet.
             if !preview_mode && !args.iter().any(|s| s == "--startup") {
                 let current = io::pipe_request(
-                    "LyricIsland.Native.Settings.v1",
+                    &std::env::var("LYRICISLAND_TEST_PIPE")
+                        .unwrap_or_else(|_| "LyricIsland.Native.Settings.v1".into()),
                     &json!({"version":1,"command":"state"}),
                 )
                 .unwrap_or_default();
@@ -5459,6 +5631,7 @@ fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
             && base.join("Uninstall.exe").is_file()
         {
             let _ = std::process::Command::new(base.join("Uninstall.exe"))
+                .creation_flags(0x08000000)
                 .arg("--repair-if-needed")
                 .arg(&base)
                 .spawn();
@@ -6038,7 +6211,6 @@ fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 break;
             }
             let animating = (app.glow.active() && app.flag("Animation", true))
-                || app.greeting_pending
                 || app.feedback_moving
                 || app
                     .renderer
@@ -6050,6 +6222,7 @@ fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 || app.panel.as_ref().is_some_and(|p| p.running)
                 || app.banner.visible()
                 || app.osd_banner.visible()
+                || app.alerts.visible()
                 || app.opacity > 0.001
                     && (app.snapshot["isPlaying"] == true || app.auxiliary_state().0)
                     && app.flag("Animation", true)
@@ -6063,7 +6236,6 @@ fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
             // waking a 144 Hz panel 144 times a second.
             let interactive = (app.glow.active() && app.flag("Animation", true))
                 || app.liquid_timer_visible()
-                || app.greeting_pending
                 || app.feedback_moving
                 || app.transition.is_some()
                 || app.swipe.is_some_and(|s| s.active)
@@ -6072,6 +6244,7 @@ fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 || (app.opacity - app.fade_to).abs() > 0.00001
                 || app.banner.visible()
                 || app.osd_banner.visible()
+                || app.alerts.visible()
                 || app.mini_contrast.moving()
                 || app.switching
                 || app.lyric_start.elapsed() < Duration::from_millis(180);
@@ -6098,6 +6271,8 @@ fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 let idle = app.opacity <= 0.001
                     && !app.banner.visible()
                     && !app.osd_banner.visible()
+                    && !app.alerts.visible()
+                    && !app.alerts.pending()
                     && !app.bottom_osd.visible()
                     && app.queue.is_empty()
                     && !app.timers.items.iter().any(|t| t.running);
@@ -6641,7 +6816,12 @@ mod v13_tests {
     fn state_exposes_todos_version_and_pending_page() {
         let mut a = app();
         a.pending_page = Some("todos".into());
+        a.pending_request=2;
+        a.pending_center_action=json!({"action":"todoEdit","id":"t1"});
         unsafe {
+            a.request(json!({"version":1,"command":"pageSeen","value":{"requestId":1}}));
+            assert_eq!(a.pending_page.as_deref(),Some("todos"));
+            assert_eq!(a.pending_center_action["id"],"t1");
             let state = a.request(json!({"version":1,"command":"state"}));
             assert_eq!(state["version"], DISPLAY_VERSION);
             assert!(state["todos"].is_array());
@@ -7408,3 +7588,19 @@ mod manual_retirement_tests {
         assert!(!a.scene().transient_only);
     }
 }
+
+// Stable C ABI; no Rust values or allocator ownership cross the DLL boundary.
+#[no_mangle]
+pub extern "C" fn dotisle_module_abi() -> u32 { 1 }
+#[no_mangle]
+pub extern "C" fn dotisle_module_run() -> i32 {
+    match std::panic::catch_unwind(main) { Ok(()) => 0, Err(_) => 1 }
+}
+
+#[no_mangle]
+pub extern "C" fn dotisle_module_kind() -> u32 { 1 }
+
+fn describe_only(_:serde_json::Value)->std::result::Result<serde_json::Value,String>{Err("bootstrap module has no service commands".into())}
+dotisle_module_api::export_service!("core",describe_only);
+
+fn weather_description(code:u64)->&'static str{match code{0=>"晴",1..=3=>"多云",45|48=>"有雾",51..=67|80..=82=>"有雨",71..=77|85|86=>"有雪",95..=99=>"雷雨",_=>"天气"}}

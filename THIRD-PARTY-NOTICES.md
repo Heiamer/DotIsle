@@ -97,3 +97,7 @@ lazy_static 1.5.1，https://github.com/rust-lang-nursery/lazy-static.rs ，MIT O
 ## 天气数据
 
 天气组件使用 [Open-Meteo](https://open-meteo.com/) 天气与地理编码接口，在用户配置城市后请求数据。
+
+## 5.0 Go 原生控制中心
+
+使用 MyGo v0.9.0、purego、go-text/typesetting 与 golang.org/x 库，锁定版本见 Go/settings-center/go.mod；许可全文保存在 licenses/Go。HarmonyOS Sans 许可见 licenses/HarmonyOS-Sans-LICENSE.txt。

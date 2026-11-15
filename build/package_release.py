@@ -28,6 +28,18 @@ def main():
     root=Path(__file__).resolve().parents[1]
     out=args.output.resolve();out.mkdir(parents=True,exist_ok=True)
     scratch=args.work_dir.resolve();scratch.mkdir(parents=True,exist_ok=True)
+    # Reject a missing or stale Center before creating any runtime files.
+    center=args.binary_dir/'LyricIsland.Center.exe'
+    if not center.is_file() or center.stat().st_size == 0:
+        raise RuntimeError('Build the Go control center before packaging')
+    import struct
+    pe=center.read_bytes()
+    offset=struct.unpack_from('<I',pe,0x3c)[0]
+    if struct.unpack_from('<H',pe,offset+24+68)[0] != 2:
+        raise RuntimeError('Center must use the Windows GUI subsystem (-H=windowsgui)')
+    source_center=root/'Go/settings-center/LyricIsland.Center.exe'
+    if source_center.is_file() and sha(source_center) != sha(center):
+        raise RuntimeError('Stale Center in binary-dir: copy the current Go build before packaging')
     name='DotIsle-'+args.version
     runtime=out/name;assert not runtime.exists(),'Use a fresh version directory'
     runtime.mkdir()
@@ -36,6 +48,12 @@ def main():
         target=runtime/shipped
         shutil.copy2(args.binary_dir/built,target)
         embed_icon(target,root/'Assets/LyricIsland-v3.ico')
+    # The MyGo control center ships beside LyricIsland.exe (show_settings_page
+    # prefers it); its icon and manifest are embedded at link time via
+    # rsrc_windows_amd64.syso, so no PE resource rewrite here.
+    shutil.copy2(center,runtime/'LyricIsland.Center.exe')
+    for module in ['dotisle_core.dll', 'dotisle_settings.dll', 'dotisle_focus.dll', 'dotisle_todos.dll', 'dotisle_music.dll', 'dotisle_lyrics.dll', 'dotisle_notifications.dll', 'dotisle_history.dll', 'dotisle_automation.dll', 'dotisle_devices.dll', 'dotisle_osd.dll', 'dotisle_sound.dll', 'dotisle_widgets.dll', 'dotisle_themes.dll', 'dotisle_glow.dll']:
+        shutil.copy2(args.binary_dir/module,runtime/module)
     shutil.copytree(root/'Assets',runtime/'Assets',ignore=shutil.ignore_patterns('ShaderCache'))
     shutil.copytree(args.shader_cache,runtime/'Assets/ShaderCache/Hybrid29')
     shutil.copytree(root/'licenses',runtime/'licenses')
@@ -45,6 +63,8 @@ def main():
         shutil.copy2(root/doc,runtime/doc)
     # Preserve relative wordmark references in the bundled README.
     shutil.copytree(root/'docs/brand',runtime/'docs/brand')
+    shutil.copy2(root/'docs/PLUGIN-DEVELOPMENT.md',runtime/'docs/PLUGIN-DEVELOPMENT.md')
+    shutil.copytree(root/'examples/plugins',runtime/'examples/plugins')
     shutil.copy2(out/(name+'-Notes.md'),runtime/'发布说明.md')
     installer_stage=scratch/'installer-stage'
     shutil.copytree(runtime,installer_stage)

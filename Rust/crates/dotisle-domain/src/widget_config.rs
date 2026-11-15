@@ -6,14 +6,17 @@ use serde::{Deserialize, Serialize};
 #[serde(default, rename_all = "camelCase")]
 pub struct Config {
     pub title: String,
+    pub plugin_id: String,
     pub text: String,
     pub date: String,
+    pub deadline: String,
     pub city: String,
     pub target: String,
     pub drive: String,
 }
 impl Config {
     pub fn validate(&self, kind: Kind) -> Result<(), String> {
+        if self.plugin_id.len()>64 || (kind==Kind::Plugin && (self.plugin_id.is_empty() || !self.plugin_id.bytes().all(|c|c.is_ascii_lowercase()||c.is_ascii_digit()||c==b'-'||c==b'.'))) {return Err("插件标识无效".into())}
         if self.title.chars().count() > 60
             || self.text.chars().count() > 500
             || self.city.chars().count() > 100
@@ -22,6 +25,7 @@ impl Config {
                 &self.title,
                 &self.text,
                 &self.date,
+                &self.deadline,
                 &self.city,
                 &self.target,
                 &self.drive,
@@ -37,6 +41,9 @@ impl Config {
         if kind == Kind::Anniversary && !self.date.is_empty() && date_ordinal(&self.date).is_none()
         {
             return Err("请填写有效日期，如 2027-01-01".into());
+        }
+        if kind == Kind::Schedule && !self.deadline.is_empty() && deadline_minutes(&self.deadline).is_none() {
+            return Err("请填写有效日期与时间，如 2027-01-01 09:00".into());
         }
         if kind == Kind::WorldClock && !self.city.is_empty() && timezone(&self.city).is_none() {
             return Err("请选择北京、东京、伦敦、纽约、悉尼或 UTC".into());
@@ -141,4 +148,12 @@ mod tests {
         assert_eq!(drive_root("d:"), Some("D:\\".into()));
         assert!(drive_root("C:\\folder").is_none());
     }
+}
+
+/// Local wall-clock deadline. Calendar arithmetic also handles DST day boundaries.
+pub fn deadline_minutes(raw: &str) -> Option<i64> {
+    if raw.len()!=16 || !raw.is_ascii() || raw.as_bytes()[10]!=b' ' || raw.as_bytes()[13]!=b':' { return None }
+    let day=date_ordinal(&raw[..10])?;
+    let h=raw[11..13].parse::<i64>().ok()?; let m=raw[14..16].parse::<i64>().ok()?;
+    ((0..24).contains(&h) && (0..60).contains(&m)).then_some(day*1440+h*60+m)
 }

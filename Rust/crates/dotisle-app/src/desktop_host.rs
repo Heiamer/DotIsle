@@ -189,6 +189,7 @@ impl Host {
         gpu: &mut Gpu,
         text: &mut Text,
         time: f64,
+        media_position: Option<f64>,
     ) -> Option<Action> {
         let c = self.windows.iter_mut().find(|c| c.window.id() == id)?;
         let mut action = None;
@@ -203,6 +204,7 @@ impl Host {
                     c.pointer,
                     c.menu,
                     time,
+                    media_position,
                 );
                 c.hits = view.hits;
                 if let Err(e) = gpu.draw(&mut c.surface, &view.scene, c.window.scale_factor()) {
@@ -326,6 +328,15 @@ impl Host {
                 action = Some(Action::WidgetRemove(c.placement.id.clone()))
             }
             _ => {}
+        }
+        if !m.demo && m.native_state["centerFrontend"]=="go" {
+            let request=match &action{
+                Some(Action::EditTodo(id))=>Some(serde_json::json!({"action":"todoEdit","id":id})),
+                Some(Action::WidgetConfigure(id))=>Some(serde_json::json!({"action":"widgetConfigure","id":id})),
+                Some(Action::Navigate(page))=>Some(serde_json::json!({"page":match page{Page::Todos=>"todos",Page::Focus=>"timers",Page::Widgets=>"widgets",Page::Notifications=>"notifications",Page::Settings=>"settings",_=>"overview"}})),
+                _=>None,
+            };
+            if let Some(request)=request{m.native_command("settings",request);return None}
         }
         match &action {
             Some(Action::EditTodo(_))=>{m.page=Page::Todos;m.show_center=true;}

@@ -4,6 +4,7 @@ pub mod desktop_widgets;
 pub mod dynamic_color;
 pub mod monet;
 pub mod preferences;
+pub mod plugins;
 pub mod timers;
 pub mod todos;
 pub mod widget_config;

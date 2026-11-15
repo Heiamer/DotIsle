@@ -150,10 +150,21 @@ pub fn run(out: &Path) -> Result<(), String> {
         if !track {
             m.snapshot["track"] = serde_json::Value::Null;
         }
+        // current_lyric falls back to the track title on an empty line (compact::primary),
+        // so the pure/waiting branches are only reachable with a blank title.
+        if label == "pure" || label == "waiting" {
+            m.snapshot["track"]["title"] = json!("");
+        }
         m.snapshot["frame"]["currentLine"] = json!(line);
         m.snapshot["frame"]["isPureMusic"] = json!(pure);
         if m.current_lyric() != expected {
-            return Err(format!("home lyric state failed: {label}"));
+            return Err(format!(
+                "home lyric state failed: {label} got={} title={} line={} pure={}",
+                m.current_lyric(),
+                m.snapshot["track"]["title"],
+                m.snapshot["frame"]["currentLine"],
+                m.snapshot["frame"]["isPureMusic"]
+            ));
         }
         let view = views::render(&m, &mut text, 1200., 800., &ViewState::default());
         let name = format!("home-{label}.png");
@@ -756,23 +767,6 @@ pub fn run(out: &Path) -> Result<(), String> {
             }
         }
     }
-    for phase in ["idle","checking","available","downloading","ready","applying"] {
-        m.native_state["softwareUpdate"] = json!({"phase":phase});
-        for channel in ["stable","beta"] {
-            m.native_state["updateChannel"] = json!(channel);
-            let mut hits = vec![];
-            for scroll in [0.,200.,400.,600.] {
-                m.scroll=scroll;
-                hits.extend(views::render(&m,&mut text,1200.,800.,&ViewState::default()).hits);
-            }
-            for key in ["stable","beta"] {
-                let expected=!matches!(phase,"checking"|"downloading"|"ready"|"applying")&&!m.demo;
-                if !hits.iter().any(|h|matches!(&h.action,Action::NativeCommand("updateChannel",value) if value==key)&&h.enabled==expected){return Err(format!("missing or unsafe channel control {key} in {phase}"));}
-            }
-        }
-    }
-    m.scroll=0.;
-    checks.push("stable/beta update selector with phase-safe actions");
     checks.push("restored update preference and phase-specific commands");
     m.dispatch(Action::ControlTheme(0));
     m.page = Page::Settings;

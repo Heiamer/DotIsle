@@ -15,4 +15,7 @@ pub mod setup;
 pub mod ui;
 pub mod vello_overlay;
 pub mod updater;
+pub mod module_update;
 pub mod win;
+
+pub mod local_modules;

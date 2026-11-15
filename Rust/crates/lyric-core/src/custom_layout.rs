@@ -16,7 +16,7 @@ pub struct Slot {pub kind:Module,pub visible:bool}
 #[derive(Clone,Debug,Serialize,Deserialize,PartialEq)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
 pub struct Placement {pub element:u8,pub x:f64,pub y:f64,#[serde(default,skip_serializing_if="Option::is_none")]pub width:Option<f64>}
-pub fn element_label(id:u8)->&'static str{match id{0=>"专辑封面",1=>"歌曲标题",2=>"歌手",3=>"当前歌词",4=>"翻译与下一句",5=>"播放状态",6=>"播放进度条",7=>"当前时间",8=>"歌曲时长",34=>"播放模式",41=>"喜欢",35=>"上一首",36=>"播放 / 暂停",37=>"下一首",38=>"翻译按钮",39=>"设置按钮",_=>"元素"}}
+pub fn element_label(id:u8)->&'static str{match id{0=>"专辑封面",1=>"歌曲标题",2=>"歌手",3=>"当前歌词",4=>"翻译与下一句",5=>"播放状态",6=>"播放进度条",7=>"当前时间",8=>"歌曲时长",34=>"播放模式",41=>"喜欢",35=>"上一首",36=>"播放 / 暂停",37=>"下一首",38=>"翻译按钮",39=>"设置按钮",48=>"音量",_=>"元素"}}
 pub fn resizable(id:u8)->bool{[1,2,3,4,5,6].contains(&id)}
 pub fn elements(g:&MusicGeometry)->Vec<(u8,Rect)>{
  let mut out=vec![(0,g.cover),(1,g.title),(2,g.artist),(3,g.lyric),(4,g.secondary),(5,Rect::new(g.status_dot.x,g.status_text.y,(g.status_text.x+g.status_text.w-g.status_dot.x).max(0.),g.status_text.h)),(6,g.progress_hit),(7,g.elapsed),(8,g.total)];
@@ -42,7 +42,7 @@ pub struct Layout {
  pub controls:Vec<i32>,pub transport_theme:String,pub bar_style:String,pub thumb_style:String,pub thumb_enabled:bool,pub thumb_spin:bool,
 }
 impl Default for Layout {
- fn default()->Self{Self{elements:vec![],version:1,enabled:false,modules:Module::ALL.map(|kind|Slot{kind,visible:true}).to_vec(),alignment:0,gap:8.,cover_size:56.,show_cover:true,controls:vec![2,9,3,4,5,6,7],transport_theme:"Reef".into(),bar_style:"Wavy".into(),thumb_style:"Pill".into(),thumb_enabled:false,thumb_spin:false}}
+ fn default()->Self{Self{elements:vec![],version:1,enabled:false,modules:Module::ALL.map(|kind|Slot{kind,visible:true}).to_vec(),alignment:0,gap:8.,cover_size:56.,show_cover:true,controls:vec![2,9,16,3,4,5,6,7],transport_theme:"Reef".into(),bar_style:"Wavy".into(),thumb_style:"Pill".into(),thumb_enabled:false,thumb_spin:false}}
 }
 impl Layout {
  pub fn from_value(value:&serde_json::Value)->Result<Self,String>{let layout:Self=serde_json::from_value(value.clone()).map_err(|_|"布局格式无效，请恢复推荐布局".to_string())?;layout.validate()?;Ok(layout)}
@@ -50,9 +50,9 @@ impl Layout {
   if self.version!=1||self.alignment>2||!self.gap.is_finite()||!(4. ..=16.).contains(&self.gap)||!self.cover_size.is_finite()||!(40. ..=80.).contains(&self.cover_size){return Err("布局版本、间距或封面尺寸无效".into())}
   if self.modules.len()!=6||Module::ALL.iter().any(|kind|self.modules.iter().filter(|s|s.kind==*kind).count()!=1){return Err("每个布局模块必须且只能出现一次".into())}
   if !self.modules.iter().any(|s|s.visible&&s.kind==Module::Header)||!self.modules.iter().any(|s|s.visible&&s.kind==Module::Controls){return Err("歌曲信息与播放控制需要保留".into())}
-  if self.controls.is_empty()||self.controls.len()>7||!self.controls.contains(&4)||self.controls.iter().any(|id|![2,9,3,4,5,6,7].contains(id))||self.controls.iter().enumerate().any(|(i,id)|self.controls[..i].contains(id)){return Err("播放按钮排列无效，必须保留播放按钮".into())}
+  if self.controls.is_empty()||self.controls.len()>8||!self.controls.contains(&4)||self.controls.iter().any(|id|![2,9,16,3,4,5,6,7].contains(id))||self.controls.iter().enumerate().any(|(i,id)|self.controls[..i].contains(id)){return Err("播放按钮排列无效，必须保留播放按钮".into())}
   if !["Reef","Ripple","Sand","Mist","Glaze","InkIsle","Tide","Whitespace","Halo","Layered"].contains(&self.transport_theme.as_str())||!["Normal","Wavy","Rounded","Thin","Thick","Gradient","Segmented","Dots"].contains(&self.bar_style.as_str())||!["Default","Circle","Square","Pill","Diamond","Flower","Heart","Cookie","Puffy","Clover","Clover8","Gem","Triangle","Pentagon","Cookie12","Clam"].contains(&self.thumb_style.as_str()){return Err("播放组件样式无效".into())}
-  if self.elements.len()>16||self.elements.iter().enumerate().any(|(i,p)|![0,1,2,3,4,5,6,7,8,34,35,36,37,38,39,41].contains(&p.element)||self.elements[..i].iter().any(|q|q.element==p.element)||!p.x.is_finite()||!p.y.is_finite()||!(12. ..=388.).contains(&p.x)||!(12. ..=600.).contains(&p.y)||p.width.is_some_and(|w|!resizable(p.element)||!w.is_finite()||!(24. ..=376.).contains(&w))){return Err("画布元素的位置或宽度无效".into())}
+  if self.elements.len()>17||self.elements.iter().enumerate().any(|(i,p)|![0,1,2,3,4,5,6,7,8,34,35,36,37,38,39,41,48].contains(&p.element)||self.elements[..i].iter().any(|q|q.element==p.element)||!p.x.is_finite()||!p.y.is_finite()||!(12. ..=388.).contains(&p.x)||!(12. ..=600.).contains(&p.y)||p.width.is_some_and(|w|!resizable(p.element)||!w.is_finite()||!(24. ..=376.).contains(&w))){return Err("画布元素的位置或宽度无效".into())}
   Ok(())
  }
  pub fn move_module(&mut self,from:usize,to:usize){if from<self.modules.len()&&to<self.modules.len()&&from!=to{let item=self.modules.remove(from);self.modules.insert(to,item);}}

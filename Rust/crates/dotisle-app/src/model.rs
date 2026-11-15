@@ -105,6 +105,7 @@ pub enum Action {
     WidgetConfigure(String),
     WidgetLaunch(String),
     BackgroundPick,
+    ReplaceModule(&'static str),
     BackgroundReset,
     BackgroundEnable(bool),
     BackgroundMode(bool),
@@ -268,7 +269,7 @@ pub struct Model {
     pub layout_editor: Option<crate::layout_editor::Editor>,
     pub notice_filter: u8,
     pub desktop_widgets: dotisle_domain::desktop_widgets::Store,
-    pub widget_sizes: [dotisle_domain::desktop_widgets::Size; 15],
+    pub widget_sizes: [dotisle_domain::desktop_widgets::Size; 18],
     pub background: crate::background::Cache,
     pub tutorial: Option<crate::tutorial::Tutorial>,
     pub tutorial_checked: bool,
@@ -735,12 +736,21 @@ impl Model {
         if !self.track() {
             return "播放一首音乐，歌词会在这里出现";
         }
+        // Same fallback chain as the island capsule (compact::primary): an empty line shows
+        // the track title so the widget and the island never show different content.
         if let Some(line) = self.snapshot["frame"]["currentLine"]
             .as_str()
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
             return line;
+        }
+        if let Some(title) = self.snapshot["track"]["title"]
+            .as_str()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return title;
         }
         if self.snapshot["frame"]["isPureMusic"] == true {
             "纯音乐，请欣赏"
@@ -940,7 +950,7 @@ impl Model {
             | Action::WidgetFocus
             | Action::WidgetConfigure(_)
             | Action::WidgetLaunch(_) => {}
-            Action::BackgroundPick => {}
+            Action::BackgroundPick | Action::ReplaceModule(_) => {}
             Action::BackgroundReset => {
                 let old = self.prefs.clone();
                 let i = crate::themes::background_slot(self);

@@ -296,7 +296,7 @@ mod removed_theme_tests {
             .is_none());
         let style: crate::desktop_widgets::Style = serde_json::from_str("\"nothing\"").unwrap();
         assert_eq!(style, crate::desktop_widgets::Style::Original);
-        assert_eq!(crate::desktop_widgets::Style::ALL.len(), 5);
+        assert_eq!(crate::desktop_widgets::Style::ALL, [crate::desktop_widgets::Style::Original]);
         std::fs::remove_file(path).unwrap();
     }
     #[test]

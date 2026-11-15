@@ -1,6 +1,6 @@
 //! Native configuration, logs and IPC client used by Slint and the WPF bridge.
 use std::{path::{Path,PathBuf},io::{Read,Write},time::{Instant,Duration},sync::{Mutex,OnceLock}};
-use windows::{core::PCWSTR,Win32::{Foundation::HANDLE,System::Pipes::{WaitNamedPipeW,PeekNamedPipe}}};
+use windows::{core::PCWSTR,Win32::{Foundation::{HANDLE,CloseHandle,GetLastError,ERROR_ALREADY_EXISTS},System::Pipes::{WaitNamedPipeW,PeekNamedPipe}}};
 use serde_json::Value;
 /// Auto-reset wake event shared by the island and its settings worker.
 pub struct SettingsWake(HANDLE);
@@ -19,26 +19,67 @@ pub fn read_settings(path:&Path)->Value{
 }
 pub fn save_settings(path:&Path,settings:&Value)->Result<(),String>{crate::storage::atomic_write(path,&serde_json::to_vec_pretty(settings).map_err(|e|e.to_string())?)}
 pub fn pipe_request(pipe:&str,request:&Value)->Result<Value,String>{
-    use std::os::windows::io::AsRawHandle;
     let path=format!("\\\\.\\pipe\\{pipe}");let wide=path.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+    // Replay is only safe when the request never reached the server (failed write) or the command
+    // is read-only; a delivered mutation must never be sent twice. The server used to recreate its
+    // pipe instance after every reply, so a client could briefly connect to a doomed instance and
+    // die with ERROR_PIPE_NOT_CONNECTED (233) / ERROR_BROKEN_PIPE (109).
+    let readonly=request["command"].as_str().is_some_and(|command|command=="state");
+    let attempts=if readonly{4}else{2};
+    for attempt in 0..attempts{
+        if attempt>0{std::thread::sleep(Duration::from_millis(120));}
+        match pipe_attempt(&path,&wide,request,readonly){
+            Ok(value)=>return Ok(value),
+            Err((message,retryable))=>{
+                if !retryable||attempt+1==attempts{return Err(message)}
+            }
+        }
+    }
+    unreachable!("pipe_request exits through the last attempt")
+}
+fn pipe_attempt(path:&str,wide:&[u16],request:&Value,readonly:bool)->Result<Value,(String,bool)>{
+    use std::os::windows::io::AsRawHandle;
     // Retry transient gaps before sending bytes; never replay a mutation.
     let connect_until=Instant::now()+Duration::from_secs(2);
     let mut file=loop{
         if unsafe{WaitNamedPipeW(PCWSTR(wide.as_ptr()),100).as_bool()}{
-            match std::fs::OpenOptions::new().read(true).write(true).open(&path){Ok(file)=>break file,Err(error) if !matches!(error.raw_os_error(),Some(2|231|535))=>return Err(error.to_string()),_=>{}}
+            match std::fs::OpenOptions::new().read(true).write(true).open(path){Ok(file)=>break file,Err(error) if !matches!(error.raw_os_error(),Some(2|231|535))=>return Err((error.to_string(),false)),_=>{}}
         }
-        if Instant::now()>=connect_until{return Err("灵动岛未连接，请先启动主程序。".into())}
+        if Instant::now()>=connect_until{return Err(("灵动岛未连接，请先启动主程序。".into(),false))}
         std::thread::sleep(Duration::from_millis(15));
     };
-    let mut request=request.to_string();request.push('\n');file.write_all(request.as_bytes()).map_err(|e|e.to_string())?;
+    let mut request=request.to_string();request.push('\n');
+    // A failed write means the request was not delivered in full: retrying even a mutation is safe.
+    if let Err(error)=file.write_all(request.as_bytes()){return Err((error.to_string(),true))}
     let deadline=Instant::now()+Duration::from_secs(8);let mut response=vec![];
     loop{
-        if Instant::now()>deadline{return Err("设置连接超时。".into())}let mut available=0;
-        unsafe{PeekNamedPipe(HANDLE(file.as_raw_handle()),None,0,None,Some(&mut available),None)}.map_err(|e|e.to_string())?;
+        if Instant::now()>deadline{return Err(("设置连接超时。".into(),false))}let mut available=0;
+        if let Err(error)=unsafe{PeekNamedPipe(HANDLE(file.as_raw_handle()),None,0,None,Some(&mut available),None)}{
+            return Err((error.to_string(),readonly))
+        }
         if available==0{std::thread::sleep(Duration::from_millis(10));continue}
-        let mut buffer=vec![0u8;available.min(65536) as usize];let read=file.read(&mut buffer).map_err(|e|e.to_string())?;
-        if read==0{return Err("连接已关闭。".into())}response.extend_from_slice(&buffer[..read]);if response.len()>1024*1024{return Err("设置响应过大。".into())}
-        if response.contains(&b'\n'){return serde_json::from_slice(&response).map_err(|e|e.to_string())}
+        let mut buffer=vec![0u8;available.min(65536) as usize];
+        match file.read(&mut buffer){
+            Ok(0)=>return Err(("连接已关闭。".into(),readonly)),
+            Ok(read)=>response.extend_from_slice(&buffer[..read]),
+            // A delivered mutation must never be replayed; read-only commands are safe to retry.
+            Err(error)=>return Err((error.to_string(),readonly)),
+        }
+        if response.len()>1024*1024{return Err(("设置响应过大。".into(),false))}
+        if response.contains(&b'\n'){return serde_json::from_slice(&response).map_err(|e|(e.to_string(),false))}
+    }
+}
+/// The island process owns this mutex from startup to exit (see lyric-native main); a live
+/// handle means one state-request failure is a race, not a missing island.
+pub fn island_running()->bool{
+    let test=std::env::var("LYRICISLAND_TEST_PIPE").unwrap_or_default();
+    let name=if test.starts_with("LyricIsland.Settings.test."){format!("Local.LyricIsland.Native.Test.{test}")}else{"Local.LyricIsland.Native.Vello.v3".into()};
+    let wide=name.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+    unsafe{
+        let Ok(mutex)=windows::Win32::System::Threading::CreateMutexW(None,false,PCWSTR(wide.as_ptr()))else{return false};
+        let running=GetLastError()==ERROR_ALREADY_EXISTS;
+        let _=CloseHandle(mutex);
+        running
     }
 }
 

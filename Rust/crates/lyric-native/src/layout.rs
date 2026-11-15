@@ -14,6 +14,7 @@ pub fn mini_hit(w:f64,h:f64,panel:Option<&crate::activities::Panel>,x:f64,y:f64)
     match panel.map(|p|p.kind){
         None=>{let t=mini_track(w,h);if Rect::new(t.x,t.y-5.,t.w,13.).contains(x,y){return 10}for(id,r)in mini_music_buttons(w,h){if r.contains(x,y){return id}}},
         Some(2)=>{for(i,r)in mini_todos(w).iter().enumerate().take(panel.map(|p|p.tasks.len()).unwrap_or(0)){if r.contains(x,y){return 40+i as i32}}if mini_primary(w,h,2).contains(x,y){return 7}},
+        Some(4)=>{},
         Some(3)=>{if update_close(w).contains(x,y){return 51}if panel.is_some_and(|p|!p.tasks.is_empty())&&update_primary(w,h).contains(x,y){return 50}},
         _=>{for(id,r)in mini_timer_buttons(w,h){if r.contains(x,y){return id}}}
     }0

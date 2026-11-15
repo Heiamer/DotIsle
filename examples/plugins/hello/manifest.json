@@ -1,0 +1,24 @@
+{
+  "apiVersion": 1,
+  "id": "example.hello",
+  "name": "你好，积木",
+  "version": "1.0.0",
+  "description": "一份数据连接灵动岛、概览与桌面；运行 producer.py 查看实时变化。",
+  "views": {
+    "island": [
+      {"kind": "metric", "bind": "counter", "label": "已运行秒数"},
+      {"kind": "progress", "bind": "progress", "label": "这一分钟"}
+    ],
+    "overview": [
+      {"kind": "text", "text": "让自己的想法，成为一块积木。"},
+      {"kind": "metric", "bind": "counter", "label": "已运行秒数"},
+      {"kind": "divider"},
+      {"kind": "progress", "bind": "progress", "label": "这一分钟"}
+    ],
+    "desktop": [
+      {"kind": "text", "text": "你好，点屿"},
+      {"kind": "metric", "bind": "counter", "label": "已运行秒数"},
+      {"kind": "progress", "bind": "progress", "label": "这一分钟"}
+    ]
+  }
+}

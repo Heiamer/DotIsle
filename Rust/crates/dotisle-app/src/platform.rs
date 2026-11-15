@@ -316,3 +316,45 @@ pub fn desktop_floor(window: &winit::window::Window) {
         }
     }
 }
+
+pub fn choose_module(
+    window: &winit::window::Window,
+) -> Result<Option<std::path::PathBuf>, String> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows::{
+        core::{PCWSTR, PWSTR},
+        Win32::{Foundation::HWND, UI::Controls::Dialogs::*},
+    };
+    let handle = window.window_handle().map_err(|e| e.to_string())?;
+    let RawWindowHandle::Win32(h) = handle.as_raw() else {
+        return Err("无法打开模块选择器".into());
+    };
+    let filter: Vec<u16> = "点屿模块 (DLL)\0*.dll\0\0"
+        .encode_utf16()
+        .collect();
+    let title: Vec<u16> = "选择要替换的内部模块 DLL\0".encode_utf16().collect();
+    let mut file = vec![0u16; 32768];
+    let mut dialog = OPENFILENAMEW {
+        lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
+        hwndOwner: HWND(h.hwnd.get() as _),
+        lpstrFilter: PCWSTR(filter.as_ptr()),
+        lpstrFile: PWSTR(file.as_mut_ptr()),
+        nMaxFile: file.len() as u32,
+        lpstrTitle: PCWSTR(title.as_ptr()),
+        Flags: OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER,
+        ..Default::default()
+    };
+    unsafe {
+        if GetOpenFileNameW(&mut dialog).as_bool() {
+            let n = file.iter().position(|v| *v == 0).unwrap_or(file.len());
+            return Ok(Some(std::path::PathBuf::from(String::from_utf16_lossy(
+                &file[..n],
+            ))));
+        }
+        let error = CommDlgExtendedError();
+        if error.0 != 0 {
+            return Err(format!("模块选择器未能打开（{}）", error.0));
+        }
+    }
+    Ok(None)
+}

@@ -1,0 +1,14 @@
+[package]
+name="dotisle-history"
+version="1.0.0"
+edition="2021"
+license="MIT"
+[lib]
+name="dotisle_history"
+crate-type=["cdylib"]
+[dependencies]
+dotisle-module-api={path="../dotisle-module-api"}
+dotisle-module-storage={path="../dotisle-module-storage"}
+serde.workspace=true
+serde_json.workspace=true
+windows={version="0.62",features=["Win32_System_SystemInformation"]}

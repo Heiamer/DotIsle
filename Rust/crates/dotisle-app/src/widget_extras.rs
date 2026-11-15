@@ -36,7 +36,7 @@ fn colors(kind: Kind, dark: bool) -> (u32, u32, u32) {
         _ => (0xFAFBFD, 0x262A33, 0x5786C9),
     }
 }
-fn text_lines(
+pub(crate) fn text_lines(
     ui: &mut Ui,
     value: &str,
     x: f64,
@@ -625,6 +625,7 @@ impl Model {
         let mut fields = vec![Field::new("标题", c.title.clone(), 60)];
         match p.kind {
             Kind::Note => fields.push(Field::new("便签内容", c.text.clone(), 500)),
+            Kind::Schedule => fields.push(Field::new("日期与时间 · YYYY-MM-DD HH:mm", c.deadline.clone(), 16)),
             Kind::Anniversary => fields.push(Field::new("日期 · YYYY-MM-DD", c.date.clone(), 10)),
             Kind::Weather => fields.push(Field::new("城市 · 可附省份或国家", c.city.clone(), 100)),
             Kind::WorldClock => fields.push(Field::new(
@@ -668,6 +669,7 @@ impl Model {
         match p.kind {
             Kind::Note => config.text = value,
             Kind::Anniversary => config.date = value,
+            Kind::Schedule => config.deadline = value,
             Kind::Weather | Kind::WorldClock => config.city = value,
             Kind::Storage => config.drive = value,
             Kind::Launcher => config.target = value,
@@ -729,6 +731,7 @@ pub fn verify(
                 (-1., -1.),
                 false,
                 0.,
+                None,
             );
             let (w, h) = size.dimensions();
             if view.hits.iter().any(|hit| {

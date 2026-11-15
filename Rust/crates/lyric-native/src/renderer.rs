@@ -281,7 +281,7 @@ impl Renderer {
     pub fn compact_height(&self, font: f64, double: bool, scale: f64) -> f64 {
         crate::compact::capsule_height(font, self.body_line_spacing, scale, double)
     }
-    fn decode(
+    pub(crate) fn decode(
         bytes: &[u8],
     ) -> std::result::Result<(ImageData, Vec<u8>, u32, u32), Box<dyn std::error::Error>> {
         let mut reader =
@@ -536,7 +536,7 @@ impl Renderer {
                 s.classic_capsule
             },
             reveal: s.frame.card_reveal,
-            overlay: s.notification_mix.max(s.osd_mix),
+            overlay: s.notification_mix.max(s.osd_mix).max(s.alert_mix),
             mini: s.mini,
             transparent: s.transparent,
             cover_background: s.expanded_cover_background,
@@ -565,7 +565,7 @@ impl Renderer {
         };
         if s.panel.is_none()
             && s.notification.is_none()
-            && s.osd.is_none()
+            && s.osd.is_none() && s.alert.is_none()
             && immersion > 0.
             && !s.dynamic_high_contrast
         {
@@ -1134,6 +1134,7 @@ impl Renderer {
             2 => (Glyph::Shuffle, c),
             6 => (Glyph::Translate, control),
             9 => (Glyph::Heart, c),
+            16 => (Glyph::Volume, c),
             _ => return,
         };
         if id == 6 && disabled {
@@ -1449,24 +1450,14 @@ impl Renderer {
                 self.button(id, r, s);
             }
         }
-        if s.translation_tooltip && s.hover == 6 && s.translation_button {
-            if let Some((_, r)) = g.buttons.iter().find(|(id, _)| *id == 6) {
-                let tw = 128.;
-                let x = (r.x + r.w / 2. - tw / 2.).clamp(12., w - tw - 12.);
-                let tip = Rect::new(x, r.y - 38., tw, 30.);
-                self.fill(tip, 10., 0xffe4ece7);
-                self.text_at(
-                    if s.translation_enabled {
-                        "隐藏翻译 · 已开启"
-                    } else {
-                        "显示翻译 · 已关闭"
-                    },
-                    Rect::new(tip.x, tip.y + 6., tip.w, 18.),
-                    11.,
-                    500,
-                    0xff19261e,
-                    0.5,
-                );
+        if s.translation_tooltip && (s.hover == 16 || (s.hover == 6 && s.translation_button)) {
+            if let Some((_, r)) = g.buttons.iter().find(|(id, _)| *id == s.hover) {
+                let label=if s.hover==16 {match s.volume_level {Some(level)=>format!("滚轮调节音量 · {level}%{}",if s.volume_muted{" · 静音"}else{""}),None=>"暂无可用的音频设备".into()}}else if s.translation_enabled{"隐藏翻译 · 已开启".into()}else{"显示翻译 · 已关闭".into()};
+                let tw=if s.hover==16{if s.volume_muted{204.}else{174.}}else{128.};
+                let x=(r.x+r.w/2.-tw/2.).clamp(12.,w-tw-12.);
+                let tip=Rect::new(x,r.y-38.,tw,30.);
+                self.fill(tip,10.,0xffe9edef);
+                self.text_at(&label,Rect::new(tip.x,tip.y+6.,tip.w,18.),11.,500,0xff20272b,0.5);
             }
         }
         self.canvas.pop_layer();
@@ -1475,7 +1466,15 @@ impl Renderer {
         self.m3_button(id, r, label, s, id == 30)
     }
     fn tool_expanded(&mut self, s: &Scene<'_>, p: &crate::activities::Panel) {
-        self.expressive_tools(s, p)
+        if p.kind==4 {
+            let c=self.m3(s);let w=s.layout.card.w;let ink=0xff000000|c.on_surface;let muted=0xff000000|c.on_surface_variant;let accent=0xff000000|c.primary;
+            self.text_at(&p.title,Rect::new(20.,18.,w-40.,22.),14.,600,ink,0.);let mut y=52.;
+            for b in &p.blocks {let height=match b.kind.as_str(){"metric"=>56.,"progress"=>40.,"divider"=>12.,_=>28.};
+                if b.kind=="divider"{self.fill(Rect::new(20.,y+5.,w-40.,1.),0.5,0x22777777);}
+                else if b.kind=="progress"{self.text_at(&b.label,Rect::new(20.,y,w-40.,18.),11.,400,muted,0.);self.fill(Rect::new(20.,y+25.,w-40.,4.),2.,0x22777777);if b.value>0.{self.fill(Rect::new(20.,y+25.,(w-40.)*b.value,4.),2.,accent);}}
+                else {self.text_at(&b.text,Rect::new(20.,y,w-40.,if b.kind=="metric"{32.}else{22.}),if b.kind=="metric"{26.}else{13.},500,ink,0.);if b.kind=="metric"{self.text_at(&b.label,Rect::new(20.,y+34.,w-40.,18.),11.,400,muted,0.);}}y+=height;
+            }
+        }else{self.expressive_tools(s, p)}
     }
     fn expanded_view(&mut self, s: &Scene<'_>) {
         let mut expanded = *s;
@@ -1581,6 +1580,41 @@ impl Renderer {
             }
         }
         self.canvas.pop_layer();
+    }
+    fn capsule_alert_content(&mut self,a:&crate::capsule_alert::Alert,r:Rect){
+        let ink=0xfff5f5f7;let muted=0xffaeb4c0;let blue=0xff75b4ff;
+        let glyph=Rect::new(r.x+17.,r.y+(r.h-25.)/2.,25.,25.);
+        if let Some(image)=a.image.clone(){self.image(&image,glyph,7.,1.);}else{match a.icon.as_str(){
+            kind if kind.starts_with("Message:")=>{
+                // App identity only: no sender, preview, unread count or chat text.
+                let label=match kind.trim_start_matches("Message:"){"WeChat"=>"微","Feishu"=>"飞","DingTalk"=>"钉","WXWork"=>"企",_=>"信"};
+                self.fill(glyph,7.,0xff2688ed);
+                self.text_at(label,Rect::new(glyph.x,glyph.y+1.,glyph.w,glyph.h),14.,600,ink,0.5);
+            },
+            "Sun"=>self.icon(Icon::Sun,glyph,blue),
+            "Rain"|"Snow"=>{
+                self.fill(Rect::new(glyph.x,glyph.y+6.,25.,11.),5.5,blue);
+                self.fill(Rect::new(glyph.x+5.,glyph.y,15.,18.),7.5,blue);
+                for i in 0..3{let x=glyph.x+5.+i as f64*7.;
+                    if a.icon=="Snow"{self.line((x-2.,glyph.y+23.),(x+2.,glyph.y+23.),ink,1.4);self.line((x,glyph.y+21.),(x,glyph.y+25.),ink,1.4);}
+                    else{self.line((x,glyph.y+20.),(x-2.,glyph.y+25.),blue,1.8);}
+                }
+            },
+            "Code"=>{dotisle_render::material_symbols::paint(&mut self.canvas,"content_copy",glyph.x,glyph.y,glyph.w,blue);},
+            kind=>self.device_glyph(glyph,kind,blue),
+        }}
+        let x=r.x+56.;let w=(r.w-76.).max(0.);
+        if a.code.is_some(){
+            self.text_line(&a.title,Rect::new(x,r.y+12.,w-130.,17.),11.5,500,muted);
+            self.text_line(&a.detail,Rect::new(x,r.y+36.,w-130.,18.),11.,400,muted);
+            self.text_at(&a.trailing,Rect::new(r.x+r.w-156.,r.y+17.,136.,36.),28.,600,ink,1.);
+        }else if a.detail.is_empty(){
+            self.text_line(&a.title,Rect::new(x,r.y+(r.h-20.)/2.,if a.icon.starts_with("Message:"){w}else{w-65.},22.),13.,500,ink);
+            self.text_at(&a.trailing,Rect::new(r.x+r.w-74.,r.y+(r.h-22.)/2.,54.,24.),15.,600,ink,1.);
+        }else{
+            self.text_line(&a.title,Rect::new(x,r.y+13.,w,24.),17.,600,ink);
+            for(i,line)in a.detail.lines().take(2).enumerate(){self.text_line(line,Rect::new(x,r.y+43.+i as f64*23.,w,20.),11.5,400,muted);}
+        }
     }
     fn notification_content(&mut self, n: &crate::notifications::Notice, r: Rect, dark: bool) {
         let tones = self
@@ -1773,9 +1807,11 @@ impl Renderer {
         let p = s.frame.card_reveal;
         let (card_softness, compact_softness) = crate::motion::content_softness(
             p,
-            s.animate && !s.drag_active && s.notification.is_none() && s.osd.is_none(),
+            s.animate && !s.drag_active && s.notification.is_none() && s.osd.is_none() && s.alert.is_none(),
         );
-        let (shape, radius) = if s.notification.is_some() {
+        let (shape, radius) = if s.alert.is_some(){
+            (s.alert_rect,s.alert_radius)
+        }else if s.notification.is_some() {
             (s.notification_rect, s.notification_radius)
         } else if s.osd.is_some() {
             (s.osd_rect, s.osd_radius)
@@ -1784,6 +1820,8 @@ impl Renderer {
         };
         let music_alpha = if s.transient_only {
             0.
+        } else if s.alert.is_some(){
+            1.-s.alert_mix
         } else if s.notification.is_some() {
             1. - s.notification_mix
         } else if s.osd.is_some() {
@@ -1792,7 +1830,7 @@ impl Renderer {
             1.
         };
         let transient_alpha = if s.transient_only {
-            if s.notification.is_some() {
+            if s.alert.is_some(){s.alert_mix}else if s.notification.is_some() {
                 s.notification_mix
             } else if s.osd.is_some() {
                 s.osd_mix
@@ -1814,13 +1852,13 @@ impl Renderer {
             radius,
             22. / 3.,
         );
-        if !s.mini && s.notification.is_none() && s.osd.is_none() {
+        if !s.mini && s.notification.is_none() && s.osd.is_none() && s.alert.is_none() {
             let accent = self.m3(s).primary;
             crate::island_glow::paint(&mut self.canvas, vr(shape), radius, accent, s.glow);
         }
         let mut surface = Self::music_surface_spec(s);
         let saved_palette = self.paint_palette;
-        if s.panel.is_some() || s.notification.is_some() || s.osd.is_some() {
+        if s.panel.is_some() || s.notification.is_some() || s.osd.is_some() || s.alert.is_some() {
             surface.cover_overlay = false;
             surface.card_opacity = 0.;
             surface.cover_background = true;
@@ -1828,6 +1866,7 @@ impl Renderer {
                 self.paint_palette.background = r.roles.surface_container;
             }
         }
+        if s.alert.is_some(){surface.mini=false;surface.compact=s.classic_capsule;}
         self.material_surface(shape, radius, surface);
         self.paint_palette = saved_palette;
         let alpha = crate::motion::content_weights(s.frame).0 * music_alpha;
@@ -1941,7 +1980,7 @@ impl Renderer {
             }
             self.canvas.pop_layer();
         }
-        if !s.mini && s.component_count > 1 && s.notification.is_none() && s.osd.is_none() {
+        if !s.mini && s.component_count > 1 && s.notification.is_none() && s.osd.is_none() && s.alert.is_none() {
             self.satellite(&compact);
         }
         if let Some(n) = s.notification {
@@ -1956,6 +1995,10 @@ impl Renderer {
             );
             self.notification_content(n, shape, s.expressive_dark);
             self.canvas.pop_layer();
+        }
+        if let Some(a)=s.alert{
+            self.clip(shape,radius,if s.transient_only{1.}else{s.alert_mix as f32});
+            self.capsule_alert_content(a,shape);self.canvas.pop_layer();
         }
         if let Some(n) = s.osd {
             self.clip(
@@ -2053,7 +2096,7 @@ impl Renderer {
         };
         if s.panel.is_none()
             && s.notification.is_none()
-            && s.osd.is_none()
+            && s.osd.is_none() && s.alert.is_none()
             && immersion > 0.
             && !s.dynamic_high_contrast
         {
@@ -2149,6 +2192,8 @@ impl MaterialTheme {
 }
 #[derive(Clone, Copy)]
 pub struct Scene<'a> {
+    pub alert:Option<&'a crate::capsule_alert::Alert>,
+    pub alert_rect:Rect,pub alert_radius:f64,pub alert_mix:f64,
     pub glow: crate::island_glow::Frame,
     pub transient_only: bool,
     pub custom_geometry: Option<lyric_core::music_layout::MusicGeometry>,
@@ -2173,6 +2218,8 @@ pub struct Scene<'a> {
     pub translation_button: bool,
     pub translation_enabled: bool,
     pub translation_tooltip: bool,
+    pub volume_level: Option<u8>,
+    pub volume_muted: bool,
     pub tool_theme: crate::theme_accent::Accent,
     pub drag_panel: Option<&'a crate::activities::Panel>,
     pub drag_active: bool,

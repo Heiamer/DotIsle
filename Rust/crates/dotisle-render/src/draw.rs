@@ -189,6 +189,11 @@ impl Text {
         for name in LATIN_FONTS.iter().chain(["NotoSansSC.ttf"].iter()) {
             let _ = text.register(&dir.join(name));
         }
+        for family in ["HarmonyOS_Sans", "HarmonyOS_Sans_SC"] {
+            for weight in ["Regular", "Medium", "Bold"] {
+                let _=text.register(&dir.join(format!("{family}_{weight}.ttf")));
+            }
+        }
         text.deferred_faces = THEME_FONTS
             .iter()
             .map(|(family, file)| (*family, dir.join(file)))

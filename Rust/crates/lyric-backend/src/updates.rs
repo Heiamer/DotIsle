@@ -1,7 +1,14 @@
 //! GitHub Releases is the update source; installation is performed in place.
 use serde_json::{json,Value};
 use std::time::Duration;
-pub fn installed_version()->String{env!("CARGO_PKG_VERSION").into()}
+static RUNTIME_VERSION:std::sync::OnceLock<String>=std::sync::OnceLock::new();
+pub fn set_runtime_version(version:&str){let _=RUNTIME_VERSION.set(version.into());}
+fn runtime_version()->&'static str{RUNTIME_VERSION.get().map(String::as_str).unwrap_or(env!("CARGO_PKG_VERSION"))}
+pub fn installed_version()->String {
+ let state=std::env::current_exe().ok().and_then(|p|p.parent().map(|p|p.join("ModuleState.json"))).and_then(|p|std::fs::read(p).ok()).and_then(|b|serde_json::from_slice::<Value>(&b).ok()).unwrap_or(Value::Null);
+ if state["schemaVersion"]==1 && state["runtimeVersion"]==runtime_version() {if let Some(v)=state["version"].as_str().filter(|v|release_version(v).is_some()){return v.into();}}
+ runtime_version().into()
+}
 pub const RELEASES:&str="https://github.com/Heiamer/DotIsle/releases/latest";
 const RELEASE_MANIFEST:&str="https://raw.githubusercontent.com/Heiamer/DotIsle/main/Assets/UpdateManifest.json";
 fn version(input:&str)->Option<[u32;4]>{

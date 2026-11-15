@@ -8,13 +8,25 @@ impl Server{
         let name=format!("\\\\.\\pipe\\{name}").encode_utf16().chain(Some(0)).collect::<Vec<_>>();let closed=Arc::new(AtomicBool::new(false));let worker_closed=closed.clone();
         let finished=Arc::new(AtomicBool::new(false));let done=finished.clone();
         std::thread::spawn(move||unsafe{
+            // The instance is created once and reused for every request. Recreating it after each
+            // reply exposed a window where a client could connect to an instance that was about to
+            // be closed: CreateFile succeeded, then CloseHandle cut the connection underneath the
+            // client with ERROR_PIPE_NOT_CONNECTED (0x800700E9), which made the settings process
+            // believe the island was gone and spawn a second one (3.5.2 withdrawal root cause).
+            let mut instance:Option<HANDLE>=None;
             while !worker_closed.load(Ordering::Acquire){
-                // Local-only pipe, remote clients rejected by the pipe type. The request is buffered
-                // first under a 16 KiB cap, then the client token SID is checked with
-                // ImpersonateNamedPipeClient before the callback runs: nothing is acted on and no
-                // data is returned until that check passes.
-                let pipe=CreateNamedPipeW(PCWSTR(name.as_ptr()),PIPE_ACCESS_DUPLEX|FILE_FLAG_FIRST_PIPE_INSTANCE,PIPE_TYPE_BYTE|PIPE_READMODE_BYTE|PIPE_NOWAIT|PIPE_REJECT_REMOTE_CLIENTS,1,65536,16384,1000,None);
-                if pipe.is_invalid(){std::thread::sleep(Duration::from_millis(150));continue}
+                let pipe=match instance{
+                    Some(handle)=>handle,
+                    None=>{
+                        // Local-only pipe, remote clients rejected by the pipe type. The request is buffered
+                        // first under a 16 KiB cap, then the client token SID is checked with
+                        // ImpersonateNamedPipeClient before the callback runs: nothing is acted on and no
+                        // data is returned until that check passes.
+                        let created=CreateNamedPipeW(PCWSTR(name.as_ptr()),PIPE_ACCESS_DUPLEX|FILE_FLAG_FIRST_PIPE_INSTANCE,PIPE_TYPE_BYTE|PIPE_READMODE_BYTE|PIPE_NOWAIT|PIPE_REJECT_REMOTE_CLIENTS,1,65536,16384,1000,None);
+                        if created.is_invalid(){std::thread::sleep(Duration::from_millis(150));continue}
+                        instance=Some(created);created
+                    }
+                };
                 let connection=(||{
                     loop{
                         if worker_closed.load(Ordering::Acquire){return None}
@@ -48,8 +60,13 @@ impl Server{
                     let _=FlushFileBuffers(pipe);
                     Some(())
                 })();
-                let _=connection;let _=DisconnectNamedPipe(pipe);let _=CloseHandle(pipe);
+                let _=connection;
+                // Disconnect resets the instance for the next client without destroying it, so the
+                // pipe name never points at a doomed instance between requests. Only a failed
+                // disconnect (instance unusable) forces a rebuild.
+                if DisconnectNamedPipe(pipe).is_err(){let _=CloseHandle(pipe);instance=None;std::thread::sleep(Duration::from_millis(20));}
             }
+            if let Some(pipe)=instance{let _=CloseHandle(pipe);}
             done.store(true,Ordering::Release);
         });Self{closed,finished}
     }
@@ -69,5 +86,39 @@ unsafe fn same_user(pipe:HANDLE)->bool{
     if ImpersonateNamedPipeClient(pipe).is_err(){return false}let mut client=HANDLE::default();let opened=OpenThreadToken(GetCurrentThread(),TOKEN_QUERY,true,&mut client).is_ok();
     let data=if opened{let d=token_user(client);let _=CloseHandle(client);d}else{None};let _=windows::Win32::Security::RevertToSelf();
     match (own_data,data){(Some(a),Some(b))=>{let a=&*(a.as_ptr() as *const TOKEN_USER);let b=&*(b.as_ptr() as *const TOKEN_USER);EqualSid(a.User.Sid,b.User.Sid).is_ok()},_=>false}
+}
+#[cfg(test)]mod ipc_tests{
+    use super::*;
+    use serde_json::json;
+    // The server frees replies with CoTaskMemFree, so the test callback allocates there too.
+    unsafe extern "C" fn echo(request:*const c_char)->*mut c_char{
+        let command=std::ffi::CStr::from_ptr(request).to_bytes().iter().filter(|b|**b!=b'\n').cloned().collect::<Vec<_>>();
+        let command=serde_json::from_slice::<serde_json::Value>(&command).ok().and_then(|v|v["command"].as_str().map(str::to_owned)).unwrap_or_default();
+        let reply=format!("{{\"command\":\"{command}\"}}");
+        let len=reply.len()+1;
+        let Ok(c)=std::ffi::CString::new(reply)else{return std::ptr::null_mut()};
+        let buffer=windows::Win32::System::Com::CoTaskMemAlloc(len);
+        if buffer.is_null(){return std::ptr::null_mut()}
+        std::ptr::copy_nonoverlapping(c.as_ptr() as *const u8,buffer as *mut u8,len);
+        buffer as *mut c_char
+    }
+    // Regression for the 3.5.2 withdrawal: the server used to close and recreate its pipe
+    // instance after every reply, so a concurrent client could connect to a doomed instance
+    // and fail with ERROR_PIPE_NOT_CONNECTED (0x800700E9).
+    #[test]fn concurrent_state_requests_never_hit_a_doomed_instance(){
+        let pipe=format!("LyricIsland.Native.Settings.test.ipc-{}",std::process::id());
+        let server=Server::new(&pipe,echo);
+        let workers=(0..4).map(|_|{
+            let pipe=pipe.clone();
+            std::thread::spawn(move||{
+                for _ in 0..50{
+                    let reply=crate::io::pipe_request(&pipe,&json!({"version":1,"command":"state"})).expect("state request must succeed");
+                    assert_eq!(reply["command"].as_str(),Some("state"));
+                }
+            })
+        }).collect::<Vec<_>>();
+        for worker in workers{worker.join().expect("worker must not panic");}
+        server.close();
+    }
 }
 

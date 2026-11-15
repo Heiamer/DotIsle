@@ -292,6 +292,9 @@ impl App {
         } else {
             None
         };
+        if let Action::ReplaceModule(id)=a {
+            if let Some(s)=&self.main{match platform::choose_module(&s.window){Ok(Some(path))=>self.model.native_command("moduleStage",serde_json::json!({"id":id,"path":path})),Ok(None)=>{},Err(e)=>self.model.message(&e)}}self.redraw();return;
+        }
         if matches!(a, Action::BackgroundPick) {
             if let Some(s) = &self.main {
                 match platform::choose_background(&s.window) {
@@ -1253,6 +1256,7 @@ impl ApplicationHandler for App {
                 &mut self.gpu,
                 &mut self.text,
                 self.started.elapsed().as_secs_f64(),
+                self.seek_preview.or(Some(self.timeline.position)),
             ) {
                 self.action(action);
             }
@@ -1652,8 +1656,15 @@ impl ApplicationHandler for App {
             e.exit();
             return;
         }
+        // Tick the interpolated media position before the desktop sync so playing widgets
+        // redraw at the same cadence as the island (bare positionSeconds used to trail).
+        let media_moving = if self.seek_preview.is_some() {
+            false
+        } else {
+            self.timeline.tick(&self.model, dt)
+        };
         self.desktop
-            .sync(e, &mut self.model, &mut self.gpu, changed);
+            .sync(e, &mut self.model, &mut self.gpu, changed || media_moving);
         if self.scroll_page != self.model.page
             || (self.model.scroll - self.scroll_motion.value).abs() > 0.5
         {
@@ -1738,11 +1749,7 @@ impl ApplicationHandler for App {
             dt,
             self.model.prefs.reduced_motion,
         );
-        let media_moving = if self.seek_preview.is_some() {
-            false
-        } else {
-            self.timeline.tick(&self.model, dt)
-        };
+        // media_moving was already ticked above, before the desktop widget sync.
         self.rail.target = 112.
             + Page::ALL
                 .iter()
@@ -1851,20 +1858,19 @@ pub fn verify_motion_editor(data: &std::path::Path) -> Result<(), String> {
     model.page = Page::Island;
     model.island_tab = 3;
     let mut app = App::new(model);
-    let view = views::render(
-        &app.model,
-        &mut app.text,
-        1200.,
-        800.,
-        &views::ViewState::default(),
-    );
-    let curve = view
-        .hits
-        .iter()
-        .find(|h| matches!(h.action, Action::CurveHandle(0, _)))
-        .ok_or("curve handle is missing")?
-        .action
-        .clone();
+    // The glow switches precede the motion editor. Find both real controls by scrolling,
+    // rather than assuming a page offset that changes when settings are added.
+    let mut controls=None;
+    for _ in 0..32 {
+        let view=views::render(&app.model,&mut app.text,1200.,800.,&views::ViewState::default());
+        let curve=view.hits.iter().find(|h|matches!(h.action,Action::CurveHandle(0,_))).map(|h|h.action.clone());
+        let radius=view.hits.iter().find(|h|matches!(h.action,Action::RadiusHandle(_))).map(|h|h.action.clone());
+        if let(Some(curve),Some(radius))=(curve,radius){controls=Some((curve,radius));break;}
+        if app.model.scroll>=view.max_scroll{break;}
+        app.model.scroll=(app.model.scroll+120.).min(view.max_scroll);
+    }
+    app.scroll_target=app.model.scroll;app.scroll_motion.snap(app.model.scroll);
+    let(curve,radius)=controls.ok_or("motion controls are unreachable after scrolling")?;
     let Action::CurveHandle(_, b) = curve else {
         unreachable!()
     };
@@ -1875,13 +1881,7 @@ pub fn verify_motion_editor(data: &std::path::Path) -> Result<(), String> {
     if (c[0] - 0.4).abs() > 1e-6 || (c[1] - 0.2).abs() > 1e-6 {
         return Err("curve drag uses the wrong coordinate space".into());
     }
-    let radius = view
-        .hits
-        .iter()
-        .find(|h| matches!(h.action, Action::RadiusHandle(_)))
-        .ok_or("radius handle is missing")?
-        .action
-        .clone();
+
     let Action::RadiusHandle(b) = radius else {
         unreachable!()
     };

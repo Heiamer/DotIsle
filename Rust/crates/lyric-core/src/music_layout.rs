@@ -8,9 +8,9 @@ pub fn cover_corner_radius(card_radius:f64,width:f64,height:f64)->f64{
     let radius=if card_radius.is_finite(){card_radius.max(0.)}else{30.};
     (radius*0.5).min(width.max(0.).min(height.max(0.))/2.)
 }
-fn buttons_at(width:f64,scale:f64,center_y:f64)->[(i32,Rect);7]{
+fn buttons_at(width:f64,scale:f64,center_y:f64)->[(i32,Rect);8]{
     let snap=|v:f64|(v*scale).round_ties_even()/scale;let center=snap(width/2.);let y=snap(center_y);
-    [(2,Rect::new(18.,y-14.,28.,28.)),(9,Rect::new(52.,y-14.,28.,28.)),(3,Rect::new(center-58.,y-16.,32.,32.)),(4,Rect::new(center-20.,y-20.,40.,40.)),(5,Rect::new(center+26.,y-16.,32.,32.)),(6,Rect::new(width-80.,y-14.,28.,28.)),(7,Rect::new(width-46.,y-14.,28.,28.))]
+    [(2,Rect::new(18.,y-14.,28.,28.)),(9,Rect::new(52.,y-14.,28.,28.)),(3,Rect::new(center-58.,y-16.,32.,32.)),(4,Rect::new(center-20.,y-20.,40.,40.)),(5,Rect::new(center+26.,y-16.,32.,32.)),(6,Rect::new(width-80.,y-14.,28.,28.)),(7,Rect::new(width-46.,y-14.,28.,28.)),(16,Rect::new(86.,y-14.,28.,28.))]
 }
 // Grow with the first stage that clears the artwork, before widening the lyric band.
 pub fn music_height(mix:f64,font:f64)->f64{220.+16.*(mix*2.).clamp(0.,1.)+(font+8.-24.).max(0.)}
@@ -39,7 +39,7 @@ impl MusicLayout {
 pub struct MusicGeometry {
     pub cover:Rect,pub title:Rect,pub artist:Rect,pub lyric:Rect,pub secondary:Rect,
     pub status_dot:Rect,pub status_text:Rect,pub track:Rect,pub elapsed:Rect,pub total:Rect,
-    pub buttons:[(i32,Rect);7],pub height:f64,pub progress_hit:Rect,pub text_hit:Rect,pub split:f64,pub align:f64,
+    pub buttons:[(i32,Rect);8],pub height:f64,pub progress_hit:Rect,pub text_hit:Rect,pub split:f64,pub align:f64,
     /// Small centred action shown when the player cannot seek; offers the enable flow.
     pub seek_chip:Rect,
 }
@@ -193,4 +193,8 @@ mod tests{
   for edge in [40.,56.,68.]{for radius in [8.,16.,30.,48.]{assert_eq!(cover_corner_radius(radius,edge,edge),(radius*0.5).min(edge/2.));}}
   assert_eq!(cover_corner_radius(30.,68.,68.),15.);assert_eq!(cover_corner_radius(30.,40.,40.),15.);
  }
+}
+
+#[cfg(test)]mod volume_geometry_tests{use super::*;
+ #[test]fn volume_targets_share_the_baseline_and_clear_every_other_button(){for width in [400.,440.,592.]{for scale in [1.,1.25,1.5,2.]{for i in 0..=32{let mix=i as f64/8.;let g=music_geometry(width,MusicLayout::SideBySide,mix,scale,20.);let volume=g.buttons.iter().find(|(id,_)|*id==16).unwrap().1;let heart=g.buttons.iter().find(|(id,_)|*id==9).unwrap().1;assert_eq!(volume.x-heart.x,34.);for(id,r)in g.buttons{assert!((r.y+r.h/2.-(volume.y+volume.h/2.)).abs()<0.001);if id!=16{assert!(r.x+r.w<=volume.x||volume.x+volume.w<=r.x);}}}}}}
 }
