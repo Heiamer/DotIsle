@@ -1,0 +1,60 @@
+name: Publish locally verified Windows release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version of the locally verified draft release
+        required: true
+        default: '5.0.0-rc1'
+      manifest_sha256:
+        description: SHA-256 of the checksum manifest verified locally
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate draft and download locally verified assets
+        shell: bash
+        run: |
+          python -c 'import os,re; assert re.fullmatch(r"\d+\.\d+\.\d+(-rc[1-9]\d*)?",os.environ["RELEASE_VERSION"]); assert re.fullmatch(r"[0-9a-f]{64}",os.environ["MANIFEST_SHA256"])'
+          gh release view "v$RELEASE_VERSION" --json isDraft,targetCommitish > draft.json
+          python -c 'import json,os; r=json.load(open("draft.json")); assert r["isDraft"] is True; assert r["targetCommitish"] == os.environ["GITHUB_SHA"]'
+          gh release download "v$RELEASE_VERSION" --dir incoming
+
+      - name: Verify checksums, source, runtime and local acceptance reports
+        run: |
+          python build/verify_prebuilt_release.py --directory incoming --version "$RELEASE_VERSION" --source-commit "$GITHUB_SHA" --manifest-sha256 "$MANIFEST_SHA256" --report validation/publish/report.json
+
+      - name: Publish accepted release
+        run: |
+          if [[ "$RELEASE_VERSION" == *-rc* ]]; then
+            gh release edit "v$RELEASE_VERSION" --draft=false --prerelease=true --latest=false
+          else
+            gh release edit "v$RELEASE_VERSION" --draft=false --prerelease=false --latest
+          fi
+
+      - name: Save publication verification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publication-verification-${{ inputs.version }}
+          path: validation/publish/report.json
