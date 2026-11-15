@@ -17,7 +17,8 @@ func ensurePreviewFont(family string) {
 	previewFontsLoaded[family] = true
 	files := map[string]string{
 		"Google Sans Flex": "GoogleSansFlex-Regular.ttf", "Noto Sans SC": "NotoSansSC.ttf",
-		"Noto Sans JP": "NotoSansJP.ttf", "Space Mono": "SpaceMono-Regular.ttf",
+		"HarmonyOS Sans SC": "HarmonyOS_Sans_SC_Regular.ttf",
+		"Noto Sans JP":      "NotoSansJP.ttf", "Space Mono": "SpaceMono-Regular.ttf",
 		"Source Serif 4": "SourceSerif4.ttf", "Noto Serif SC": "NotoSerifSC.ttf",
 		"Space Grotesk": "SpaceGrotesk.ttf", "Doto": "Doto.ttf", "Fusion Pixel": "FusionPixel12.ttf",
 	}

@@ -28,7 +28,7 @@ pub fn defaults() -> Value {
     defaults["PlayerResponseMode"] = json!("All");
     defaults["BrowserMediaEnabled"] = json!(false);
     defaults["SelectedSources"] = json!(dotisle_domain::players::ALL);
-    defaults["IslandFontFamily"] = json!("Noto Sans SC");
+    defaults["IslandFontFamily"] = json!("HarmonyOS Sans SC");
     defaults["SettingsLightAccentColor"] = json!("#2563EB");
     defaults["SettingsDarkAccentColor"] = json!("#6EA8FF");
     defaults["IslandMaterial"] = json!("Acrylic");
@@ -61,14 +61,14 @@ pub fn defaults() -> Value {
 pub fn resolve_render_font(s: &mut Value, path: &std::path::Path) {
     let family = s["IslandFontFamily"]
         .as_str()
-        .unwrap_or("Noto Sans SC")
+        .unwrap_or("HarmonyOS Sans SC")
         .to_string();
     let mut render = family;
     let prefs = path.with_file_name("preferences.json");
     if let Ok(raw) = std::fs::read(&prefs) {
         if let Ok(p) = serde_json::from_slice::<Value>(&raw) {
             if p["fontScope"].as_str() == Some("Center") {
-                render = "Noto Sans SC".into();
+                render = "HarmonyOS Sans SC".into();
             }
         }
     }
@@ -143,15 +143,27 @@ pub fn load(path: &std::path::Path) -> Value {
     // player nobody had heard of — 汽水音乐, PotPlayer, 洛雪 — stayed silent until the user found the
     // list. The filter is now expressed the other way round: everything responds, and the entries
     // here are the ones that do not.
+    // 5.0.1 replaces the thin Noto Sans SC default with HarmonyOS Sans SC, whose
+    // Medium/Bold faces stay legible on frosted covers. Migrate the old default
+    // once; any later choice, including switching back to Noto, is preserved.
+    if s.get("FontFaceVersion").and_then(Value::as_u64).unwrap_or(0) < 1 {
+        if s["IslandFontFamily"]
+            .as_str()
+            .is_none_or(|name| name == "Noto Sans SC")
+        {
+            s["IslandFontFamily"] = json!("HarmonyOS Sans SC");
+        }
+        s["FontFaceVersion"] = json!(1);
+    }
     let stored_font = s["IslandFontFamily"]
         .as_str()
-        .unwrap_or("Noto Sans SC")
+        .unwrap_or("HarmonyOS Sans SC")
         .to_owned();
-    let family = if stored_font == "Noto Sans SC" {
+    let family = if stored_font == "Noto Sans SC" || stored_font == "HarmonyOS Sans SC" {
         stored_font
     } else {
         dotisle_render::draw::Text::system_family(&stored_font)
-            .unwrap_or_else(|| "Noto Sans SC".into())
+            .unwrap_or_else(|| "HarmonyOS Sans SC".into())
     };
     // Keep the user's choice in IslandFontFamily: the control centre reads it to decide its own face.
     s["IslandFontFamily"] = json!(family.clone());
@@ -459,8 +471,8 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         json!(source)
     } else if key == "IslandFontFamily" {
         let name = value.as_str().ok_or("invalid font")?;
-        if name == "Noto Sans SC" {
-            json!("Noto Sans SC")
+        if name == "Noto Sans SC" || name == "HarmonyOS Sans SC" {
+            json!(name)
         } else {
             dotisle_render::draw::Text::system_family(name)
                 .map(|v| json!(v))
@@ -1529,7 +1541,7 @@ mod expressive_preferences {
             r#"{"IslandFontFamily":"Definitely Missing Font 123"}"#,
         )
         .unwrap();
-        assert_eq!(load(&file)["IslandFontFamily"], "Noto Sans SC");
+        assert_eq!(load(&file)["IslandFontFamily"], "HarmonyOS Sans SC");
         let _ = std::fs::remove_file(file);
     }
 }

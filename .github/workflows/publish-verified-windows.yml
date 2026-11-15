@@ -6,7 +6,7 @@ on:
       version:
         description: Version of the locally verified draft release
         required: true
-        default: '5.0.0'
+        default: '5.0.1'
       manifest_sha256:
         description: SHA-256 of the checksum manifest verified locally
         required: true

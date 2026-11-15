@@ -184,9 +184,9 @@ func (a *App) islandTabSize(c *ui.Context, p *Palette, x, y, w float32) float32 
 	})
 	y += 64
 	y = a.islandHeading(c, p, "字体", x, y, w)
-	family := a.islandString("IslandFontFamily", "Noto Sans SC")
+	family := a.islandString("IslandFontFamily", defaultIslandFont)
 	familyLabel := "默认字体"
-	if family != "Noto Sans SC" {
+	if family != defaultIslandFont {
 		familyLabel = family
 	}
 	Panel(c, p, x, y, w, 150, p.Scheme.Container)
@@ -199,9 +199,9 @@ func (a *App) islandTabSize(c *ui.Context, p *Palette, x, y, w float32) float32 
 	Button(c, p, "更改字体", x+24, y+94, 150, 42, "更改字体", "search", true, true, func() {
 		a.openFontPicker()
 	})
-	if family != "Noto Sans SC" {
+	if family != defaultIslandFont {
 		Button(c, p, "恢复默认字体", x+184, y+94, 150, 42, "恢复默认", "", true, true, func() {
-			a.pushNative("IslandFontFamily", "Noto Sans SC")
+			a.pushNative("IslandFontFamily", defaultIslandFont)
 		})
 	}
 	y += 166

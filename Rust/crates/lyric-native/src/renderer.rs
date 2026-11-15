@@ -676,11 +676,9 @@ impl Renderer {
         );
     }
     fn music_lyric(&mut self, text: &str, r: Rect, size: f64, align: f64, ink: u32, s: &Scene<'_>) {
-        let weight = if s.music_mix > 3.5 && size >= 20. {
-            500
-        } else {
-            400
-        };
+        // 5.0.1: the old 400-weight lyric looked thin on frosted covers. Use the
+        // registered Medium face for the card and SemiBold for large immersive lyrics.
+        let weight = if size >= 20. { 600 } else { 500 };
         let width = self
             .text
             .measure_weighted(text, size as f32, weight)

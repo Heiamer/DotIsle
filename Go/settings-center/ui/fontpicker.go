@@ -13,6 +13,10 @@ import (
 
 const fontSample = "海边来信 · 让好音乐陪你"
 
+const defaultIslandFont = "HarmonyOS Sans SC"
+
+var builtinFamilies = []string{defaultIslandFont, "Noto Sans SC"}
+
 var systemFamiliesCache []string
 
 // systemFamilies enumerates installed font family names from the registry, stripping
@@ -65,27 +69,27 @@ func fontFamilyName(value string) string {
 
 type fontPickerState struct {
 	query    string
-	selected string // "" means the default (Noto Sans SC)
+	selected string // "" means the default (HarmonyOS Sans SC)
 	current  string
 }
 
 func (a *App) openFontPicker() {
-	current := a.islandString("IslandFontFamily", "Noto Sans SC")
+	current := a.islandString("IslandFontFamily", defaultIslandFont)
 	selected := current
-	if current == "Noto Sans SC" {
+	if current == defaultIslandFont {
 		selected = ""
 	}
 	a.fontPicker = &fontPickerState{current: current, selected: selected}
 }
 
 func (a *App) fontPickerPreviewFamily() string {
-	if a.fontPicker.selected != "" && a.fontPicker.selected != "Noto Sans SC" {
+	if a.fontPicker.selected != "" && a.fontPicker.selected != defaultIslandFont {
 		return a.fontPicker.selected
 	}
-	if a.fontPicker.current != "Noto Sans SC" {
+	if a.fontPicker.current != defaultIslandFont {
 		return a.fontPicker.current
 	}
-	return "Noto Sans SC"
+	return defaultIslandFont
 }
 
 // fontPickerView renders the dialog; call from dialogViews when a.fontPicker set.
@@ -117,7 +121,15 @@ func (a *App) fontPickerView(c *ui.Context, w, h float32) {
 	listH := float32(588) - 128 - 84
 	visible := 9
 	rows := []string{}
+	for _, family := range builtinFamilies {
+		if p.query == "" || containsFold(family, p.query) {
+			rows = append(rows, family)
+		}
+	}
 	for _, family := range systemFamilies() {
+		if family == defaultIslandFont || family == "Noto Sans SC" {
+			continue
+		}
 		if p.query == "" || containsFold(family, p.query) {
 			rows = append(rows, family)
 		}
@@ -177,7 +189,7 @@ func (a *App) fontPickerView(c *ui.Context, w, h float32) {
 	Label(c, "示例文字", rx+14, py+180, 11, s.OnSurfaceVariant, false, rw-28)
 	name := p.selected
 	if name == "" {
-		name = map[bool]string{true: p.current, false: "默认字体"}[p.current != "Noto Sans SC"]
+		name = map[bool]string{true: p.current, false: "默认字体"}[p.current != defaultIslandFont]
 	}
 	ui.Box(c).Absolute().Left(rx + 14).Top(py + 204).Width(rw - 28).Height(40).Children(func() {
 		CenteredText(c, name, 0, 0, rw-28, 40, 22, s.Primary, true)
@@ -190,7 +202,7 @@ func (a *App) fontPickerView(c *ui.Context, w, h float32) {
 
 	// Actions: reset / cancel / confirm (font_picker.rs panel tail).
 	Button(c, &a.Palette, "恢复默认", px+28, py+588-62, 150, 44, "恢复默认", "", true, true, func() {
-		a.pushNative("IslandFontFamily", "Noto Sans SC")
+		a.pushNative("IslandFontFamily", defaultIslandFont)
 		a.pushToast("已恢复默认字体")
 		a.fontPicker = nil
 	})

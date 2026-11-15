@@ -19,7 +19,7 @@ func newTestApp(t *testing.T) *App {
 			"settings": map[string]any{
 				"SettingsTheme":                       "System",
 				"IslandSizeMode":                      "Classic",
-				"IslandFontFamily":                    "Noto Sans SC",
+				"IslandFontFamily":                    "HarmonyOS Sans SC",
 				"OffsetMilliseconds":                  float64(0),
 				"HeadphoneConnectionRemindersEnabled": true,
 				"IslandDynamicSeedColor":              "#A9E6CD",

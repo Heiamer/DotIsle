@@ -1590,7 +1590,7 @@ impl App {
                 r.set_font_family(
                     self.settings["IslandFontFamilyRender"]
                         .as_str()
-                        .unwrap_or("Noto Sans SC"),
+                        .unwrap_or("HarmonyOS Sans SC"),
                 );
                 widest = r.measure_line(&self.lyric, font)?;
                 if double {
@@ -2624,7 +2624,7 @@ impl App {
             dynamic_high_contrast: self.flag("DynamicColorHighContrast", false),
             font_family: self.settings["IslandFontFamilyRender"]
                 .as_str()
-                .unwrap_or("Noto Sans SC"),
+                .unwrap_or("HarmonyOS Sans SC"),
             expressive_dark: true,
             mini: self.mini(),
             mini_glass: self.settings["MiniMaterial"] == "Glass",
