@@ -1,6 +1,7 @@
 //! GitHub Releases is the update source; installation is performed in place.
 use serde_json::{json,Value};
 use std::time::Duration;
+pub fn installed_version()->String{env!("CARGO_PKG_VERSION").into()}
 pub const RELEASES:&str="https://github.com/Heiamer/DotIsle/releases/latest";
 const RELEASE_MANIFEST:&str="https://raw.githubusercontent.com/Heiamer/DotIsle/main/Assets/UpdateManifest.json";
 fn version(input:&str)->Option<[u32;4]>{
@@ -9,26 +10,68 @@ fn version(input:&str)->Option<[u32;4]>{
     if !(2..=3).contains(&parts.len()){return None}
     let mut out=[0;4];out[3]=if mini{1}else{0};for (i,p) in parts.iter().enumerate(){if p.is_empty()||!p.bytes().all(|c|c.is_ascii_digit()){return None}out[i]=p.parse().ok()?;}Some(out)
 }
-pub fn describe(release:&Value,current:&str)->Result<Value,String>{
-    if release["draft"]==true||release["prerelease"]==true{return Err("未找到正式更新".into())}
-    let tag=release["tag_name"].as_str().ok_or("更新响应缺少版本号")?;
-    let latest=version(tag).ok_or("更新版本号格式无效")?;
-    let (installed,preview)=if let Some((base,sequence))=current.split_once("-preview.").or_else(||current.split_once("-rc")){
-        if sequence.is_empty()||!sequence.bytes().all(|b|b.is_ascii_digit()){return Err("当前版本号无效".into())}
-        (version(base).ok_or("当前版本号无效")?,true)
-    }else{(version(current).ok_or("当前版本号无效")?,false)};
-    let newer=latest>installed||preview&&latest==installed;
-    Ok(json!({"success":true,"message":if newer{format!("发现新版本 {tag}，点击“下载并更新”自动安装，保留现有设置。")}else{format!("当前已是最新版本（{current}）")},"newer":newer,"version":tag,"url":RELEASES}))
+
+// Prerelease sequences are numeric and ordered before their final release.
+// Restricting the spelling also makes every accepted tag safe in asset paths.
+fn release_version(input:&str)->Option<([u32;4],u8,u32)> {
+ let input=input.strip_prefix('v').unwrap_or(input);
+ if let Some(base)=version(input){return Some((base,4,0))}
+ let(base,suffix)=input.split_once('-')?;
+ let base=version(base)?;if base[3]!=0{return None}
+ for(name,rank)in [("alpha.",0),("beta.",1),("preview.",2),("rc.",3),("rc",3)]{
+  if let Some(sequence)=suffix.strip_prefix(name){
+   if sequence.is_empty()||!sequence.bytes().all(|b|b.is_ascii_digit()){return None}
+   return Some((base,rank,sequence.parse().ok()?))
+  }
+ }
+ None
+}
+pub fn valid_channel(channel:&str)->bool{matches!(channel,"stable"|"beta")}
+pub fn describe(release:&Value,current:&str)->Result<Value,String>{describe_channel(release,current,"stable")}
+pub fn describe_channel(release:&Value,current:&str,channel:&str)->Result<Value,String>{
+ if !valid_channel(channel){return Err("更新渠道无效".into())}
+ if release["draft"]==true{return Err("草稿不能用于更新".into())}
+ let tag=release["tag_name"].as_str().ok_or("更新响应缺少版本号")?;
+ let latest=release_version(tag).ok_or("更新版本号格式无效")?;
+ let preview=release["prerelease"]==true;
+ if channel=="stable"&&(preview||latest.1!=4){return Err("未找到正式更新".into())}
+ if !preview&&latest.1!=4{return Err("测试版本缺少预发行标记".into())}
+ let installed=release_version(current).ok_or("当前版本号无效")?;
+ let newer=latest>installed;
+ Ok(json!({"success":true,"message":if newer{format!("发现新版本 {tag}，下载校验后由你确认安装。")}else{format!("当前渠道暂无更新（{current}）")},"newer":newer,"version":tag,"channel":channel,"prerelease":preview,"url":RELEASES}))
+}
+fn choose_release(releases:&Value,channel:&str,current:&str)->Result<Value,String>{
+ let items=releases.as_array().ok_or("更新列表格式无效")?;
+ items.iter().filter(|r|describe_channel(r,current,channel).is_ok())
+  .max_by_key(|r|release_version(r["tag_name"].as_str().unwrap_or("")))
+  .cloned().ok_or_else(||"所选渠道还没有有效的已发布版本".into())
 }
 fn sources()->Value{let path=std::env::current_exe().ok().and_then(|p|p.parent().map(|p|p.join("Assets/UpdateSources.json")));path.and_then(|p|std::fs::read(p).ok()).and_then(|b|serde_json::from_slice(&b).ok()).unwrap_or_else(||serde_json::from_str(include_str!("../../../../Assets/UpdateSources.json")).unwrap_or_else(|_|json!({})))}
 fn repository(input:&str,host:&str)->Result<String,String>{let prefix=format!("https://{host}/");let slug=input.trim().strip_prefix(&prefix).ok_or("更新源必须使用官方 HTTPS 仓库地址")?.trim_end_matches('/').trim_end_matches(".git");let parts=slug.split('/').collect::<Vec<_>>();if parts.len()!=2||parts.iter().any(|p|p.is_empty()||!p.bytes().all(|b|b.is_ascii_alphanumeric()||b"-_.".contains(&b))||*p=="."||*p==".."){return Err("更新仓库地址无效".into())}Ok(slug.to_owned())}
 fn gitee_asset_url(slug:&str,release_id:u64,assets:&Value,name:&str)->Result<String,String>{let item=assets.as_array().and_then(|a|a.iter().find(|a|a["name"].as_str().or_else(||a["file_name"].as_str())==Some(name))).ok_or_else(||format!("国内发行版缺少 {name}"))?;let id=item["id"].as_u64().filter(|n|*n>0).ok_or("国内附件标识无效")?;Ok(format!("https://gitee.com/api/v5/repos/{slug}/releases/{release_id}/attach_files/{id}/download"))}
-fn check_gitee(repo:&str)->Result<Value,String>{let slug=repository(repo,"gitee.com")?;let api=format!("https://gitee.com/api/v5/repos/{slug}");let ctx=crate::http::RequestContext::new(Duration::from_secs(10));let release=crate::http::get_system(&format!("{api}/releases/latest"),&ctx)?;let mut result=describe(&release,env!("CARGO_PKG_VERSION"))?;let tag=release["tag_name"].as_str().ok_or("国内版本号缺失")?;result["source"]=json!("Gitee 国内源");result["url"]=json!(format!("https://gitee.com/{slug}/releases/tag/{tag}"));if result["newer"]==true{let id=release["id"].as_u64().filter(|n|*n>0).ok_or("国内发行版标识无效")?;let attachments=crate::http::get_system(&format!("{api}/releases/{id}/attach_files?per_page=100"),&ctx)?;let v=tag.trim_start_matches('v');result["manifestUrl"]=json!(gitee_asset_url(&slug,id,&attachments,&format!("LyricIsland-{v}-SHA256.txt"))?);result["zipUrl"]=json!(gitee_asset_url(&slug,id,&attachments,&format!("LyricIsland-{v}-Portable.zip"))?);}Ok(result)}
+
+fn check_gitee(repo:&str,channel:&str)->Result<Value,String>{
+ let slug=repository(repo,"gitee.com")?;let api=format!("https://gitee.com/api/v5/repos/{slug}");
+ let ctx=crate::http::RequestContext::new(Duration::from_secs(10));
+ let release=if channel=="beta"{choose_release(&crate::http::get_system(&format!("{api}/releases?per_page=100"),&ctx)?,channel,&installed_version())?}else{crate::http::get_system(&format!("{api}/releases/latest"),&ctx)?};
+ let mut result=describe_channel(&release,&installed_version(),channel)?;
+ let tag=release["tag_name"].as_str().ok_or("国内版本号缺失")?;
+ result["source"]=json!("Gitee 国内源");result["url"]=json!(format!("https://gitee.com/{slug}/releases/tag/{tag}"));
+ if result["newer"]==true{
+  let id=release["id"].as_u64().filter(|n|*n>0).ok_or("国内发行版标识无效")?;
+  let attachments=crate::http::get_system(&format!("{api}/releases/{id}/attach_files?per_page=100"),&ctx)?;
+  let v=tag.trim_start_matches('v');
+  result["manifestUrl"]=json!(gitee_asset_url(&slug,id,&attachments,&format!("LyricIsland-{v}-SHA256.txt"))?);
+  result["zipUrl"]=json!(gitee_asset_url(&slug,id,&attachments,&format!("LyricIsland-{v}-Portable.zip"))?);
+ }
+ Ok(result)
+}
 fn manifest_release(value:Value)->Result<Value,String>{
     if value["published"]!=true{return Err("备用清单对应版本尚未发布".into())}
-    describe(&value,env!("CARGO_PKG_VERSION"))?;Ok(value)
+    describe(&value,&installed_version())?;Ok(value)
 }
-fn check_github()->Result<Value,String>{
+fn check_github(channel:&str)->Result<Value,String>{
+ if channel=="beta" {return check_github_beta()}
     let ctx=crate::http::RequestContext::new(Duration::from_secs(10));
     let release=match crate::http::get_system("https://api.github.com/repos/Heiamer/DotIsle/releases/latest",&ctx){
         Ok(value)=>value,
@@ -46,14 +89,51 @@ fn check_github()->Result<Value,String>{
             }
         }
     };
-    let mut result=describe(&release,env!("CARGO_PKG_VERSION"))?;
+    let mut result=describe(&release,&installed_version())?;
     let v=release["tag_name"].as_str().ok_or("版本号缺失")?.trim_start_matches('v');
     let base=format!("https://github.com/Heiamer/DotIsle/releases/download/v{v}/LyricIsland-{v}");
     result["source"]=json!("GitHub");result["manifestUrl"]=json!(format!("{base}-SHA256.txt"));result["zipUrl"]=json!(format!("{base}-Portable.zip"));Ok(result)
 }
-/// Request both official sources concurrently. A reachable source with an update may win
-/// immediately; a no-update response waits for the other source before declaring up to date.
-pub fn check()->Result<Value,String>{let config=sources();let repo=config["giteeRepository"].as_str().unwrap_or("").to_owned();let (tx,rx)=std::sync::mpsc::channel();let mut count=1;if !repo.is_empty(){let tx=tx.clone();count+=1;std::thread::spawn(move||{let _=tx.send(("Gitee 国内源",check_gitee(&repo)));});}let github_tx=tx.clone();std::thread::spawn(move||{let _=github_tx.send(("GitHub",check_github()));});drop(tx);let mut available=None;let mut errors=vec![];for _ in 0..count{match rx.recv_timeout(Duration::from_secs(32)){Ok((source,Ok(mut result)))=>{let message=result["message"].as_str().unwrap_or("").to_owned();result["message"]=json!(format!("{message} · {source}"));if result["newer"]==true{return Ok(result)}available=Some(result);},Ok((source,Err(e)))=>errors.push(format!("{source}：{e}")),Err(_)=>{errors.push("其他更新源请求超时".into());break}}}available.ok_or_else(||format!("检查更新失败。{}。请检查网络或系统代理。",errors.join("；")))}
+
+fn check_github_beta()->Result<Value,String>{
+ let ctx=crate::http::RequestContext::new(Duration::from_secs(10));
+ let releases=crate::http::get_system("https://api.github.com/repos/Heiamer/DotIsle/releases?per_page=100",&ctx)?;
+ let release=choose_release(&releases,"beta",&installed_version())?;
+ let mut result=describe_channel(&release,&installed_version(),"beta")?;
+ let tag=release["tag_name"].as_str().ok_or("版本号缺失")?;
+ let v=tag.trim_start_matches('v');
+ let base=format!("https://github.com/Heiamer/DotIsle/releases/download/{tag}/LyricIsland-{v}");
+ result["source"]=json!("GitHub");result["url"]=json!(format!("https://github.com/Heiamer/DotIsle/releases/tag/{tag}"));
+ result["manifestUrl"]=json!(format!("{base}-SHA256.txt"));result["zipUrl"]=json!(format!("{base}-Portable.zip"));Ok(result)
+}
+pub fn check()->Result<Value,String>{check_channel("stable")}
+// Compare complete release records after both sources respond; never combine a
+// tag, checksum and archive from different records or from another channel.
+pub fn check_channel(channel:&str)->Result<Value,String>{
+ if !valid_channel(channel){return Err("更新渠道无效".into())}
+ let config=sources();let repo=config["giteeRepository"].as_str().unwrap_or("").to_owned();
+ let(tx,rx)=std::sync::mpsc::channel();let mut count=1;
+ if !repo.is_empty(){let tx=tx.clone();let channel=channel.to_owned();count+=1;std::thread::spawn(move||{let _=tx.send(("Gitee 国内源",check_gitee(&repo,&channel)));});}
+ let github_tx=tx.clone();let channel_owned=channel.to_owned();
+ std::thread::spawn(move||{let _=github_tx.send(("GitHub",check_github(&channel_owned)));});drop(tx);
+ let mut available:Option<Value>=None;let mut errors=vec![];
+ for _ in 0..count{
+  match rx.recv_timeout(Duration::from_secs(32)){
+   Ok((source,Ok(mut result)))=>{
+    let message=result["message"].as_str().unwrap_or("").to_owned();result["message"]=json!(format!("{message} · {source}"));
+    if available.as_ref().is_none_or(|old|release_version(result["version"].as_str().unwrap_or(""))>release_version(old["version"].as_str().unwrap_or(""))){available=Some(result)}
+   },
+   Ok((source,Err(e)))=>errors.push(format!("{source}：{e}")),
+   Err(_)=>{errors.push("其他更新源请求超时".into());break}
+  }
+ }
+ if let Some(mut result)=available{
+  result["channel"]=json!(channel);
+  if !errors.is_empty(){result["sourceWarnings"]=json!(errors)}
+  return Ok(result)
+ }
+ Err(format!("检查更新失败。{}。请检查网络或系统代理。",errors.join("；")))
+}
 fn page_release(html:&str)->Result<Value,String>{
     let meta=regex::Regex::new(r"(?is)<meta\b[^>]*>").unwrap();
     let attributes=regex::Regex::new(r#"(?i)(?:^|\s)(property|content)\s*=\s*["']([^"']*)["']"#).unwrap();
@@ -138,4 +218,22 @@ pub fn launch_candidate(release:&Value,base:&std::path::Path,data:&std::path::Pa
 
 #[cfg(test)]mod mini_version_tests{use super::*;
 #[test]fn mini_version_orders_between_base_and_next_patch(){assert!(version("2.1.5mini")>version("2.1.5"));assert_eq!(version("v2.1.5mini"),version("2.1.5-mini"));assert!(version("2.1.6")>version("2.1.5mini"));assert!(version("2.1.5mini/evil").is_none());assert!(version("2.1.5-beta").is_none());}
+}
+
+#[cfg(test)]mod channel_tests{use super::*;
+#[test]fn stable_filters_beta_and_promotes_same_version_final(){
+ let beta=json!({"tag_name":"v5.0.1-beta.2","prerelease":true});
+ assert!(describe_channel(&beta,"5.0.0","stable").is_err());
+ assert_eq!(describe_channel(&beta,"5.0.0","beta").unwrap()["newer"],true);
+ assert_eq!(describe_channel(&json!({"tag_name":"v5.0.1"}),"5.0.1-beta.2","stable").unwrap()["newer"],true);
+ assert_eq!(describe_channel(&json!({"tag_name":"v5.0.0"}),"5.1.0-beta.1","stable").unwrap()["newer"],false);
+}
+#[test]fn release_selection_is_numeric_and_draft_safe(){
+ let list=json!([{"tag_name":"v5.0.1-beta.9","prerelease":true},{"tag_name":"v99.0.0","draft":true},{"tag_name":"v5.0.1-beta.10","prerelease":true},{"tag_name":"v5.0.0"}]);
+ assert_eq!(choose_release(&list,"beta","5.0.0").unwrap()["tag_name"],"v5.0.1-beta.10");
+ assert_eq!(choose_release(&list,"stable","5.0.0").unwrap()["tag_name"],"v5.0.0");
+ for tag in ["v5.0.1-beta.1/evil","v5.0.1-beta.1?x","v5.0.1-beta.x"]{assert!(release_version(tag).is_none());}
+ assert!(describe_channel(&json!({"tag_name":"v5.0.1-beta.1"}),"5.0.0","beta").is_err());
+ assert!(!valid_channel("nightly"));
+}
 }

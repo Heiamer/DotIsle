@@ -1,5 +1,5 @@
 //! Restores update preferences using the production native IPC contract.
-use crate::{widgets::Ui,model::{Model,Action},draw::{self,rect,Icon}};
+use crate::{widgets::Ui,model::{Model,Action},draw::{self,rect}};
 use serde_json::{json,Value};
 pub fn action(phase:&str)->Option<(&'static str,&'static str)>{match phase{
  "available"=>Some(("下载更新","updateDownload")),"ready"=>Some(("重启并安装","updateApply")),
@@ -23,8 +23,19 @@ pub fn render(ui:&mut Ui,m:&Model,x:f64,y:f64,w:f64)->f64{
  ui.center(&detail,rect(x+24.,top+198.,w-48.,20.),12.,s.on_surface_variant,false);
  if let Some((label,command))=action(phase){ui.button(rect(x+(w-180.)/2.,top+238.,180.,44.),label,None,Action::NativeCommand(command,Value::Null),false,!m.demo);}
  else{ui.center(if active{"请稍候，当前任务正在处理"}else{"为专注与聆听留一点空间"},rect(x+24.,top+244.,w-48.,24.),13.,s.on_surface_variant,false);}
- let on=m.setting("AutoCheckUpdatesEnabled").as_bool().unwrap_or(true);ui.panel(rect(x,top+316.,w,88.),s.container);ui.toggle(rect(x+24.,top+324.,w-48.,72.),"自动检查更新","后台定期检查；下载和安装均由你确认",on,Action::NativeEdit("AutoCheckUpdatesEnabled",json!(!on)));
- top+420.
+ let channel=m.native_state["updateChannel"].as_str().unwrap_or("stable");
+ let locked=active||phase=="ready";
+ ui.panel(rect(x,top+316.,w,140.),s.container);
+ ui.label("更新通道",x+24.,top+334.,15.,s.on_surface,true,w-48.);
+ ui.label("正式版默认开启；测试版可提前体验新功能",x+24.,top+360.,12.,s.on_surface_variant,false,w-48.);
+ let bw=(w-60.)/2.;
+ for (i,(key,label)) in [("stable","正式版"),("beta","测试版")].iter().enumerate(){
+  let start=ui.hits.len();
+  ui.chip(rect(x+24.+i as f64*(bw+12.),top+396.,bw,40.),label,channel==*key,Action::NativeCommand("updateChannel",json!(key)));
+  for hit in &mut ui.hits[start..]{hit.enabled=!m.demo&&!locked;}
+ }
+ let on=m.setting("AutoCheckUpdatesEnabled").as_bool().unwrap_or(true);ui.panel(rect(x,top+472.,w,88.),s.container);ui.toggle(rect(x+24.,top+480.,w-48.,72.),"自动检查更新","后台定期检查；下载和安装均由你确认",on,Action::NativeEdit("AutoCheckUpdatesEnabled",json!(!on)));
+ top+576.
 
 }
 #[cfg(test)]mod tests{use super::*;#[test]fn actions_are_explicit_and_phase_safe(){assert_eq!(action("available").unwrap().1,"updateDownload");assert_eq!(action("ready").unwrap().1,"updateApply");for p in ["checking","applying","restarting"]{assert!(action(p).is_none());}for p in ["downloading","switching","verifying"]{assert_eq!(action(p).unwrap().1,"updateCancel");}}}

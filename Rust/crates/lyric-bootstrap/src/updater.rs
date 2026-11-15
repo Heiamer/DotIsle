@@ -320,6 +320,10 @@ fn confirm_started(pipe: &str, version: &str, old_pid: u32) -> bool {
     false
 }
 
+pub fn valid_update_version(version: &str) -> bool {
+    Regex::new(r"^[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:(?:-?mini)|-(?:(?:alpha|beta|preview)\.[0-9]+|rc\.?[0-9]+))?$").unwrap().is_match(version)
+}
+
 pub fn run(args: Vec<String>) -> i32 {
     if let Some(code) = crate::vello_overlay::cli(&args) { return code; }
     if args.len() == 2 && args[0] == "--self-test" {
@@ -333,7 +337,7 @@ pub fn run(args: Vec<String>) -> i32 {
     let result = (|| -> Result<()> {
         if !matches!(args.len(), 6 | 8 | 10) { return Err(Error("更新参数无效".into())); }
         let version = args[0].clone();
-        if !Regex::new(r"^\d+\.\d+(\.\d+)?(?:-?mini)?$").unwrap().is_match(&version) { return Err(Error("版本号无效".into())); }
+        if !valid_update_version(&version) { return Err(Error("版本号无效".into())); }
         let target_path = paths::full_path(&args[1])?;
         let data_path = paths::full_path(&args[2])?;
         let pid: i32 = args[3].parse().map_err(|_| Error("更新参数无效".into()))?;
@@ -437,4 +441,12 @@ mod update_file_tests {
         assert!(!backup.join("font.ttf").exists());
         drop(locked);std::fs::remove_dir_all(root).unwrap();
     }
+}
+
+#[cfg(test)] mod channel_version_tests {
+ use super::*;
+ #[test] fn accepts_safe_stable_and_preview_asset_versions() {
+  for v in ["3.5.3","5.0.0-beta.1","5.0.0-beta.10","5.0.0-alpha.1","5.0.0-preview.1","5.0.0-rc1","5.0.0-rc.1","3.5.3mini"] {assert!(valid_update_version(v),"{v}");}
+  for v in ["5.0.0-beta","5.0.0-beta.1/evil","../5.0.0","5.0.0-beta.x","5.0.0-beta.1?x","5.0.0\n"] {assert!(!valid_update_version(v),"{v}");}
+ }
 }

@@ -756,6 +756,23 @@ pub fn run(out: &Path) -> Result<(), String> {
             }
         }
     }
+    for phase in ["idle","checking","available","downloading","ready","applying"] {
+        m.native_state["softwareUpdate"] = json!({"phase":phase});
+        for channel in ["stable","beta"] {
+            m.native_state["updateChannel"] = json!(channel);
+            let mut hits = vec![];
+            for scroll in [0.,200.,400.,600.] {
+                m.scroll=scroll;
+                hits.extend(views::render(&m,&mut text,1200.,800.,&ViewState::default()).hits);
+            }
+            for key in ["stable","beta"] {
+                let expected=!matches!(phase,"checking"|"downloading"|"ready"|"applying")&&!m.demo;
+                if !hits.iter().any(|h|matches!(&h.action,Action::NativeCommand("updateChannel",value) if value==key)&&h.enabled==expected){return Err(format!("missing or unsafe channel control {key} in {phase}"));}
+            }
+        }
+    }
+    m.scroll=0.;
+    checks.push("stable/beta update selector with phase-safe actions");
     checks.push("restored update preference and phase-specific commands");
     m.dispatch(Action::ControlTheme(0));
     m.page = Page::Settings;
