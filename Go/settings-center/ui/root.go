@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"dotisle/settings/island"
 	"dotisle/settings/prefs"
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -58,6 +59,7 @@ type App struct {
 	gestureTutorial *gestureTutorial
 	curveDraft      *motionCurveDraft
 	widgetEditor    *widgetEditorState
+	overviewEditor  *overviewEditorState
 	widgetExamples  *App
 
 	// Open color picker dialog and the toast message (fresh for a few seconds).
@@ -136,6 +138,12 @@ func (a *App) applyPendingPage() {
 	page, _ := a.State["pendingPage"].(string)
 	if page == "" {
 		a.lastPending = ""
+		return
+	}
+	// Another portable runtime can share the default pipe. Never follow its page
+	// requests; the pump stops a mismatched center, and this keeps one late packet
+	// from flashing a window in the meantime.
+	if dir, _ := a.State["dataDirectory"].(string); dir != "" && !island.SameDataDir(dir, a.Data) {
 		return
 	}
 	requestKey := page

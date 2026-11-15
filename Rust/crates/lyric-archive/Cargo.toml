@@ -1,6 +1,6 @@
 [package]
 name = "lyric-archive"
-version = "5.0.0-rc2"
+version = "5.0.0-rc3"
 edition.workspace = true
 license.workspace = true
 

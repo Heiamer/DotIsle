@@ -56,6 +56,7 @@ mod timers;
 mod todos;
 mod vello_surface;
 
+mod overview_widgets;
 mod widget_data;
 mod widget_metrics;
 use base64::Engine;
@@ -321,6 +322,7 @@ struct App {
     module_updates:module_updates::Manager,
     widget_data: widget_data::Hub,
     desktop_widgets: dotisle_domain::desktop_widgets::Store,
+    overview_widgets: overview_widgets::Store,
     widget_metrics: widget_metrics::Hub,
     last_widget_host: Instant,
     greeting_pending: bool,
@@ -420,6 +422,11 @@ impl App {
             PathBuf::new()
         } else {
             data.join("desktop-widgets.json")
+        });
+        let overview_widgets = overview_widgets::Store::new(if demo {
+            PathBuf::new()
+        } else {
+            data.join("overview-widgets.json")
         });
         let templates = timers::Templates::new(if demo {
             PathBuf::new()
@@ -584,6 +591,7 @@ impl App {
             module_updates,
             widget_data,
             desktop_widgets,
+            overview_widgets,
             widget_metrics: Default::default(),
             last_widget_host: now - Duration::from_secs(6),
             greeting_pending: false,
@@ -3179,7 +3187,9 @@ impl App {
             self.last_context_poll=Instant::now();
             if !self.demo{self.screen_time.poll(awake_ms(),self.session_locked);}
             self.widget_metrics.poll();
-            let mut placements=self.desktop_widgets.items.clone();let city=self.weather_city();
+            let mut placements=self.desktop_widgets.items.clone();
+            placements.extend(self.overview_widgets.items.iter().cloned());
+            let city=self.weather_city();
             if !city.is_empty(){
                 placements.push(dotisle_domain::desktop_widgets::Placement{id:"island-weather".into(),kind:dotisle_domain::desktop_widgets::Kind::Weather,
                     size:Default::default(),style:Default::default(),config:dotisle_domain::widget_config::Config{city,..Default::default()},x:0,y:0,revision:1});
@@ -3820,7 +3830,7 @@ impl App {
                 self.todo_now = todos::Now::local();
                 let t = &self.snapshot["track"];
                 let mut module_versions=dotisle_module_api::versions();module_versions["core"]=json!(DISPLAY_VERSION);
-                let mut state = json!({"success":true,"version":DISPLAY_VERSION,"bundleVersion":lyric_backend::updates::installed_version(),"settings":self.settings,"moduleManagement":self.module_updates.state,"moduleVersions":module_versions,"moduleErrors":dotisle_module_api::initialization_errors(),"moduleReady":dotisle_module_api::initialization_errors().as_object().is_some_and(|m|m.is_empty()),"softwareUpdate":self.updates.state,"updateChannel":self.updates.channel(),"settingsDark":match self.settings["SettingsTheme"].as_str().unwrap_or("System"){"Dark"=>true,"Light"=>false,_=>theme_accent::system_dark()},"dataDirectory":self.data.to_string_lossy(),"musicPreview":self.music_preview(),"activeSource":self.snapshot["activeSource"],"nativeStatus":self.snapshot["nativeStatus"],"title":t["title"],"artist":t["artist"],"songId":t["songId"],"player":t["sourceApp"],"position":self.snapshot["positionSeconds"],"duration":t["durationSeconds"],"timeline":self.snapshot["clockStatus"],"lyricSource":self.snapshot["lyricSource"],"isPlaying":self.snapshot["isPlaying"],"canSeek":self.snapshot["canSeek"],"seekStatus":self.snapshot["seekStatus"],"neteaseAttention":lyric_backend::netease_control::attention_diagnostics(),"mediaCommand":self.snapshot["mediaCommand"],"expanded":self.expanded,"islandEnabled":!self.user_hidden,"islandVisible":self.opacity>0.001,"processId":std::process::id(),"windowLevel":unsafe{window_level::snapshot(self.visual_hwnd,self.hwnd)},"glassCaptures":self.renderer.as_ref().map_or(0,Renderer::glass_captures),"rendererGeneration":self.renderer_generation,"renderFrames":self.render_frames,"renderer":"Vello Hybrid 0.2 / wgpu 29","lastError":self.error,"notificationState":self.notification_state,"notificationVisible":self.banner.visible(),"notificationGeometry":self.notification_geometry(),"osdVisible":self.osd_banner.visible()||self.bottom_osd.visible(),"bottomOsdVisible":self.bottom_osd.visible(),"systemState":self.osd.status(),"todos":self.todos.list(&self.todo_now),"todoError":self.todos.error,"today":self.todo_now.date,"now":self.todo_now.time,"pendingPage":self.pending_page,"pendingRequestId":self.pending_request,"pendingCenterAction":self.pending_center_action,"centerFrontend":if self.base.join("LyricIsland.Center.exe").is_file(){"go"}else{"missing"},"islandGeometry":{"mini":self.mini(),"capsule":self.layout.capsule,"card":self.layout.card,"satellite":!self.mini()&&self.components.len()>1,"horizontalGestures":self.flag("SwipeActivities",true)},"miniContrast":{"enabled":self.mini()&&self.flag("MiniAutoContrast",true)&&self.settings["MiniMaterial"]=="Glass","sampledLuminance":self.mini_contrast.sampled,"darkText":self.mini_contrast.dark,"foreground":format!("#{:06X}",self.mini_contrast.ink()&0xffffff)},"compactTargetWidth":self.compact_size.width_target,"compactWidth":self.compact_size.width,"compactHeight":self.compact_size.height,"compactSecondary":self.compact_secondary,"timers":self.timers.list(),"timerError":self.timers.error,"screenTime":self.screen_time.snapshot(),"weather":self.widget_data.value["island-weather"],"capsuleAlertVisible":self.alerts.visible(),"widgetData":self.widget_data.value,"desktopWidgets":self.desktop_widgets.list(),"desktopWidgetError":self.desktop_widgets.error,"systemMetrics":self.widget_metrics.value,"activeComponent":self.selected,"components":self.components,"notificationHistory":self.history.list(),"historyError":self.history.error,"quickHotkey":self.settings["QuickReminderHotkey"],"pendingAction":self.pending_action,"sessionLocked":self.session_locked,"focusResume":self.focus_resume.as_ref().map(|r|json!({"generation":r.generation,"ids":r.ids,"prompted":r.prompted})),"templates":self.templates.list(),"workflowTemplateError":self.templates.error,"appRules":self.rules.list(&self.todo_now.date),"appRuleError":self.rules.error,"foreground":{"path":self.foreground.path,"name":self.foreground.name,"unreadable":self.foreground.unreadable},"lockWatch":true});
+                let mut state = json!({"success":true,"version":DISPLAY_VERSION,"bundleVersion":lyric_backend::updates::installed_version(),"settings":self.settings,"moduleManagement":self.module_updates.state,"moduleVersions":module_versions,"moduleErrors":dotisle_module_api::initialization_errors(),"moduleReady":dotisle_module_api::initialization_errors().as_object().is_some_and(|m|m.is_empty()),"softwareUpdate":self.updates.state,"updateChannel":self.updates.channel(),"settingsDark":match self.settings["SettingsTheme"].as_str().unwrap_or("System"){"Dark"=>true,"Light"=>false,_=>theme_accent::system_dark()},"dataDirectory":self.data.to_string_lossy(),"musicPreview":self.music_preview(),"activeSource":self.snapshot["activeSource"],"nativeStatus":self.snapshot["nativeStatus"],"title":t["title"],"artist":t["artist"],"songId":t["songId"],"player":t["sourceApp"],"position":self.snapshot["positionSeconds"],"duration":t["durationSeconds"],"timeline":self.snapshot["clockStatus"],"lyricSource":self.snapshot["lyricSource"],"isPlaying":self.snapshot["isPlaying"],"canSeek":self.snapshot["canSeek"],"seekStatus":self.snapshot["seekStatus"],"neteaseAttention":lyric_backend::netease_control::attention_diagnostics(),"mediaCommand":self.snapshot["mediaCommand"],"expanded":self.expanded,"islandEnabled":!self.user_hidden,"islandVisible":self.opacity>0.001,"processId":std::process::id(),"windowLevel":unsafe{window_level::snapshot(self.visual_hwnd,self.hwnd)},"glassCaptures":self.renderer.as_ref().map_or(0,Renderer::glass_captures),"rendererGeneration":self.renderer_generation,"renderFrames":self.render_frames,"renderer":"Vello Hybrid 0.2 / wgpu 29","lastError":self.error,"notificationState":self.notification_state,"notificationVisible":self.banner.visible(),"notificationGeometry":self.notification_geometry(),"osdVisible":self.osd_banner.visible()||self.bottom_osd.visible(),"bottomOsdVisible":self.bottom_osd.visible(),"systemState":self.osd.status(),"todos":self.todos.list(&self.todo_now),"todoError":self.todos.error,"today":self.todo_now.date,"now":self.todo_now.time,"pendingPage":self.pending_page,"pendingRequestId":self.pending_request,"pendingCenterAction":self.pending_center_action,"centerFrontend":if self.base.join("LyricIsland.Center.exe").is_file(){"go"}else{"missing"},"islandGeometry":{"mini":self.mini(),"capsule":self.layout.capsule,"card":self.layout.card,"satellite":!self.mini()&&self.components.len()>1,"horizontalGestures":self.flag("SwipeActivities",true)},"miniContrast":{"enabled":self.mini()&&self.flag("MiniAutoContrast",true)&&self.settings["MiniMaterial"]=="Glass","sampledLuminance":self.mini_contrast.sampled,"darkText":self.mini_contrast.dark,"foreground":format!("#{:06X}",self.mini_contrast.ink()&0xffffff)},"compactTargetWidth":self.compact_size.width_target,"compactWidth":self.compact_size.width,"compactHeight":self.compact_size.height,"compactSecondary":self.compact_secondary,"timers":self.timers.list(),"timerError":self.timers.error,"screenTime":self.screen_time.snapshot(),"weather":self.widget_data.value["island-weather"],"capsuleAlertVisible":self.alerts.visible(),"widgetData":self.widget_data.value,"desktopWidgets":self.desktop_widgets.list(),"overviewWidgets":self.overview_widgets.list(),"desktopWidgetError":self.desktop_widgets.error,"systemMetrics":self.widget_metrics.value,"activeComponent":self.selected,"components":self.components,"notificationHistory":self.history.list(),"historyError":self.history.error,"quickHotkey":self.settings["QuickReminderHotkey"],"pendingAction":self.pending_action,"sessionLocked":self.session_locked,"focusResume":self.focus_resume.as_ref().map(|r|json!({"generation":r.generation,"ids":r.ids,"prompted":r.prompted})),"templates":self.templates.list(),"workflowTemplateError":self.templates.error,"appRules":self.rules.list(&self.todo_now.date),"appRuleError":self.rules.error,"foreground":{"path":self.foreground.path,"name":self.foreground.name,"unreadable":self.foreground.unreadable},"lockWatch":true});
                 state["glassRefraction"] = self
                     .renderer
                     .as_ref()
@@ -3979,10 +3989,15 @@ impl App {
                     _=>self.plugins.change(r["value"]["id"].as_str().unwrap_or(""),None),
                 };self.refresh_components();self.dirty=true;match result{Ok(())=>json!({"success":true,"plugins":self.plugins.state}),Err(e)=>json!({"success":false,"message":e})}
             }
-            "widgetLaunch" => widget_data::launch(
-                &self.desktop_widgets.items,
-                r["value"]["id"].as_str().unwrap_or(""),
-            ),
+            "widgetLaunch" => {
+                let id = r["value"]["id"].as_str().unwrap_or("");
+                let placements = if id.starts_with("overview-") {
+                    &self.overview_widgets.items
+                } else {
+                    &self.desktop_widgets.items
+                };
+                widget_data::launch(placements, id)
+            }
             "widgetAdd" => match self.desktop_widgets.add(&r["value"]) {
                 Ok(id) => {
                     self.ensure_widget_host();
@@ -3994,6 +4009,19 @@ impl App {
                 Ok(()) => json!({"success":true,"desktopWidgets":self.desktop_widgets.list()}),
                 Err(e) => json!({"success":false,"message":e}),
             },
+            "overviewWidgetSet" => match self.overview_widgets.set(&r["value"]) {
+                Ok(()) => json!({"success":true,"overviewWidgets":self.overview_widgets.list()}),
+                Err(e) => json!({"success":false,"message":e}),
+            },
+            "overviewWidgetRemove" => {
+                match serde_json::from_value::<dotisle_domain::desktop_widgets::Kind>(r["value"]["kind"].clone()) {
+                    Ok(kind) => match self.overview_widgets.remove(kind) {
+                        Ok(()) => json!({"success":true,"overviewWidgets":self.overview_widgets.list()}),
+                        Err(e) => json!({"success":false,"message":e}),
+                    },
+                    Err(_) => json!({"success":false,"message":"组件类型无效"}),
+                }
+            }
             "widgetRemove" => {
                 match self
                     .desktop_widgets

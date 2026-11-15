@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -285,6 +286,20 @@ func openWake() windows.Handle {
 	return ch
 }
 
+// SameDataDir reports whether a snapshot belongs to this center's island. Portable
+// runtimes share the default pipe, so without this check every leftover center
+// follows the same pendingPage and opens another identical window.
+func SameDataDir(a, b string) bool {
+	clean := func(value string) string {
+		value = filepath.Clean(strings.TrimSpace(value))
+		if absolute, err := filepath.Abs(value); err == nil {
+			value = absolute
+		}
+		return strings.TrimRight(strings.ToLower(value), `\/`)
+	}
+	return clean(a) == clean(b)
+}
+
 // Run connects to the island, keeps a fresh state flowing and reports packets on a
 // channel across island restarts. Commands use Request separately from the state pump.
 func Run(data string) <-chan *State {
@@ -330,6 +345,11 @@ func worker(data string, out chan<- *State) {
 		} else {
 			s := decode(state)
 			pid = s.ProcessID
+			if dir, _ := state["dataDirectory"].(string); dir != "" && !SameDataDir(dir, data) {
+				PumpTrace("island data %q does not match center %q; stopping", dir, data)
+				out <- &State{Err: "控制中心与当前点屿实例不匹配。", Exited: true}
+				return
+			}
 			mm, _ := state["moduleManagement"].(map[string]any)
 			PumpTrace("state ok pid=%d phase=%v", pid, mm["phase"])
 			delay = pollInterval(state)

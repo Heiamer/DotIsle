@@ -39,7 +39,7 @@ Pop-Location
 $env:DOTISLE_MODULE_DIR = "$pwd/target/release"
 $env:DOTISLE_TEST_SQLITE3 = "$pwd/build/e_sqlite3.dll"
 & ./tools/li-cargo.ps1 test --workspace --locked
-python build/verify_release_source.py --version 5.0.0-rc2 --report validation/source/report.json
+python build/verify_release_source.py --version 5.0.0-rc3 --report validation/source/report.json
 ```
 
 某些 Windows 注册表与命名管道测试需要正常桌面会话权限。所有集成测试使用专用临时数据和测试管道。
@@ -47,9 +47,9 @@ python build/verify_release_source.py --version 5.0.0-rc2 --report validation/so
 先把 `release-notes/DotIsle-<版本>-Notes.md` 复制到新的输出目录，然后运行：
 
 ```powershell
-python build/package_preflight.py --binary-dir target/release --output publish/local --version 5.0.0-rc2 --shader-cache Assets/ShaderCache/Hybrid29 --iscc C:/Tools/InnoSetup/ISCC.exe
-python build/package_release.py --binary-dir target/release --output publish/local --work-dir publish/package-work --version 5.0.0-rc2 --shader-cache Assets/ShaderCache/Hybrid29 --iscc C:/Tools/InnoSetup/ISCC.exe
-python build/verify_packaged_ui.py --runtime publish/local/DotIsle-5.0.0-rc2 --output validation
+python build/package_preflight.py --binary-dir target/release --output publish/local --version 5.0.0-rc3 --shader-cache Assets/ShaderCache/Hybrid29 --iscc C:/Tools/InnoSetup/ISCC.exe
+python build/package_release.py --binary-dir target/release --output publish/local --work-dir publish/package-work --version 5.0.0-rc3 --shader-cache Assets/ShaderCache/Hybrid29 --iscc C:/Tools/InnoSetup/ISCC.exe
+python build/verify_packaged_ui.py --runtime publish/local/DotIsle-5.0.0-rc3 --output validation
 ```
 
 版本号需与仓库和发布说明一致。输出目录与 package-work 应全新创建，避免混入旧程序。`package_release.py` 生成安装版与两种命名的便携包；源码归档、模块包及校验清单由发布流程另行生成。

@@ -3,6 +3,8 @@ import argparse
 import ctypes
 from ctypes import wintypes as w
 import json
+import os
+import subprocess
 import time
 from pathlib import Path
 from verify_pomodoro import Runtime
@@ -82,6 +84,19 @@ def run(args):
         assert not (app.runtime/'dotisle_settings.dll').exists()
         assert (app.runtime/'dotisle_desktop.dll').is_file()
         state=app.start();assert state['centerFrontend']=='go'
+        # Overview tiles own their content: the cards must read data and keep their
+        # settings without any desktop placement.
+        for kind,config in (('weather',{'city':'厦门'}),('storage',{'drive':'C:'}),('worldClock',{'city':'东京'}),('note',{'text':'概览便签'})):
+            reply=app.request('overviewWidgetSet',{'kind':kind,'config':config})
+            assert reply['success'],reply
+        state=app.request('state')
+        assert {item['kind'] for item in state['overviewWidgets']}=={'weather','storage','worldClock','note'}
+        assert state['desktopWidgets']==[]
+        storage=wait(lambda:(app.request('state')['widgetData'].get('overview-storage') or {}).get('free',0)>0,'storage reading for an overview tile')
+        assert storage
+        assert app.request('state')['widgetData']['overview-worldClock']['clock']
+        assert app.request('state')['widgetData'].get('overview-weather') is not None
+        report['checks'].append('overview tiles read weather, storage and world clock without desktop widgets')
         ids=[]
         for kind in ('focus','note','wireless'):
             reply=app.request('widgetAdd',{'kind':kind,'size':'medium','style':'original'})
@@ -112,6 +127,7 @@ def run(args):
         state=app.start(preserve_settings=True)
         assert state['settings']['MusicCustomLayout']==layout
         assert {p['id'] for p in state['desktopWidgets']}==set(ids[:2])
+        assert {item['kind'] for item in state['overviewWidgets']}=={'weather','storage','worldClock','note'}
         center=wait(lambda:host(app),'persisted desktop host after restart')
         wait(lambda:len(widget_windows(center))==2,'persisted widget windows after restart')
         report['checks'].append('layout and widgets persist; normal exit releases center; restart restores host')
@@ -127,6 +143,16 @@ def run(args):
         center=wait(lambda:host(app),'fresh host after unexpected native exit')
         wait(lambda:len(widget_windows(center))==2,'widgets restored from saved placements after crash')
         report['checks'].append('unexpected native exit releases widget windows and center; restart restores saved widgets')
+        # A center from another portable runtime shares the default pipe; it must
+        # stop instead of following this instance and opening a second window.
+        other=args.scratch/'other-data'
+        other.mkdir(parents=True,exist_ok=True)
+        environment=dict(os.environ,LYRICISLAND_TEST_PIPE=app.pipe.split('\\')[-1])
+        stray=subprocess.Popen([str(app.runtime/'LyricIsland.Center.exe'),'--data-dir',str(other)],cwd=app.runtime,env=environment,
+            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=subprocess.CREATE_NO_WINDOW)
+        wait(lambda:stray.poll() is not None,'center from another data directory exits',seconds=15)
+        assert len([p for p in children(app) if p['name']=='LyricIsland.Center.exe'])==1
+        report['checks'].append('a stray center never joins another instance or opens a second window')
         report['success']=True
     except Exception as error:
         report['error']=str(error)

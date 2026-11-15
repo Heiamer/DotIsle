@@ -36,7 +36,10 @@ func main() {
 
 	data := island.DataDir(*dataFlag)
 	if !acquireSingleInstance(data) {
-		return // a center window is already up; the island wakes it via pendingPage
+		// A center for this data directory is already resident: raise it instead of
+		// leaving the user with a click that appears to do nothing.
+		signalCenterShow(data)
+		return
 	}
 	prefsPath, _, _ := prefs.Paths(data)
 	p, err := prefs.Load(prefsPath)
@@ -76,6 +79,14 @@ func main() {
 			app.StartSignature()
 		}
 		win.SetBackgroundColor("transparent")
+		watchCenterShow(data, func() {
+			win.Update(func() {
+				if win.IsMinimized() {
+					win.Restore()
+				}
+				win.Show()
+			})
+		})
 
 		// The island pump: every snapshot lands on the main thread through Update.
 		go func() {

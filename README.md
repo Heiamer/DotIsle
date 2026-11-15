@@ -11,7 +11,7 @@
 
 Windows 10 / 11 · x64 · 原生桌面应用
 
-[下载正式版](https://github.com/Heiamer/DotIsle/releases/latest) · [体验 V5.0RC2](https://github.com/Heiamer/DotIsle/releases/tag/v5.0.0-rc2) · [更新日志](CHANGELOG.md) · [反馈问题](https://github.com/Heiamer/DotIsle/issues)
+[下载正式版](https://github.com/Heiamer/DotIsle/releases/latest) · [体验 V5.0RC3](https://github.com/Heiamer/DotIsle/releases/tag/v5.0.0-rc3) · [更新日志](CHANGELOG.md) · [反馈问题](https://github.com/Heiamer/DotIsle/issues)
 
 </div>
 
@@ -21,7 +21,7 @@ Windows 10 / 11 · x64 · 原生桌面应用
 
 控制中心采用固定窗口、HarmonyOS Sans、柔和的连续曲线边角与分层阴影。导航平时收起，点击左上按钮展开左侧白色毛玻璃栏，选好页面后自动隐藏。明暗外观、背景和动效有各自的设置；动态取色 **Beta** 默认关闭，开启后使用低饱和的浅彩色。
 
-**V5.0RC2 是预发行测试版本。** 日常使用建议选择正式版；需要体验和反馈 5.0 时，再进入测试版通道。RC2 更新内容与已知限制见 [发行说明](release-notes/DotIsle-5.0.0-rc2-Notes.md)。
+**V5.0RC3 是预发行测试版本。** 日常使用建议选择正式版；需要体验和反馈 5.0 时，再进入测试版通道。RC3 更新内容与已知限制见 [发行说明](release-notes/DotIsle-5.0.0-rc3-Notes.md)。
 
 ## 岛上与桌面上
 
@@ -38,7 +38,7 @@ Windows 10 / 11 · x64 · 原生桌面应用
 
 ## 下载与开始使用
 
-从 [Releases](https://github.com/Heiamer/DotIsle/releases) 选择版本。5.0 测试包位于 [V5.0RC2 发行页](https://github.com/Heiamer/DotIsle/releases/tag/v5.0.0-rc2)，发布前先本地构建和验收，再由 [发布工作流](.github/workflows/publish-verified-windows.yml) 核验并发布。
+从 [Releases](https://github.com/Heiamer/DotIsle/releases) 选择版本。5.0 测试包位于 [V5.0RC3 发行页](https://github.com/Heiamer/DotIsle/releases/tag/v5.0.0-rc3)，发布前先本地构建和验收，再由 [发布工作流](.github/workflows/publish-verified-windows.yml) 核验并发布。
 
 | 文件 | 用途 |
 | --- | --- |
@@ -92,7 +92,7 @@ API v1 提供四种基本积木：`text`、`metric`、`progress`、`divider`，�
 - **设备电量**：需要 Windows 或设备提供可读取的电量数据；读不到时不会虚构百分比。
 - **天气**：填写城市并联网后获取，降水开始和结束时间属于预报，受数据覆盖与更新影响。
 - **用机时长**：记录点屿运行期间的活跃使用，不补算点屿未运行时的 Windows 历史记录。
-- **材质与性能**：云母、模糊和实际流畅度受 Windows 版本、显卡、DPI 与系统合成影响。RC2 不承诺所有设备稳定 120Hz。
+- **材质与性能**：云母、模糊和实际流畅度受 Windows 版本、显卡、DPI 与系统合成影响。RC3 不承诺所有设备稳定 120Hz。
 
 ## 源码与构建
 

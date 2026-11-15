@@ -36,3 +36,44 @@ func sanitizeMutexKey(data string) string {
 	}
 	return string(out)
 }
+
+// centerShowEvent is signalled by a second launch so the running center raises its
+// existing window instead of the process silently disappearing.
+func centerShowEvent(data string) string {
+	return "Local.DotIsle.Center.Show." + sanitizeMutexKey(data)
+}
+
+func signalCenterShow(data string) {
+	p, err := windows.UTF16PtrFromString(centerShowEvent(data))
+	if err != nil {
+		return
+	}
+	h, err := windows.CreateEvent(nil, 0, 0, p)
+	if err != nil {
+		return
+	}
+	defer windows.CloseHandle(h)
+	_ = windows.SetEvent(h)
+}
+
+// watchCenterShow raises the window whenever another launch targets this data dir.
+func watchCenterShow(data string, show func()) {
+	p, err := windows.UTF16PtrFromString(centerShowEvent(data))
+	if err != nil {
+		return
+	}
+	h, err := windows.CreateEvent(nil, 0, 0, p)
+	if err != nil {
+		return
+	}
+	go func() {
+		defer windows.CloseHandle(h)
+		for {
+			event, err := windows.WaitForSingleObject(h, windows.INFINITE)
+			if err != nil || event != uint32(windows.WAIT_OBJECT_0) {
+				return
+			}
+			show()
+		}
+	}()
+}

@@ -157,3 +157,47 @@ func TestOverviewInformationRequiresRealReadings(t *testing.T) {
 		}
 	}
 }
+
+// Overview tiles own their content: no desktop placement is needed for the card
+// to show a configured city, disk or world clock.
+func TestOverviewTilesReadWithoutDesktopWidgets(t *testing.T) {
+	a := newTestApp(t)
+	a.overview.loaded = true
+	a.overview.config = prefs.Overview{View: "cards", Cards: []string{"widget:weather", "widget:storage", "widget:worldClock"}}
+	a.State["desktopWidgets"] = []any{}
+	a.State["overviewWidgets"] = []any{
+		map[string]any{"id": "overview-weather", "kind": "weather", "config": map[string]any{"city": "厦门"}},
+		map[string]any{"id": "overview-storage", "kind": "storage", "config": map[string]any{"drive": "D:"}},
+		map[string]any{"id": "overview-worldClock", "kind": "worldClock", "config": map[string]any{"city": "东京"}},
+	}
+	a.State["widgetData"] = map[string]any{
+		"overview-weather":    map[string]any{"temperature": float64(26), "city": "厦门 · 晴"},
+		"overview-storage":    map[string]any{"free": float64(128e9), "total": float64(512e9), "drive": "D:\\"},
+		"overview-worldClock": map[string]any{"clock": "09:30", "date": "11月16日", "city": "东京"},
+	}
+	tt := ui.NewTester(a.View, 1200, 800)
+	tt.Frame()
+	for _, text := range []string{"26°", "厦门", "128 GB", "09:30", "东京"} {
+		if !tt.HasText(text) {
+			t.Fatal("missing overview tile reading: " + text)
+		}
+	}
+}
+
+func TestOverviewCardEllipsisOpensItsOwnSettings(t *testing.T) {
+	a := newTestApp(t)
+	a.overview.loaded = true
+	a.overview.config = prefs.Overview{View: "cards", Cards: []string{"widget:weather"}}
+	tt := ui.NewTester(a.View, 1200, 800)
+	tt.Frame()
+	if err := tt.Click("设置天气"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.overviewEditor == nil || a.overviewEditor.kind != "weather" {
+		t.Fatal("ellipsis did not open the weather settings")
+	}
+	if !tt.HasText("设置天气组件") {
+		t.Fatal("settings dialog is missing")
+	}
+}

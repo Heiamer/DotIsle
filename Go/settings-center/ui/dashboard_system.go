@@ -43,6 +43,8 @@ func (a *App) dashboardSystem(c *ui.Context, r overviewRect) {
 	detail := "等待内存容量"
 	if m.hasSizes {
 		detail = fmt.Sprintf("已用 %.1f / %.1f GiB", m.usedGiB, m.totalGiB)
+	} else if m.hasMemory {
+		detail = fmt.Sprintf("内存占用 %.0f%%", m.memory)
 	}
 	Label(c, detail, r.x+20, r.y+r.h-46, 12, s.OnSurfaceVariant, false, r.w-40)
 	if r.w >= 480 {

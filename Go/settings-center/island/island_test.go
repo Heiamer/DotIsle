@@ -125,3 +125,24 @@ func TestSilentPipeServerWriteTimesOut(t *testing.T) {
 		t.Fatal("write blocked past its deadline")
 	}
 }
+
+// Portable runtimes share the default pipe; a center must only follow the island
+// that owns its data directory or every leftover center opens a window.
+func TestSameDataDirNormalizesPortablePaths(t *testing.T) {
+	for _, pair := range [][2]string{
+		{`C:\Users\A\DotIsle\Data\`, `c:/users/a/dotisle/data`},
+		{`D:\Apps\DotIsle\Data`, `D:\Apps\DotIsle\Data\`},
+	} {
+		if !SameDataDir(pair[0], pair[1]) {
+			t.Fatalf("same directory rejected: %q vs %q", pair[0], pair[1])
+		}
+	}
+	for _, pair := range [][2]string{
+		{`C:\Users\A\DotIsle\Data`, `C:\Users\A\DotIsle\Data2`},
+		{`C:\Users\A\Data`, `D:\Users\A\Data`},
+	} {
+		if SameDataDir(pair[0], pair[1]) {
+			t.Fatalf("different directories accepted: %q vs %q", pair[0], pair[1])
+		}
+	}
+}

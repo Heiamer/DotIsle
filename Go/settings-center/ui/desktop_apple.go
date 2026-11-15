@@ -66,8 +66,8 @@ func (a *App) appleDesktopPreview(c *ui.Context, p *Palette, kind, size string, 
 		if kind != "calendar" || small {
 			Label(c, kindLabel(kind), xx, yy, 12, s.OnSurfaceVariant, true, ww)
 		}
-		widget, data := a.overviewWidgetSource(kind)
-		config, _ := widget["config"].(map[string]any)
+		src := a.overviewWidgetSource(kind)
+		config, data := src.config, src.data
 		value := func(text, detail string) {
 			font := float32(46)
 			if small {

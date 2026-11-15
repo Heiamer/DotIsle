@@ -85,6 +85,9 @@ func (a *App) dialogViews(c *ui.Context, w, h float32) {
 	if a.widgetEditor != nil {
 		a.widgetEditorView(c)
 	}
+	if a.overviewEditor != nil {
+		a.overviewEditorView(c)
+	}
 	if a.todoDialog {
 		a.todoDialogView(c, w, h)
 	}

@@ -8,32 +8,73 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// Overview cards consume the core snapshot. Gallery demonstration values never
-// enter this path; widgets with per-placement content use the first matching one.
-func (a *App) overviewWidgetSource(kind string) (map[string]any, map[string]any) {
-	items, _ := a.State["desktopWidgets"].([]any)
+// Overview cards consume the core snapshot. Tiles configured in the overview own
+// their content first; a desktop widget of the same kind is only a migration
+// fallback, so adding a card never requires placing it on the desktop.
+type overviewWidgetSource struct {
+	id     string
+	config map[string]any
+	data   map[string]any
+}
+
+func (a *App) overviewWidgetSource(kind string) overviewWidgetSource {
 	root, _ := a.State["widgetData"].(map[string]any)
+	if items, ok := a.State["overviewWidgets"].([]any); ok {
+		for _, item := range items {
+			tile, ok := item.(map[string]any)
+			if !ok || stateString(tile, "", "kind") != kind {
+				continue
+			}
+			id := stateString(tile, "", "id")
+			config, _ := tile["config"].(map[string]any)
+			data, _ := root[id].(map[string]any)
+			return overviewWidgetSource{id, config, data}
+		}
+	}
+	items, _ := a.State["desktopWidgets"].([]any)
 	for _, item := range items {
 		widget, ok := item.(map[string]any)
 		if !ok || stateString(widget, "", "kind") != kind {
 			continue
 		}
-		data, _ := root[stateString(widget, "", "id")].(map[string]any)
-		return widget, data
+		config, _ := widget["config"].(map[string]any)
+		id := stateString(widget, "", "id")
+		data, _ := root[id].(map[string]any)
+		return overviewWidgetSource{id, config, data}
 	}
-	return nil, nil
+	return overviewWidgetSource{}
+}
+
+// overviewConfigurable lists the kinds that own user content. Automatic readings
+// (clock, calendar, battery, system, screen time, today) have nothing to edit and
+// therefore no "..." affordance.
+func overviewConfigurable(kind string) bool {
+	switch kind {
+	case "weather", "storage", "worldClock", "note", "anniversary", "schedule", "launcher":
+		return true
+	}
+	return false
 }
 
 func (a *App) overviewWidget(c *ui.Context, r overviewRect) {
 	p, s := &a.Palette, &a.Palette.Scheme
 	kind := strings.TrimPrefix(r.key, "widget:")
-	widget, data := a.overviewWidgetSource(kind)
-	config, _ := widget["config"].(map[string]any)
-	IconButton(c, p, "管理概览"+overviewName(r.key), r.x+r.w-50, r.y+10, 32, 32, "more_horiz", false, true, func() { a.navigate(PageWidgets) })
+	src := a.overviewWidgetSource(kind)
+	config := src.config
+	if config == nil {
+		config = map[string]any{}
+	}
+	data := src.data
+	if overviewConfigurable(kind) {
+		IconButton(c, p, "设置"+overviewName(r.key), r.x+r.w-50, r.y+10, 32, 32, "more_horiz", false, true, func() { a.openOverviewEditor(kind) })
+	}
 	x, y, w := r.x+20, r.y+54, r.w-40
-	empty := func(title, detail string) {
+	empty := func(title, detail, action string) {
 		Label(c, title, x, y+25, 17, s.OnSurface, true, w)
 		Label(c, detail, x, y+64, 11, s.OnSurfaceVariant, false, w)
+		if action != "" {
+			widgetTextAction(c, p, "设置"+overviewName(r.key)+"内容", action, x, r.y+r.h-44, w, func() { a.openOverviewEditor(kind) })
+		}
 	}
 	value := func(text, detail string) {
 		Label(c, text, x, y+8, 42, s.OnSurface, true, w)
@@ -42,6 +83,9 @@ func (a *App) overviewWidget(c *ui.Context, r overviewRect) {
 	switch kind {
 	case "schedule":
 		a.scheduleCard(c, config, x, y, w, r.h-70, false)
+		if stateString(config, "", "deadline") == "" {
+			widgetTextAction(c, p, "设置日程时间", "设置日期与时间", x, r.y+r.h-44, w, func() { a.openOverviewEditor("schedule") })
+		}
 	case "screenTime":
 		a.screenTimeCard(c, x, y, w, r.h-70, false)
 	case "calendar":
@@ -102,7 +146,7 @@ func (a *App) overviewWidget(c *ui.Context, r overviewRect) {
 			value(fmt.Sprintf("%.0f%%", percent), status)
 			progressLine(c, p, x, y+112, w, percent/100)
 		} else {
-			empty("未检测到电池", "等待设备提供电量读数")
+			empty("未检测到电池", "等待设备提供电量读数", "")
 		}
 	case "today":
 		for i, entry := range []struct {
@@ -138,7 +182,7 @@ func (a *App) overviewWidget(c *ui.Context, r overviewRect) {
 				ui.Box(c).Absolute().Left(x + float32(i)*(barW+6)).Top(y + 115 - barH).Width(barW).Height(barH).Radius(3).Background(Col(mix(s.High, s.Primary, .3+.7*clamp01(v/maximum)))).IgnoreInput(true)
 			}
 		} else {
-			empty("暂无专注记录", "完成专注计时后在这里查看")
+			empty("暂无专注记录", "完成专注计时后在这里查看", "")
 		}
 	case "note":
 		if text := stateString(config, "", "text"); text != "" {
@@ -149,12 +193,12 @@ func (a *App) overviewWidget(c *ui.Context, r overviewRect) {
 				Label(c, line, x, y+float32(i)*28, 14, s.OnSurface, false, w)
 			}
 		} else {
-			empty("还没有便签", "在桌面便签的右键菜单中编辑内容")
+			empty("还没有便签", "点击右上角写下内容", "编辑内容")
 		}
 	case "anniversary":
 		date, days, err := calendarDateDistance(stateString(config, "", "date"), time.Now())
 		if err != nil {
-			empty("设置一个重要日期", "在桌面纪念日组件中编辑日期")
+			empty("设置一个重要日期", "点击右上角选择日期", "设置日期")
 		} else {
 			detail := stateString(config, date.Format("2006-01-02"), "title")
 			prefix := "还有 "
@@ -179,9 +223,9 @@ func (a *App) overviewWidget(c *ui.Context, r overviewRect) {
 				Label(c, fmt.Sprintf("最高 %.0f° · 最低 %.0f°", high, low), x, y+115, 11, s.OnSurfaceVariant, false, w)
 			}
 		} else if msg := stateString(data, "", "error"); msg != "" {
-			empty("天气暂不可用", msg)
+			empty("天气暂不可用", msg, "修改城市")
 		} else {
-			empty("等待天气数据", "添加天气组件并设置城市后同步")
+			empty("等待天气数据", "点击右上角设置城市后同步", "设置城市")
 		}
 	case "storage":
 		free, fok := stateFloat(data, "free")
@@ -190,20 +234,23 @@ func (a *App) overviewWidget(c *ui.Context, r overviewRect) {
 			value(fmt.Sprintf("%.0f GB", free/1e9), stateString(data, "", "drive")+" 可用 · 共 "+fmt.Sprintf("%.0f GB", total/1e9))
 			progressLine(c, p, x, y+112, w, 1-free/total)
 		} else {
-			empty("暂无磁盘读数", "添加存储组件后同步所选磁盘")
+			empty("暂无磁盘读数", "点击右上角选择磁盘", "选择磁盘")
 		}
 	case "worldClock":
 		if clock := stateString(data, "", "clock"); clock != "" {
 			value(clock, stateString(data, "", "date"))
 			Label(c, stateString(config, stateString(data, "", "city"), "city"), x, y+107, 12, s.OnSurfaceVariant, false, w)
 		} else {
-			empty("等待世界时钟", "添加世界时钟并选择城市后同步")
+			empty("等待世界时钟", "点击右上角选择城市", "选择城市")
 		}
 	case "launcher":
-		empty(stateString(config, "添加常用入口", "title"), stateString(config, "在桌面快捷启动组件中设置目标", "target"))
-		if target := stateString(config, "", "target"); target != "" {
-			Button(c, p, "打开概览快捷入口", x, r.y+r.h-46, w, 32, "打开", "", false, a.Connected, func() { a.command("widgetLaunch", map[string]any{"id": stateString(widget, "", "id")}) })
+		target := stateString(config, "", "target")
+		if target == "" {
+			empty(stateString(config, "添加常用入口", "title"), "点击右上角设置目标", "设置目标")
 			return
 		}
+		empty(stateString(config, "添加常用入口", "title"), target, "")
+		Button(c, p, "打开概览快捷入口", x, r.y+r.h-46, w, 32, "打开", "", false, a.Connected, func() { a.command("widgetLaunch", map[string]any{"id": src.id}) })
+		return
 	}
 }
