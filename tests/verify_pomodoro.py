@@ -25,7 +25,7 @@ native.NtResumeProcess.restype = ctypes.c_long
 
 class Runtime:
     def __init__(self, runtime, data):
-        self.runtime, self.data = runtime, data
+        self.runtime, self.data = runtime.resolve(), data.resolve()
         self.pipe = r'\\.\pipe\LyricIsland.Settings.test.pomodoro.' + uuid.uuid4().hex
         self.process = None
         self.log = None

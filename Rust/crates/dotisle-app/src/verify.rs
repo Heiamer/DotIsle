@@ -112,7 +112,7 @@ pub fn run(out: &Path) -> Result<(), String> {
     let mut gpu = Gpu::new();
     let mut captures = vec![];
     captures.extend(crate::widget_checks::run(out, &mut text, &mut gpu)?);
-    checks.push("3.5 capsule navigation, merged settings, six desktop widget kinds at all sizes and quick focus revision contract");
+    checks.push("3.5 capsule navigation, merged settings, all built-in desktop widget kinds at all sizes and quick focus revision contract");
     crate::hybrid_checks::run(&mut gpu, out)?;
     checks.push("Hybrid retained append, group alpha, RGBA/BGRA/premultiplication, atlas reuse and multilingual capture");
     captures.extend(crate::tutorial_checks::run(

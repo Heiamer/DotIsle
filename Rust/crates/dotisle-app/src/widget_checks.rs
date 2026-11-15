@@ -526,29 +526,10 @@ fn verify_independent_styles(
     out: &std::path::Path,
     captures: &mut Vec<String>,
 ) -> Result<(), String> {
-    for style in Style::ALL {
-        m.prefs.control_center_theme = "Original".into();
-        m.prefs.dark = false;
-        let v = crate::desktop_cards::render_style(
-            m,
-            text,
-            Kind::Music,
-            Size::Large,
-            style,
-            "independent",
-            (-1., -1.),
-            false,
-            0.,
-            None,
-        );
-        let name = format!("independent-{style:?}.png");
-        let reference = out.join(&name);
-        gpu.capture(&v.scene, 352, 352, &reference)?;
-        let bytes = std::fs::read(&reference).map_err(|e| e.to_string())?;
-        captures.push(name);
-        for theme in crate::themes::SLOTS {
-            m.prefs.control_center_theme = theme.into();
-            m.prefs.dark = true;
+    for dark in [false, true] {
+        for style in Style::ALL {
+            m.prefs.control_center_theme = "Original".into();
+            m.prefs.dark = dark;
             let v = crate::desktop_cards::render_style(
                 m,
                 text,
@@ -561,10 +542,30 @@ fn verify_independent_styles(
                 0.,
                 None,
             );
-            let path = out.join("independent-comparison.png");
-            gpu.capture(&v.scene, 352, 352, &path)?;
-            if std::fs::read(path).map_err(|e| e.to_string())? != bytes {
-                return Err(format!("{style:?} widget changed with shell theme {theme}"));
+            let name = format!("independent-{style:?}-dark-{dark}.png");
+            let reference = out.join(&name);
+            gpu.capture(&v.scene, 352, 352, &reference)?;
+            let bytes = std::fs::read(&reference).map_err(|e| e.to_string())?;
+            captures.push(name);
+            for theme in crate::themes::SLOTS {
+                m.prefs.control_center_theme = theme.into();
+                let v = crate::desktop_cards::render_style(
+                    m,
+                    text,
+                    Kind::Music,
+                    Size::Large,
+                    style,
+                    "independent",
+                    (-1., -1.),
+                    false,
+                    0.,
+                    None,
+                );
+                let path = out.join("independent-comparison.png");
+                gpu.capture(&v.scene, 352, 352, &path)?;
+                if std::fs::read(path).map_err(|e| e.to_string())? != bytes {
+                    return Err(format!("{style:?} widget changed with shell theme {theme} (dark={dark})"));
+                }
             }
         }
     }
