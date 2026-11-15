@@ -10,6 +10,9 @@ on:
       manifest_sha256:
         description: SHA-256 of the checksum manifest verified locally
         required: true
+      transfer_sha256:
+        description: Optional SHA-256 of a lossless transport bundle
+        required: false
 
 permissions:
   contents: write
@@ -26,6 +29,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       RELEASE_VERSION: ${{ inputs.version }}
       MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+      TRANSFER_SHA256: ${{ inputs.transfer_sha256 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -40,6 +44,12 @@ jobs:
           python -c 'import json,os; r=json.load(open("draft.json")); assert r["isDraft"] is True; assert r["targetCommitish"] == os.environ["GITHUB_SHA"]'
           gh release download "v$RELEASE_VERSION" --dir incoming
 
+      - name: Restore exact locally accepted files from optional transfer
+        if: inputs.transfer_sha256 != ''
+        run: |
+          command -v zstd || (sudo apt-get update && sudo apt-get install -y zstd)
+          python build/restore_release_transfer.py --directory incoming --transfer "incoming/DotIsle-$RELEASE_VERSION-Transfer.zip" --sha256 "$TRANSFER_SHA256" --bases "$RUNNER_TEMP/release-bases"
+
       - name: Verify checksums, source, runtime and local acceptance reports
         run: |
           python build/verify_prebuilt_release.py --directory incoming --version "$RELEASE_VERSION" --source-commit "$GITHUB_SHA" --manifest-sha256 "$MANIFEST_SHA256" --report validation/publish/report.json
@@ -51,9 +61,11 @@ jobs:
           import json, os, subprocess
           version=os.environ['RELEASE_VERSION']; tag='v'+version
           plan=json.load(open('validation/public-assets.json'))
-          subprocess.run(['gh','release','upload',tag,f'public/DotIsle-{version}-SHA256.txt',f'public/LyricIsland-{version}-SHA256.txt','--clobber'],check=True)
+          subprocess.run(['gh','release','upload',tag,*['public/'+name for name in plan['keep']],'--clobber'],check=True)
           for name in plan['remove']:
               subprocess.run(['gh','release','delete-asset',tag,name,'--yes'],check=True)
+          if os.environ.get('TRANSFER_SHA256'):
+              subprocess.run(['gh','release','delete-asset',tag,f'DotIsle-{version}-Transfer.zip','--yes'],check=True)
           PY
 
       - name: Publish accepted release
