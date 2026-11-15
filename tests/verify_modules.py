@@ -78,7 +78,10 @@ def run(a):
         report['checks'].append('previous DLL can be restored through the same transactional interface')
         stage(app,runtime/'dotisle_themes.dll',False);assert sha(focus)==original
         bad=a.scratch/'not-a-module.dll';bad.write_bytes(b'not a valid PE DLL')
-        stage(app,bad,False);assert sha(focus)==original
+        started=time.monotonic();stage(app,bad,False);assert sha(focus)==original
+        rejected_in=time.monotonic()-started
+        assert rejected_in<10, f'Invalid DLL inspection blocked for {rejected_in:.1f}s'
+        report['invalidImageRejectionSeconds']=rejected_in
         report['checks'].append('wrong module identity and invalid PE are rejected before touching live DLLs')
         stage(app,a.broken);state,result=apply(app,False)
         assert sha(focus)==original

@@ -30,7 +30,14 @@ macro_rules! export_service {($id:expr,$dispatch:path)=>{
 type Call=unsafe extern "C" fn(*const u8,usize)->Buffer;
 type Free=unsafe extern "C" fn(Buffer);
 struct Library { _handle:usize,call:Call,free:Free }
-#[link(name="kernel32")]extern "system" {fn LoadLibraryExW(path:*const u16,file:*mut c_void,flags:u32)->*mut c_void;fn GetProcAddress(module:*mut c_void,name:*const u8)->*mut c_void;}
+#[link(name="kernel32")]extern "system" {fn LoadLibraryExW(path:*const u16,file:*mut c_void,flags:u32)->*mut c_void;fn GetProcAddress(module:*mut c_void,name:*const u8)->*mut c_void;fn GetThreadErrorMode()->u32;fn SetThreadErrorMode(mode:u32,previous:*mut u32)->i32;}
+// A rejected DLL is a recoverable error, never a modal Windows loader dialog.
+unsafe fn load_library(path:*const u16)->Result<*mut c_void,std::io::Error>{
+ let mut previous=0;if SetThreadErrorMode(GetThreadErrorMode()|1,&mut previous)==0{return Err(std::io::Error::last_os_error());}
+ let handle=LoadLibraryExW(path,std::ptr::null_mut(),0x100|0x1000);
+ let result=if handle.is_null(){Err(std::io::Error::last_os_error())}else{Ok(handle)};
+ SetThreadErrorMode(previous,std::ptr::null_mut());result
+}
 impl Library {
  fn invoke(&self,value:&Value)->Result<Value,String> {
   let input=serde_json::to_vec(value).map_err(|e|e.to_string())?;if input.len()>LIMIT{return Err("模块请求过大".into());}
@@ -44,7 +51,7 @@ impl Library {
   if !id.bytes().all(|b|b.is_ascii_lowercase()||b==b'_'){return Err("模块标识无效".into());}
   let directory=std::env::var_os("DOTISLE_MODULE_DIR").map(PathBuf::from).or_else(||std::env::current_exe().ok().and_then(|p|p.parent().map(PathBuf::from))).ok_or("模块目录不可用")?;
   let path=directory.join(format!("dotisle_{id}.dll"));let wide=path.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<_>>();
-  unsafe {let handle=LoadLibraryExW(wide.as_ptr(),std::ptr::null_mut(),0x100|0x1000);if handle.is_null(){return Err(format!("无法加载 {}：{}",path.display(),std::io::Error::last_os_error()));}
+  unsafe {let handle=load_library(wide.as_ptr()).map_err(|error|format!("无法加载 {}：{error}",path.display()))?;
    let symbol=|name:&str|GetProcAddress(handle,CString::new(name).unwrap().as_ptr().cast());let call=symbol("dotisle_service_call");let free=symbol("dotisle_service_free");
    if call.is_null()||free.is_null(){return Err("模块缺少服务接口".into());}
    let library=Self{_handle:handle as usize,call:std::mem::transmute(call),free:std::mem::transmute(free)};

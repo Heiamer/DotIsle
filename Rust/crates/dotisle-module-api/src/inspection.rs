@@ -3,7 +3,7 @@ use super::*;
 pub fn inspect(path:&std::path::Path)->Result<Value,String>{
  use std::os::windows::ffi::OsStrExt;
  let path=path.canonicalize().map_err(|e|e.to_string())?;let wide=path.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<_>>();
- unsafe {let handle=LoadLibraryExW(wide.as_ptr(),std::ptr::null_mut(),0x100|0x1000);if handle.is_null(){return Err(format!("模块无法加载：{}",std::io::Error::last_os_error()));}
+ unsafe {let handle=load_library(wide.as_ptr()).map_err(|error|format!("模块无法加载：{error}"))?;
   let symbol=|name:&str|GetProcAddress(handle,CString::new(name).unwrap().as_ptr().cast());let call=symbol("dotisle_service_call");let free=symbol("dotisle_service_free");
   if !call.is_null()&&!free.is_null(){let lib=Library{_handle:handle as usize,call:std::mem::transmute(call),free:std::mem::transmute(free)};let mut info=lib.invoke(&json!({"method":"describe"}))?;let health=lib.invoke(&json!({"method":"health"}))?;if health["success"]!=true{return Err("模块未通过兼容性自检".into());}info["health"]=health;return Ok(info);}
   let abi=symbol("dotisle_module_abi");let kind=symbol("dotisle_module_kind");
@@ -24,6 +24,11 @@ pub fn validate_set(items:&[Value])->Result<(),String>{
 }
 #[cfg(test)]mod tests{
  use super::*;
+ #[test]fn corrupt_image_returns_without_dialog_and_restores_error_mode(){
+  let path=std::env::temp_dir().join(format!("dotisle-corrupt-image-{}.dll",std::process::id()));std::fs::write(&path,b"not a valid PE DLL").unwrap();
+  let previous=unsafe{GetThreadErrorMode()};let started=std::time::Instant::now();let result=inspect(&path);let elapsed=started.elapsed();let _=std::fs::remove_file(path);
+  assert!(result.is_err());assert!(elapsed<std::time::Duration::from_secs(5));assert_eq!(unsafe{GetThreadErrorMode()},previous);
+ }
  fn valid()->Vec<Value>{MODULES.iter().map(|(id,_)|metadata(id,"1.0.0")).collect()}
  #[test]fn compatibility_checks_core_range_and_required_dependencies(){let modules=valid();assert!(validate_set(&modules).is_ok());let mut wrong=modules.clone();wrong.iter_mut().find(|m|m["id"]=="focus").unwrap()["coreMin"]=json!(2);assert!(validate_set(&wrong).is_err());let mut missing=modules.clone();missing.retain(|m|m["id"]!="lyrics");assert!(validate_set(&missing).is_err());let mut abi=modules;abi[0]["abi"]=json!(2);assert!(validate_set(&abi).is_err());}
 }
