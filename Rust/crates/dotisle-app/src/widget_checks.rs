@@ -103,10 +103,25 @@ pub fn run(out: &std::path::Path, text: &mut Text, gpu: &mut Gpu) -> Result<Vec<
         return Err("overview focus did not pause".into());
     }
     for kind in Kind::ALL {
+        let count = m.desktop_widgets.items.len();
+        m.dispatch(Action::WidgetAdd(kind, kind.default_size()));
+        if m.desktop_widgets.items.len() != count + 1
+            || m.desktop_widgets.items.last().is_none_or(|item| item.kind != kind)
+        {
+            return Err(format!("widget command did not add {kind:?}"));
+        }
+        let id = m.desktop_widgets.items.last().unwrap().id.clone();
+        m.dispatch(Action::WidgetRemove(id));
+        if m.desktop_widgets.items.len() != count {
+            return Err(format!("widget command did not remove {kind:?}"));
+        }
+    }
+    // Keep gallery fixtures below the independent limit of 16 placements.
+    for kind in [Kind::Clock, Kind::Calendar, Kind::Todos, Kind::Focus, Kind::Music, Kind::System] {
         m.dispatch(Action::WidgetAdd(kind, kind.default_size()));
     }
-    if m.desktop_widgets.items.len() != Kind::ALL.len() {
-        return Err("widget commands did not add every kind".into());
+    if m.desktop_widgets.items.len() != 6 {
+        return Err("widget gallery fixtures were not created".into());
     }
     for dark in [false, true] {
         m.prefs.dark = dark;
