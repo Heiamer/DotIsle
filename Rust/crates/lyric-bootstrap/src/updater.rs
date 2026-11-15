@@ -334,6 +334,7 @@ pub fn run(args: Vec<String>) -> i32 {
     let mut data: Option<PathBuf> = None;
     let mut stopped = false;
     let mut scratch: Option<PathBuf> = None;
+    let mut reporter: Option<Reporter> = None;
     let result = (|| -> Result<()> {
         if !matches!(args.len(), 6 | 8 | 10) { return Err(Error("更新参数无效".into())); }
         let version = args[0].clone();
@@ -354,8 +355,9 @@ pub fn run(args: Vec<String>) -> i32 {
         scratch = Some(work.clone());
         let preferred = if args.len() >= 8 && !args[6].is_empty() && !args[7].is_empty() { Some((args[6].clone(), args[7].clone())) } else { None };
         let state = shared_state();
-        let mut reporter = Reporter::new(authenticated, job.clone(), nonce, pipe.clone(), state.clone());
-        download_bundle(&target_path, &version, &work, preferred, &mut reporter)?;
+        reporter = Some(Reporter::new(authenticated, job.clone(), nonce, pipe.clone(), state.clone()));
+        let reporter = reporter.as_mut().unwrap();
+        download_bundle(&target_path, &version, &work, preferred, reporter)?;
         let zip = work.join("update.zip");
         let stage = work.join("stage");
         extract(&zip, &stage, &version)?;
@@ -399,11 +401,19 @@ pub fn run(args: Vec<String>) -> i32 {
         Ok(()) => 0,
         Err(error) if error.is_cancelled() => {
             if let Some(mut overlay) = overlaid.take() { overlay.close(); }
+            if let Some(reporter) = reporter.as_mut() {
+                let _ = reporter.report("cancelled", 0, None, CANCELLED_MESSAGE, true);
+            }
             2
         }
         Err(error) => {
             if let Some(mut overlay) = overlaid.take() { overlay.close(); }
-            let _ = report_failure(&args, &error);
+            // Keep the same sequence so the hub accepts the terminal report.
+            if let Some(reporter) = reporter.as_mut() {
+                let _ = reporter.report("failed", 0, None, &error.to_string(), true);
+            } else {
+                let _ = report_failure(&args, &error);
+            }
             if stopped { if let (Some(target), Some(data)) = (target.as_ref(), data.as_ref()) { let _ = start(target, data); } }
             let details = scratch.map(|path| format!("\n诊断和备份：{}", path.display())).unwrap_or_default();
             win::message_box(&format!("在线更新未完成：{error}{details}"), "点屿在线更新", true);
