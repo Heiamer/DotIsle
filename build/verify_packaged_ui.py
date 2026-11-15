@@ -44,6 +44,10 @@ def main():
                     process.kill()
                     process.wait(timeout=15)
         if code != 0:
+            for filename in ('failure.txt', 'process.log'):
+                evidence = destination / filename
+                if evidence.is_file():
+                    print(f'[{name}] {filename}:\n{evidence.read_text(encoding="utf-8-sig", errors="replace")[-8000:]}', flush=True)
             raise RuntimeError(f'{name} exited with {code}; see {destination / "process.log"}')
         report = json.loads((destination / 'report.json').read_text(encoding='utf-8-sig'))
         if report.get('success') is not True:
