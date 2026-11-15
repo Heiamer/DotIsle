@@ -16,7 +16,7 @@ def main():
     runtime = args.runtime.resolve()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    environment = dict(os.environ, DOTISLE_TRACE_GPU='1', LYRICISLAND_TEST_PIPE='LyricIsland.Settings.test.ci.' + uuid.uuid4().hex)
+    environment = dict(os.environ, DOTISLE_TRACE_GPU='1', DOTISLE_LAYOUT_AUDIT='1', DOTISLE_LAYOUT_AUDIT_CAPTURE='0', LYRICISLAND_TEST_PIPE='LyricIsland.Settings.test.ci.' + uuid.uuid4().hex)
     checks = [('settings', '--verify', 2700), ('themes', '--theme-capture', 900), ('covers', '--cover-capture', 600)]
     for name, flag, timeout in checks:
         destination = output / name
@@ -48,6 +48,11 @@ def main():
         report = json.loads((destination / 'report.json').read_text(encoding='utf-8-sig'))
         if report.get('success') is not True:
             raise RuntimeError(f'{name} acceptance failed: {report}')
+        if name == 'settings':
+            layout_path = destination / 'layout-audit' / 'report.json'
+            layout_report = json.loads(layout_path.read_text(encoding='utf-8-sig'))
+            if layout_report.get('success') is not True:
+                raise RuntimeError(f'Layout audit failed: {layout_path}')
         print(f'[{name}] Passed in {time.monotonic() - started:.1f}s', flush=True)
 
 

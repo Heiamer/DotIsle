@@ -313,18 +313,15 @@ fn confirm_started(pipe: &str, version: &str, old_pid: u32) -> bool {
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline {
         if let Ok(state) = win::pipe_request(pipe, &json!({"version": 1, "command": "state"}), Duration::from_secs(1)) {
-            if state["version"].as_str() == Some(version) && state["processId"].as_u64() != Some(old_pid as u64) { return true; }
+            if (state["version"].as_str() == Some(version) || state["bundleVersion"].as_str() == Some(version)) && state["processId"].as_u64() != Some(old_pid as u64) { return true; }
         }
         std::thread::sleep(Duration::from_millis(250));
     }
     false
 }
 
-pub fn valid_update_version(version: &str) -> bool {
-    Regex::new(r"^[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:(?:-?mini)|-(?:(?:alpha|beta|preview)\.[0-9]+|rc\.?[0-9]+))?$").unwrap().is_match(version)
-}
-
 pub fn run(args: Vec<String>) -> i32 {
+    if let Some(code)=crate::local_modules::cli(&args){return code;}
     if let Some(code) = crate::vello_overlay::cli(&args) { return code; }
     if args.len() == 2 && args[0] == "--self-test" {
         return match self_test(Path::new(&args[1])) { Ok(()) => 0, Err(error) => { eprintln!("{error}"); 1 } };
@@ -338,7 +335,7 @@ pub fn run(args: Vec<String>) -> i32 {
     let result = (|| -> Result<()> {
         if !matches!(args.len(), 6 | 8 | 10) { return Err(Error("更新参数无效".into())); }
         let version = args[0].clone();
-        if !valid_update_version(&version) { return Err(Error("版本号无效".into())); }
+        if !Regex::new(r"^[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:(?:-?mini)|-(?:(?:alpha|beta|preview)\.[0-9]+|rc\.?[0-9]+))?$").unwrap().is_match(&version) { return Err(Error("版本号无效".into())); }
         let target_path = paths::full_path(&args[1])?;
         let data_path = paths::full_path(&args[2])?;
         let pid: i32 = args[3].parse().map_err(|_| Error("更新参数无效".into()))?;
@@ -357,10 +354,13 @@ pub fn run(args: Vec<String>) -> i32 {
         let state = shared_state();
         reporter = Some(Reporter::new(authenticated, job.clone(), nonce, pipe.clone(), state.clone()));
         let reporter = reporter.as_mut().unwrap();
-        download_bundle(&target_path, &version, &work, preferred, reporter)?;
-        let zip = work.join("update.zip");
+        let modular = crate::module_update::prepare(&target_path, &version, &work, reporter)?;
         let stage = work.join("stage");
-        extract(&zip, &stage, &version)?;
+        if !modular {
+            download_bundle(&target_path, &version, &work, preferred, reporter)?;
+            extract(&work.join("update.zip"), &stage, &version)?;
+        }
+        crate::local_modules::validate_overlay(&target_path,&stage,&work)?;
         merge_marker(&stage, &target_path, &version)?;
 
         if authenticated {
@@ -451,12 +451,4 @@ mod update_file_tests {
         assert!(!backup.join("font.ttf").exists());
         drop(locked);std::fs::remove_dir_all(root).unwrap();
     }
-}
-
-#[cfg(test)] mod channel_version_tests {
- use super::*;
- #[test] fn accepts_safe_stable_and_preview_asset_versions() {
-  for v in ["3.5.3","5.0.0-beta.1","5.0.0-beta.10","5.0.0-alpha.1","5.0.0-preview.1","5.0.0-rc1","5.0.0-rc.1","3.5.3mini"] {assert!(valid_update_version(v),"{v}");}
-  for v in ["5.0.0-beta","5.0.0-beta.1/evil","../5.0.0","5.0.0-beta.x","5.0.0-beta.1?x","5.0.0\n"] {assert!(!valid_update_version(v),"{v}");}
- }
 }

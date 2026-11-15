@@ -149,6 +149,13 @@ pub fn run(out: &Path) -> Result<(), String> {
             &out.join(format!("opening-{age}.png")),
         )?;
     }
+    model.page=Page::Settings;model.settings_tab=131;model.island_tab=3;model.scroll=0.;
+    model.prefs.control_center_theme="Default".into();model.prefs.reduced_motion=true;
+    let view=views::render(&model,&mut text,1200.,800.,&ViewState::default());
+    for key in ["MusicGlowEnabled","TimerGlowEnabled","UpdateGlowEnabled"] {
+        if !view.hits.iter().any(|h|matches!(&h.action,Action::NativeEdit(k,_) if *k==key)&&h.rect.y0>=0.&&h.rect.y1<=700.) {return Err(format!("glow toggle not visible: {key}"));}
+    }
+    gpu.capture(&view.scene,1200,800,&out.join("glow-switches.png"))?;
     crate::shell::verify_settings_navigation(&out.join("settings-input"))?;
     let report = json!({"success":true,"captures":captures,"overlay_interruption":true,
         "reduced_motion":true,"opening_hides_content_hits":true,"settings_entry_stays_cancelled":true});

@@ -10,6 +10,15 @@ impl Spring {
 pub struct Banner {pub notice:Option<Notice>,motion:[Spring;6],pub open:bool,deadline:f64,changed:f64,compact:bool,retiring:bool}
 impl Default for Banner {fn default()->Self{Self{notice:None,motion:[Spring::default();6],open:false,deadline:0.,changed:0.,compact:false,retiring:false}}}
 impl Banner {
+    /// An island-body activity with independently sized, unscaled typography.
+    pub fn show_capsule(&mut self,notice:Notice,base:Rect,radius:f64,host:f64,y:f64,width:f64,height:f64,now:f64,animate:bool){
+        if self.notice.is_none(){for(s,v)in self.motion.iter_mut().zip([base.x,base.y,base.w,base.h,radius,0.]){s.snap(v,now);}}
+        self.notice=Some(notice);self.open=true;self.retiring=false;self.changed=now;self.deadline=now+5.;self.compact=true;
+        let width=width.min(host-48.).max(140.);let height=height.clamp(40.,112.);
+        for(i,(s,v))in self.motion.iter_mut().zip([(host-width)/2.,y,width,height,(height/2.).min(28.),1.]).enumerate(){
+            if animate||i==5{s.retarget(v,now)}else{s.snap(v,now)}
+        }
+    }
     pub fn hold_until(&mut self,deadline:f64){self.deadline=deadline;}
     pub fn visible(&self)->bool{self.notice.is_some()}
     /// Whether the hold has run out. The shell asks this so a queued message can take

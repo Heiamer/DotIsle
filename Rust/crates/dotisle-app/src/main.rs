@@ -3,10 +3,11 @@ mod acrylic;
 mod appearance;
 mod background;
 mod center_checks;
-mod center_layout;
 mod cover_art;
 mod cover_checks;
 mod desktop_cards;
+mod desktop_checks;
+mod apple_desktop;
 mod desktop_host;
 mod draw;
 mod expressive_checks;
@@ -34,17 +35,19 @@ mod polish_checks;
 mod preferences_ui;
 mod remote;
 mod settings_hub;
+mod module_management;
 mod settings_slider;
 mod shell;
 mod software_update;
 mod swiss;
 mod terminal;
+mod timeline;
 mod themes;
+mod center_layout;
 mod widget_extras;
 
 mod theme_icons;
 mod theme_regression;
-mod timeline;
 mod timer_surface;
 mod tool_preferences;
 mod tutorial;
@@ -57,8 +60,11 @@ mod workflow;
 use std::path::PathBuf;
 pub static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 fn main() {
+    lyric_backend::updates::set_runtime_version(env!("CARGO_PKG_VERSION"));
     STARTED.get_or_init(std::time::Instant::now);
     let args = std::env::args().collect::<Vec<_>>();
+    if let Some(i)=args.iter().position(|a|a=="--module-health"){let out=PathBuf::from(args.get(i+1).expect("health output"));if let Err(e)=module_management::health(&out){let _=std::fs::create_dir_all(&out);let _=std::fs::write(out.join("failure.txt"),e);std::process::exit(1);}return;}
+
     if let Some(i) = args.iter().position(|a| a == "--center-capture") {
         let out = PathBuf::from(args.get(i + 1).expect("capture directory"));
         if let Err(error) = center_checks::run(&out) {
@@ -66,6 +72,11 @@ fn main() {
             let _ = std::fs::write(out.join("failure.txt"), error);
             std::process::exit(1);
         }
+        return;
+    }
+    if let Some(i) = args.iter().position(|a| a == "--desktop-capture") {
+        let out=PathBuf::from(args.get(i+1).expect("capture directory"));
+        if let Err(e)=desktop_checks::run(&out){let _=std::fs::write(out.join("failure.txt"),e);std::process::exit(1)}
         return;
     }
     if let Some(i) = args.iter().position(|a| a == "--350-capture") {
@@ -203,3 +214,17 @@ fn default_data_dir() -> PathBuf {
     }
     dotisle_domain::preferences::data_dir()
 }
+
+// Stable C ABI; no Rust values or allocator ownership cross the DLL boundary.
+#[no_mangle]
+pub extern "C" fn dotisle_module_abi() -> u32 { 1 }
+#[no_mangle]
+pub extern "C" fn dotisle_module_run() -> i32 {
+    match std::panic::catch_unwind(main) { Ok(()) => 0, Err(_) => 1 }
+}
+
+#[no_mangle]
+pub extern "C" fn dotisle_module_kind() -> u32 { 2 }
+
+fn describe_only(_:serde_json::Value)->Result<serde_json::Value,String>{Err("bootstrap module has no service commands".into())}
+dotisle_module_api::export_service!("settings",describe_only);

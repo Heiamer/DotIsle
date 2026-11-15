@@ -779,7 +779,6 @@ pub fn render(ui: &mut Ui, m: &Model, x: f64, y: f64, w: f64, state: &ViewState)
             cy += 64.;
         }
         3 => {
-            motion_editor(ui, m, x, &mut cy, w, state);
             heading(ui, "岛周围的光效", x, &mut cy, w);
             toggles(
                 ui,
@@ -819,6 +818,8 @@ pub fn render(ui: &mut Ui, m: &Model, x: f64, y: f64, w: f64, state: &ViewState)
                 "Breath",
                 &[("柔和呼吸", "Breath"), ("音乐律动", "Rhythm")],
             );
+            ui.label("仅经典岛显示外围光效，Mini 不显示。",x,cy,13.,s.on_surface_variant,false,w);cy+=36.;
+            motion_editor(ui, m, x, &mut cy, w, state);
         }
         4 => {
             heading(ui, "网易云进度拖动", x, &mut cy, w);

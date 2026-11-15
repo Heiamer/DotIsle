@@ -107,7 +107,7 @@ impl Model {
         if let Some(path) = state["dataDirectory"].as_str() {
             self.data = PathBuf::from(path);
         }
-        if let Some(page) = state["pendingPage"].as_str() {
+        if let Some(page) = state["pendingPage"].as_str().filter(|_|state["centerFrontend"]!="go") {
             self.page = match page {
                 "timers" => Page::Focus,
                 "todos" => Page::Todos,
@@ -123,7 +123,15 @@ impl Model {
                 "about" | "updates" | "update" => 3,
                 _ => 255,
             };
-            self.native_command("pageSeen", Value::Null);
+            if let Some(request)=state["pendingCenterAction"].as_object(){
+                let id=request.get("id").and_then(Value::as_str).unwrap_or("");
+                match request.get("action").and_then(Value::as_str){
+                    Some("todoEdit")=>self.dispatch(Action::EditTodo(if id.is_empty(){None}else{Some(id.into())})),
+                    Some("widgetConfigure")=>self.edit_widget_config(id),
+                    _=>{},
+                }
+            }
+            self.native_command("pageSeen",json!({"requestId":state["pendingRequestId"]}));
             self.show_center = true;
             self.scroll = 0.;
         }
@@ -140,7 +148,7 @@ impl Model {
         self.native_state = state;
         crate::workflow::sync(self);
         crate::tutorial::sync(self);
-        if self.native_state["pendingAction"] == "quickReminder" {
+        if self.native_state["pendingAction"] == "quickReminder" && self.native_state["centerFrontend"]!="go" {
             if !self
                 .dialog
                 .as_ref()

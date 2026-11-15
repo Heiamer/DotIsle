@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "3.5.3"
+  #define AppVersion "5.0.0-rc1"
 #endif
 #ifndef AppId
   #define AppId "DotIsle"
@@ -29,7 +29,7 @@ OutputBaseFilename={#OutputBase}
 Compression=lzma2/fast
 SolidCompression=yes
 CloseApplications=yes
-CloseApplicationsFilter=LyricIsland.exe,LyricIsland.Settings.exe,LyricIsland.Updater.exe
+CloseApplicationsFilter=LyricIsland.exe,LyricIsland.Center.exe,LyricIsland.Settings.exe,LyricIsland.Updater.exe
 RestartApplications=no
 SetupLogging=yes
 
