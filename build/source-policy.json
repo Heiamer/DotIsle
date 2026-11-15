@@ -9,7 +9,8 @@
     "Rust/crates/lyric-core/src/planner.rs",
     "Rust/crates/lyric-core/src/policy.rs",
     "Rust/crates/lyric-core/src/projector.rs",
-    "Rust/crates/lyric-core/src/text.rs"
+    "Rust/crates/lyric-core/src/text.rs",
+    "Rust/crates/dotisle-app"
   ],
   "licenseFiles": [
     ".gitattributes",

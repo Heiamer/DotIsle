@@ -30,6 +30,17 @@ pub struct Panel {
     pub blocks: Vec<dotisle_domain::plugins::ResolvedBlock>,
     pub timer: Option<TimerPresentation>,
 }
+impl Panel {
+    pub fn delete_hint(&self) -> &'static str {
+        match self.kind {
+            1 => "删除计时器",
+            2 => "删除待办卡片（保留清单）",
+            3 => "删除更新提示（保留更新任务）",
+            4 => "删除插件（所有展示位置）",
+            _ => "删除卡片",
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Spring {
     pub value: f64,

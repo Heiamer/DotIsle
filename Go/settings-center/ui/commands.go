@@ -6,6 +6,9 @@ import (
 	"dotisle/settings/island"
 )
 
+// ReportError displays an error from an embedded native module on the UI thread.
+func (a *App) ReportError(message string) { a.pushToast(message) }
+
 // command returns pipe and application failures to the main thread. An accepted
 // moduleApply must close this process so the updater can release its loaded DLLs.
 func (a *App) command(name string, value any) {

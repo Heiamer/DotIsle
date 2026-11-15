@@ -1,6 +1,5 @@
-// The overview deck (overview.rs): five cards on an endless ring, the focused card
-// expanded and its neighbours compressed above and below. Ring math is ported from
-// dotisle-domain card_ring.rs so motion never meets an endpoint.
+// Equal-sized overview cards travel on a continuous ring. Only transforms
+// and opacity change while the fixed content surfaces stay cached.
 package ui
 
 import (
@@ -14,6 +13,7 @@ import (
 const (
 	deckCount = 5
 	deckStep  = 360.0
+	deckGap   = 24.0
 	deckCycle = deckStep * deckCount
 )
 
@@ -64,7 +64,7 @@ func deckCardHeight(viewport float64) float64 {
 	return h
 }
 
-// homePage keeps body layout fixed while shells compress on a continuous ring.
+// homePage gives every page the same shell and content bounds, including empty pages.
 func (a *App) homePage(c *ui.Context, x, y, w, viewportH float32) {
 	pages := a.scrollPages()
 	count := len(pages)
@@ -97,24 +97,10 @@ func (a *App) homePage(c *ui.Context, x, y, w, viewportH float32) {
 	} else {
 		c.AnimationFrame()
 	}
-	blur := float32(0)
-	if !reduced && count > 1 && !deckSpringIdle {
-		// Retained velocity is stable across repeated builds at the same time.
-		blur = float32(math.Round(clampF64(math.Abs(spring.velocity)/1600, 0, 1.5)*4) / 4)
-	}
-	// Keep slot identities across the wrap seam, including a captured press.
+	// Slot identities survive the modulo seam and a captured drag.
 	progress := deckPos / deckStep
 	base := int(math.Floor(progress))
-	pageHeight := func(slot int) float32 {
-		key := pages[deckSlotIndex(slot, count)]
-		return a.deckPageHeight(key, h)
-	}
-	currentH, nextH := pageHeight(base), pageHeight(base+1)
-	currentH = appSpringValue(c, motion, "height-"+pages[deckSlotIndex(base, count)], currentH, motionStandard, reduced)
-	nextH = appSpringValue(c, motion, "height-"+pages[deckSlotIndex(base+1, count)], nextH, motionStandard, reduced)
-	phase := progress - float64(base)
-	ease := float32(phase * phase * (3 - 2*phase))
-	y += (h - (currentH + (nextH-currentH)*ease)) / 2
+	y = max(float32(24), (viewportH-h)/2)
 	// Only these four slots can have nonzero visibility. No per-frame slice.
 	order := [4]int{base - 1, base, base + 1, base + 2}
 	for i := 1; i < len(order); i++ {
@@ -123,17 +109,14 @@ func (a *App) homePage(c *ui.Context, x, y, w, viewportH float32) {
 		}
 	}
 
-	// A single transparent edge mask and foreground blur for the entire deck.
+	// One edge mask; no animated full-viewport blur or per-page reflow.
 	black := ui.RGB(0, 0, 0)
 	ui.Box(c).Key("deck-edges").Absolute().Left(0).Top(0).Width(w).Height(viewportH).
 		MaskLinearGradient(ui.LinearGradient{Angle: 180, Stops: []ui.GradientStop{
-			{Color: ui.Transparent, At: 0}, {Color: black, At: min(58/viewportH, .3)},
-			{Color: black, At: max(1-72/viewportH, .7)}, {Color: ui.Transparent, At: 1},
+			{Color: ui.Transparent, At: 0}, {Color: black, At: min(24/viewportH, .3)},
+			{Color: black, At: max(1-24/viewportH, .7)}, {Color: ui.Transparent, At: 1},
 		}}).Children(func() {
 		layer := ui.Box(c).Key("deck-layer").Absolute().Fill()
-		if blur > .05 {
-			layer.Blur(blur)
-		}
 		layer.Children(func() {
 			for _, slot := range order {
 				if count == 1 && slot != base {
@@ -145,68 +128,26 @@ func (a *App) homePage(c *ui.Context, x, y, w, viewportH float32) {
 				if visibility <= 0 {
 					continue
 				}
-				dy, visualH := deckPairGeometry(progress-float64(base), currentH, nextH, slot-base)
-				bodyH := pageHeight(slot)
-				scale := float32(1 - .035*math.Min(math.Abs(d), 3))
+				dy, visualH := deckGeometry(d, h)
 				ty := y + float32(dy)
-				if ty+visualH*scale < 0 || ty > viewportH {
+				if ty+h < 0 || ty > viewportH {
 					continue
 				}
-				dx := cardW * (1 - scale) / 2
 				card := ui.ButtonBase(c).Role(ui.RoleGroup).Key("deck-slot-"+itoa(slot)).Label("浏览"+overviewName(pages[i])+"卡片").Absolute().Left(x).Top(y).
-					Width(cardW).Height(h).TransformOrigin(0, 0).Scale(scale, scale).Translate(dx, float32(dy)).Opacity(visibility)
-				// Hit bounds match the compressed shell, not the expanded body.
-				card.Height(visualH)
+					Width(cardW).Height(h).Translate(0, float32(dy)).Opacity(visibility)
 				dragged := a.deckGesture(c, card, count, h)
 				if card.Clicked() && !dragged && math.Abs(d) >= .5 {
 					a.deckTo(float64(slot)*deckStep, false)
 				}
-				card.Children(func() { a.deckCard(c, pages[i], cardW, bodyH, visualH, d) })
+				card.Children(func() { a.deckCard(c, pages[i], cardW, h, visualH, d) })
 			}
 		})
 	})
 }
 
-func (a *App) deckPageHeight(key string, full float32) float32 {
-	if (key == "todos" && a.pendingTodos() == 0) || (key == "notifications" && len(a.historyEvents()) == 0) {
-		return min(full, float32(280))
-	}
-	return full
-}
-
-// Adjacent pages can have different resting heights. Position the next shell
-// from the current shell's bottom, preserving the 16-DIP overlap at every phase.
-func deckPairGeometry(phase float64, currentH, nextH float32, relative int) (float64, float32) {
-	t := float32(clampF64(phase, 0, 1))
-	ease := t * t * (3 - 2*t)
-	top := -t * 56
-	current := currentH + (72-currentH)*ease
-	next := 72 + (nextH-72)*ease
-	switch relative {
-	case -1:
-		return float64(top - 56), 72
-	case 0:
-		return float64(top), current
-	case 1:
-		return float64(top + current - 16), next
-	default:
-		return float64(top + current + next - 32), 72
-	}
-}
-
-// Adjacent shells overlap by only 16 DIPs throughout the transition. Their
-// heights add to h+72, rather than both staying nearly full size at mid-phase.
+// Full-sized neighbours keep a constant gap at every intermediate phase.
 func deckGeometry(d float64, h float32) (float64, float32) {
-	t := math.Min(math.Abs(d), 1)
-	ease := t * t * (3 - 2*t)
-	height := h + (72-h)*float32(ease)
-	dy := d * 56
-	if d >= 0 && d <= 1 {
-		dy += float64(h-72) * ease
-	} else if d > 1 {
-		dy = float64(h-16) + (d-1)*56
-	}
-	return dy, height
+	return d * (float64(h) + deckGap), h
 }
 
 // The deck ancestor and card backgrounds accept drags; nested buttons retain
@@ -216,7 +157,7 @@ func (a *App) deckGesture(c *ui.Context, handle ui.Element, count int, h float32
 	if count < 2 {
 		return false
 	}
-	factor := deckStep / float64(h-16)
+	factor := deckStep / (float64(h) + deckGap)
 	if held {
 		deckLastInput = c.Now()
 		if dy != 0 {
@@ -248,7 +189,7 @@ func (a *App) deckScroll(ev ui.InputEvent, h float32) bool {
 	}
 	deckLastInput = ev.Time
 	if ev.Precise {
-		a.deckTo(deckPos+float64(ev.DY)*deckStep/float64(h-16), true)
+		a.deckTo(deckPos+float64(ev.DY)*deckStep/(float64(h)+deckGap), true)
 	} else {
 		direction := math.Copysign(deckStep, float64(ev.DY))
 		from := deckTarget
@@ -298,26 +239,14 @@ func (a *App) deckTo(target float64, immediate bool) {
 	}
 }
 
-// deckCard fades the fixed-size body continuously, without the former 180-DIP
-// layout switch. The shell keeps its continuous corners throughout compression.
+// The same complete card surface moves through the viewport; only the closest
+// page owns controls. Neighbour content remains visible without duplicate titles.
 func (a *App) deckCard(c *ui.Context, key string, w, h, visualH float32, d float64) {
-	a.overviewCardSurface(c, overviewRect{key, 0, 0, w, visualH})
-	body := float32(clampF64(1-math.Abs(d)*1.2, 0, 1))
-	if body < .999 {
-		ink := a.Palette.Scheme.OnSurface
-		if key == "music" {
-			ink = a.musicCardPalette().Scheme.OnSurface
-		}
-		Label(c, overviewName(key), 24, 20, 16, ink, true, w-80).Opacity(1 - body).IgnoreInput(true)
-	}
-	if body <= .001 {
-		return
-	}
+	a.overviewCardSurface(c, overviewRect{key, 0, 0, w, h})
+	body := float32(.45 + .55*clampF64(1-math.Abs(d), 0, 1))
 	ui.Box(c).Key("deck-body").Absolute().Left(0).Top(0).Width(w).Height(h).
-		ClipInset(0, 12, h-visualH+12, 12, 0).Opacity(body).
+		ClipInset(0, 12, 12, 12, 0).Opacity(body).
 		IgnoreInput(math.Abs(d) >= .5).AccessHidden(math.Abs(d) >= .5).Children(func() {
-		// Keep the fixed content bitmap while only its shell and transform move.
-		// A live value, focus or pressed state automatically invalidates it.
 		ui.Box(c).Key("deck-content").Width(w).Height(h).Cache().Children(func() {
 			a.renderOverviewCardBody(c, overviewRect{key, 0, 0, w, h})
 		})

@@ -91,6 +91,7 @@ func (a *App) dialogViews(c *ui.Context, w, h float32) {
 	if a.fontPicker != nil {
 		a.fontPickerView(c, w, h)
 	}
+	a.gestureTutorialView(c, w, h)
 	a.showToast(c)
 }
 

@@ -6,7 +6,7 @@ pub const CORE_API:u32=1;
 pub const LIMIT:usize=4*1024*1024;
 static INITIALIZATION_ERRORS:OnceLock<Mutex<BTreeMap<String,String>>>=OnceLock::new();
 pub fn initialization_errors()->Value{INITIALIZATION_ERRORS.get_or_init(Default::default).lock().map(|m|json!(*m)).unwrap_or_else(|_|json!({"registry":"error registry unavailable"}))}
-pub const MODULES:&[(&str,&str)]=&[("core","CORE 核心"),("settings","控制中心"),("focus","计时与流程"),("todos","待办与快捷提醒"),("music","音乐与播放器"),("lyrics","歌词检索与同步"),("notifications","通知接收"),("history","通知历史"),("automation","应用提醒规则"),("devices","设备连接提醒"),("osd","系统状态提示"),("sound","音效"),("widgets","桌面组件"),("themes","主题与配色"),("glow","外围光效")];
+pub const MODULES:&[(&str,&str)]=&[("core","CORE 核心"),("desktop","桌面组件渲染"),("focus","计时与流程"),("todos","待办与快捷提醒"),("music","音乐与播放器"),("lyrics","歌词检索与同步"),("notifications","通知接收"),("history","通知历史"),("automation","应用提醒规则"),("devices","设备连接提醒"),("osd","系统状态提示"),("sound","音效"),("widgets","桌面组件"),("themes","主题与配色"),("glow","外围光效")];
 pub fn metadata(id:&str,version:&str)->Value {let dependencies=match id{"music"=>vec!["lyrics"],"widgets"=>vec!["focus"],_=>vec![]};json!({"id":id,"version":version,"abi":ABI,"coreApi":CORE_API,"coreMin":CORE_API,"coreMax":CORE_API,"dataSchema":1,"dependencies":dependencies})}
 pub fn filename(id:&str)->Option<String>{MODULES.iter().any(|(key,_)|*key==id).then(||format!("dotisle_{id}.dll"))}
 #[repr(C)]

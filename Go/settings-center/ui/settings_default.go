@@ -90,17 +90,17 @@ func updateChannelLocked(phase string) bool {
 // Channel state is acknowledged by the native updater, never guessed locally.
 func (a *App) aboutBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	s := &p.Scheme
-	version := stateString(a.State, "5.0.0-rc1", "bundleVersion")
-	if version == "5.0.0-rc1" {
-		version = stateString(a.State, "5.0.0-rc1", "version")
+	version := stateString(a.State, "5.0.0-rc2", "bundleVersion")
+	if version == "5.0.0-rc2" {
+		version = stateString(a.State, "5.0.0-rc2", "version")
 	}
 	u, _ := a.State["softwareUpdate"].(map[string]any)
 	phase := leafStr(u["phase"], "idle")
 	channel := stateString(a.State, "stable", "updateChannel")
 	locked := updateChannelLocked(phase)
 	Panel(c, p, x, y, w, 236, s.Container).Label("关于点屿品牌卡片")
-	wordW := min(float32(320), w-80)
-	drawWordmark(c, x+(w-wordW)/2, y+30, wordW, 104, s.OnSurface)
+	wordW := min(float32(220), w-80)
+	drawWordmark(c, x+(w-wordW)/2, y+26, wordW, 112, s.OnSurface)
 	CenteredText(c, "版本 "+version, x+24, y+151, w-48, 24, 14, s.OnSurfaceVariant, false)
 	CenteredText(c, "界面字体 · HarmonyOS Sans", x+24, y+192, w-48, 20, 12, s.OnSurfaceVariant, false)
 	y += 252

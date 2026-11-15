@@ -17,12 +17,12 @@ foreach($library in @('shlwapi','ktmw32')){
 }
 if(-not $env:DOTISLE_BUILD_SUPPORT){$env:DOTISLE_BUILD_SUPPORT=$support}
 if(-not $env:ZIG_GLOBAL_CACHE_DIR){$env:ZIG_GLOBAL_CACHE_DIR=Join-Path $CacheRoot 'zig'}
-$package=@{Core='lyric-native';ControlCenter='dotisle-app';Updater='lyric-bootstrap'}[$Module]
+$package=@{Core='lyric-native';ControlCenter='dotisle-desktop';Updater='lyric-bootstrap'}[$Module]
 if(-not $package){$package='dotisle-'+$Module.ToLowerInvariant()}
 $arguments=@('build','--locked','--package',$package,'--profile',$Profile)
 if($Module -ne 'Updater'){$arguments+='--lib'}else{$arguments+=@('--bin','lyric-updater')}
 & "$PSScriptRoot/li-cargo.ps1" @arguments
 if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
-$file=@{Core='dotisle_core.dll';ControlCenter='dotisle_settings.dll';Updater='lyric-updater.exe'}[$Module]
+$file=@{Core='dotisle_core.dll';ControlCenter='dotisle_desktop.dll';Updater='lyric-updater.exe'}[$Module]
 if(-not $file){$file='dotisle_'+$Module.ToLowerInvariant()+'.dll'}
 Write-Output (Join-Path $env:DOTISLE_TARGET_DIR "$Profile/$file")

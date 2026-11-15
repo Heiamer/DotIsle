@@ -515,8 +515,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "dotisle-app"
-version = "5.0.0-rc1"
+name = "dotisle-automation"
+version = "1.0.0"
+dependencies = [
+ "dotisle-module-api",
+ "dotisle-module-storage",
+ "serde",
+ "serde_json",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "dotisle-desktop"
+version = "5.0.0-rc2"
 dependencies = [
  "base64",
  "dotisle-domain",
@@ -537,17 +548,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dotisle-automation"
-version = "1.0.0"
-dependencies = [
- "dotisle-module-api",
- "dotisle-module-storage",
- "serde",
- "serde_json",
- "windows 0.62.2",
-]
-
-[[package]]
 name = "dotisle-devices"
 version = "1.0.0"
 dependencies = [
@@ -561,7 +561,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-domain"
-version = "5.0.0-rc1"
+version = "5.0.0-rc2"
 dependencies = [
  "dotisle-module-api",
  "lyric-backend",
@@ -688,7 +688,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-render"
-version = "5.0.0-rc1"
+version = "5.0.0-rc2"
 dependencies = [
  "dotisle-scene",
  "fontique",
@@ -701,7 +701,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-scene"
-version = "5.0.0-rc1"
+version = "5.0.0-rc2"
 dependencies = [
  "glifo",
  "vello_common",
@@ -1520,7 +1520,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-archive"
-version = "5.0.0-rc1"
+version = "5.0.0-rc2"
 dependencies = [
  "flate2",
  "sha2",
@@ -1528,7 +1528,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-backend"
-version = "5.0.0-rc1"
+version = "5.0.0-rc2"
 dependencies = [
  "aes",
  "base64",
@@ -1547,7 +1547,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-bootstrap"
-version = "5.0.0-rc1"
+version = "5.0.0-rc2"
 dependencies = [
  "dotisle-module-api",
  "dotisle-render",
@@ -1563,7 +1563,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-core"
-version = "5.0.0-rc1"
+version = "5.0.0-rc2"
 dependencies = [
  "regex",
  "serde",
@@ -1574,7 +1574,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-native"
-version = "5.0.0-rc1"
+version = "5.0.0-rc2"
 dependencies = [
  "base64",
  "dotisle-domain",

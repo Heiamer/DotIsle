@@ -85,7 +85,7 @@ func (a *App) widgetStyleCard(c *ui.Context, p *Palette, x, y, cw float32, kind,
 		})
 }
 
-var widgetStyleKeys = [5]string{"Original", "Miuix", "Terminal", "Pixel", "Gallery"}
+var widgetStyleKeys = [5]string{"original", "miuix", "terminal", "pixel", "gallery"}
 
 func widgetDims(size string) [2]float64 {
 	switch size {

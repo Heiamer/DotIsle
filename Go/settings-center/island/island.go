@@ -41,6 +41,7 @@ type State struct {
 	Settings  map[string]any
 	Raw       map[string]any
 	Err       string
+	Exited    bool // The connected native process exited; its UI host must stop too.
 }
 
 // Packet mirrors remote.rs Packet: the latest state plus the reply to a command.
@@ -293,6 +294,7 @@ func Run(data string) <-chan *State {
 }
 
 func worker(data string, out chan<- *State) {
+	defer close(out)
 	PumpTrace("worker start data=%s", data)
 	// Connect immediately. A missing island is started once, exactly like remote.rs.
 	if _, err := request("state", nil); err != nil {
@@ -345,11 +347,9 @@ func worker(data string, out chan<- *State) {
 		}
 		if pid != 0 {
 			if !processAlive(pid) {
-				PumpTrace("island pid %d exited; waiting for reconnect", pid)
-				pid = 0
-				previous = nil
-				lastError = "主程序已退出，等待重新连接。"
-				out <- &State{Err: "主程序已退出，等待重新连接。"}
+				PumpTrace("island pid %d exited; stopping its center and widgets", pid)
+				out <- &State{Err: "主程序已退出。", Exited: true}
+				return
 			}
 		}
 	}

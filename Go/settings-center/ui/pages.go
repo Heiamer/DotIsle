@@ -138,8 +138,7 @@ func (a *App) settingsPage(c *ui.Context, x, y, w float32) float32 {
 	tab := a.SettingsTab
 	switch tab {
 	case TabLayoutEditor:
-		a.placeholderPage(c, p, x, y, w, "灵动岛布局编辑器在本页随后接入")
-		return y + 64
+		return a.musicLayoutEditor(c, p, x, y, w)
 	case TabRoot:
 		cw := (w - 16) / 2
 		for i, card := range groupCards {

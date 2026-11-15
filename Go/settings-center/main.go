@@ -6,7 +6,9 @@ package main
 import (
 	"flag"
 	"log"
+	"os"
 
+	"dotisle/settings/desktop"
 	"dotisle/settings/island"
 	"dotisle/settings/prefs"
 	"dotisle/settings/ui"
@@ -16,7 +18,21 @@ import (
 
 func main() {
 	dataFlag := flag.String("data-dir", "", "island data directory")
+	warm := flag.Bool("warm", false, "start desktop widgets without showing the center")
+	verify := flag.String("verify", "", "capture the packaged control center and desktop renderer")
+	health := flag.String("module-health", "", "check embedded renderer and theme interfaces")
 	flag.Parse()
+	if *verify != "" || *health != "" {
+		output := *health
+		if *verify != "" {
+			output = *verify
+		}
+		if err := verifyCenter(output, *verify != ""); err != nil {
+			log.Print(err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	data := island.DataDir(*dataFlag)
 	if !acquireSingleInstance(data) {
@@ -31,11 +47,14 @@ func main() {
 
 	app := &ui.App{Prefs: p, Data: data, SettingsTab: ui.TabRoot}
 	app.LoadStartupSettings()
+	host := desktop.New(data)
+	defer host.Stop()
 
 	mygo.App.WhenReady(func() {
 		ui.RegisterFonts()
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title:             "点屿 · 控制中心",
+			Hidden:            *warm,
 			Width:             ui.WindowW,
 			Height:            ui.WindowH,
 			MinWidth:          ui.WindowW,
@@ -53,7 +72,9 @@ func main() {
 			log.Printf("window icon: %v", err)
 		}
 		app.Win = win
-		app.StartSignature()
+		if !*warm {
+			app.StartSignature()
+		}
 		win.SetBackgroundColor("transparent")
 
 		// The island pump: every snapshot lands on the main thread through Update.
@@ -61,10 +82,19 @@ func main() {
 			for st := range island.Run(data) {
 				island.PumpTrace("update enter err=%q", st.Err)
 				win.Update(func() {
+					if st.Exited {
+						host.Stop()
+						mygo.App.Quit()
+						return
+					}
 					if st.Err != "" {
 						app.ApplyPacket(nil, false, st.Err)
 					} else {
 						app.ApplyPacket(st.Raw, true, "")
+						if err := host.Apply(st.Raw); err != nil {
+							log.Printf("desktop bridge: %v", err)
+							app.ReportError(err.Error())
+						}
 					}
 					island.PumpTrace("update applied")
 				})

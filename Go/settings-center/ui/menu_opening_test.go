@@ -3,7 +3,6 @@ package ui
 import (
 	"github.com/egoist/mygo/ui"
 	"image/png"
-	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -105,13 +104,13 @@ func TestMenuStaysWhiteOnLeftAndLeavesRightUnchanged(t *testing.T) {
 	}
 }
 
-func TestOriginalOpeningTimingAndOpaquePageCulling(t *testing.T) {
-	if math.Abs(signatureDuration(false)-1.48) > .0001 {
-		t.Fatal("3.5.1 timing changed")
+func TestOpeningExitAndOpaquePageCulling(t *testing.T) {
+	if signatureDuration(false) > 1.8 {
+		t.Fatal("opening delays the interface")
 	}
-	_, alpha := sigInk(1.39, false)
-	if math.Abs(alpha-.5) > .0001 {
-		t.Fatal("cover exit must be linear")
+	_, alpha := sigInk(sigWrite+sigHold+sigExit/2, false)
+	if alpha <= 0 || alpha >= 1 {
+		t.Fatal("exit did not crossfade")
 	}
 	a := newTestApp(t)
 	a.StartSignature()

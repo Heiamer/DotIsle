@@ -20,8 +20,9 @@ class PrebuiltReleaseTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.prefix = 'DotIsle-' + self.version
-        self.runtime = {f'dotisle_module{i}.dll': b'module' for i in range(15)}
-        self.runtime.update({name: b'binary' for name in ('LyricIsland.exe', 'LyricIsland.Center.exe', 'LyricIsland.Settings.exe', 'LyricIsland.Updater.exe')})
+        self.runtime = {f'dotisle_module{i}.dll': b'module' for i in range(14)}
+        self.runtime['dotisle_desktop.dll'] = b'desktop'
+        self.runtime.update({name: b'binary' for name in ('LyricIsland.exe', 'LyricIsland.Center.exe', 'LyricIsland.Updater.exe')})
         self.portable()
         with zipfile.ZipFile(self.root / f'{self.prefix}-Source.zip', 'w') as archive:
             archive.comment = self.commit.encode('ascii')
@@ -65,7 +66,7 @@ class PrebuiltReleaseTests(unittest.TestCase):
             verify(self.root, self.version, self.commit, expected)
 
     def test_failed_report_is_rejected(self):
-        self.reports('settings/report.json')
+        self.reports('center/control-center/report.json')
         with self.assertRaisesRegex(ValueError, 'Acceptance failed'):
             self.check()
 

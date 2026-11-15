@@ -14,7 +14,6 @@ import sys
 # (line 45), bundled docs (line 52) and the notes file it copies before staging (line 56).
 SHIPPED_BINARIES = (
     'LyricIsland.exe',
-    'lyric-island-settings.exe',
     'lyric-updater.exe',
     'lyric-uninstall.exe',
     'lyric-setup.exe',
@@ -22,7 +21,7 @@ SHIPPED_BINARIES = (
 )
 MODULE_DLLS = (
     'dotisle_core.dll',
-    'dotisle_settings.dll',
+    'dotisle_desktop.dll',
     'dotisle_focus.dll',
     'dotisle_todos.dll',
     'dotisle_music.dll',
@@ -38,7 +37,7 @@ MODULE_DLLS = (
     'dotisle_glow.dll',
 )
 RUNTIME_DOCS = ('README.md', 'GESTURE-TUTORIAL.md', 'NETEASE-SEEKFIX.md', 'CHANGELOG.md',
-                'LICENSE', 'FONT-NOTICE.md', 'THIRD-PARTY-NOTICES.md', 'REWRITE.md')
+                'LICENSE', 'FONT-NOTICE.md', 'THIRD-PARTY-NOTICES.md', 'REWRITE.md', 'docs/UNIFIED-CONTROL-CENTER.md')
 
 HINT_BINARIES = '在仓库根跑 tools/li-cargo.ps1 build --release --workspace --bins --lib --locked 重新产出 Rust 运行时'
 HINT_CENTER = '先在 Go/settings-center 里构建控制中心：go build -trimpath -ldflags "-s -w -H=windowsgui" -o <仓库根>/target/release/LyricIsland.Center.exe .'

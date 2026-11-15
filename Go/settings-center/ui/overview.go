@@ -329,7 +329,7 @@ func (a *App) overviewExtra(c *ui.Context, r overviewRect) {
 			tile.Disabled(!enabled)
 			hoverLayer(&tile, Col(s.High), s.OnSurface, enabled)
 			if enabled && tile.Clicked() {
-				a.command("widgetAdd", map[string]any{"kind": item.kind, "size": "medium", "style": "Original"})
+				a.command("widgetAdd", map[string]any{"kind": item.kind, "size": "medium", "style": "original"})
 			}
 			tile.Children(func() {
 				Icon(c, item.icon, (tw-24)/2, 13, 24, s.OnSurfaceVariant)

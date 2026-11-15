@@ -1,4 +1,22 @@
 //! Conservative local OTP extraction. Codes are never logged or persisted.
+use crate::layout::Rect;
+pub const WIDTH:f64=384.;
+pub const HEIGHT:f64=84.;
+#[derive(Clone,Copy,Debug)]
+pub struct Layout{pub body:Rect,pub icon:Rect,pub source:Rect,pub digits:Rect,pub action:Rect,pub compact_action:bool}
+/// Content keeps its final geometry while the live shell reveals and clips it.
+pub fn layout(shell:Rect,host_width:f64)->Layout{
+    let width=WIDTH.min((host_width-48.).max(140.));
+    let body=Rect::new((host_width-width)/2.,shell.y,width,HEIGHT);
+    let compact_action=width<336.;let action_width=if compact_action{28.}else{84.};
+    let x=body.x+60.;let action=Rect::new(body.x+width-20.-action_width,body.y+38.,action_width,28.);
+    Layout{body,icon:Rect::new(body.x+18.,body.y+27.,30.,30.),
+        source:Rect::new(x,body.y+13.,width-80.,18.),
+        digits:Rect::new(x,body.y+34.,(action.x-x-14.).max(1.),36.),action,compact_action}
+}
+pub fn content_alpha(shell_height:f64,mix:f64)->f32{
+    (mix.clamp(0.,1.)*((shell_height-(HEIGHT-8.))/8.).clamp(0.,1.)) as f32
+}
 pub fn extract(title:&str,body:&str)->Option<String>{
     let text=format!("{title}\n{body}").to_lowercase().chars().map(|c|{
         if ('０'..='９').contains(&c){char::from_u32(c as u32-'０' as u32+'0' as u32).unwrap()}else{c}
@@ -67,5 +85,36 @@ pub fn copy(code:&str,hwnd:windows::Win32::Foundation::HWND)->Result<(),String>{
             assert_eq!(extract("",body),None,"{body}");
         }
         assert_eq!(extract("验证码","AB123456CD"),None);
+    }
+}
+
+#[cfg(test)]mod layout_tests{
+    use super::*;
+    #[test]fn source_digits_and_copy_action_have_separate_safe_lanes(){
+        for host in [352.,400.,448.,488.,640.]{let g=layout(Rect::new(host/2.-130.,24.,260.,40.),host);
+            for r in [g.icon,g.source,g.digits,g.action]{assert!(r.w>0.&&r.h>0.);assert!(r.x>=g.body.x+16.&&r.x+r.w<=g.body.x+g.body.w-16.);assert!(r.y>=g.body.y+12.&&r.y+r.h<=g.body.y+g.body.h-12.);}
+            assert!(g.icon.x+g.icon.w+12.<=g.source.x);
+            assert!(g.source.y+g.source.h+3.<=g.digits.y);
+            assert!(g.digits.x+g.digits.w+14.<=g.action.x);
+        }
+    }
+    #[test]fn mini_and_classic_reveal_fixed_content_without_squeezing_text(){
+        for base in [Rect::new(114.,24.,260.,40.),Rect::new(194.,24.,100.,18.)]{
+            let mut hub=crate::capsule_alert::Hub::default();hub.enqueue(crate::capsule_alert::Alert::verification("test","测试应用","12345678".into()));
+            assert!(hub.begin(base,base.h/2.,488.,24.,0.,true));
+            let expected=layout(Rect::new(52.,24.,WIDTH,HEIGHT),488.);
+            for i in 0..120{let now=i as f64/120.;let(shell,_,mix)=hub.banner.presentation(now);let g=layout(shell,488.);
+                assert!((g.source.x-expected.source.x).abs()<0.001);assert_eq!(g.source.y,expected.source.y);assert_eq!(g.digits,expected.digits);assert_eq!(g.action,expected.action);
+                assert!((0.0..=1.0).contains(&content_alpha(shell.h,mix)));
+            }
+            hub.dismiss(base,base.h/2.,0.5,true);hub.tick(base,base.h/2.,2.,true);assert!(!hub.visible());
+            let(shell,_,mix)=hub.banner.presentation(2.);assert!(content_alpha(shell.h,mix)<0.001);
+        }
+        assert_eq!(content_alpha(18.,1.),0.);assert_eq!(content_alpha(HEIGHT,1.),1.);
+    }
+    #[test]fn supported_code_lengths_keep_leading_zeroes_and_use_one_payload(){
+        for code in ["0042","002468","00135790"]{let a=crate::capsule_alert::Alert::verification("test","验证测试",code.into());
+            assert_eq!(a.code.as_deref(),Some(code));assert!(a.trailing.is_empty());assert_eq!((a.width,a.height),(WIDTH,HEIGHT));
+        }
     }
 }

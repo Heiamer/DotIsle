@@ -53,15 +53,19 @@ func albumSeed(pixels *image.NRGBA) uint32 {
 }
 
 func (a *App) overviewCardSurface(c *ui.Context, r overviewRect) {
-	appleWidgetSurface(c, &a.Palette, r)
 	if r.key != "music" || a.coverBitmap() == nil || coverCache.frost == nil {
+		appleWidgetSurface(c, &a.Palette, r)
 		return
 	}
+	// The material owns the surface. A white card beneath a circular clip
+	// exposes four white crescents because continuous corners have a different path.
 	bmp := coverCache.frost
-	ui.Box(c).Absolute().Left(r.x).Top(r.y).Width(r.w).Height(r.h).
-		Radius(24).Clip().IgnoreInput(true).Children(func() {
-		ui.Image(c, bmp).Absolute().Left(-28).Top(-28).Width(r.w + 56).Height(r.h + 56).Fit(ui.Cover)
-		ui.Box(c).Absolute().Fill().Draw(func(pc *ui.Painter, box ui.Rect) {
+	card := ui.Box(c).Absolute().Left(r.x).Top(r.y).Width(r.w).Height(r.h).
+		Radius(CardRadius).Background(ui.Transparent).IgnoreInput(true)
+	elevationStyle(&card, &a.Palette, elevationCard)
+	card.Draw(func(pc *ui.Painter, box ui.Rect) {
+		pc.ClipPath(continuousCardPath(box, CardRadius), func() {
+			pc.Image(bmp, ui.Rect{X: box.X - 28, Y: box.Y - 28, W: box.W + 56, H: box.H + 56}, ui.Cover)
 			pc.FillGradient(box, ui.LinearGradient{From: AlphaCol(0x080b14, .75), To: AlphaCol(0x080b14, .32), Angle: 135}, 0)
 			lower := ui.Rect{X: box.X, Y: box.Y + max(float32(0), box.H-150), W: box.W, H: min(box.H, float32(150))}
 			pc.FillGradient(lower, ui.LinearGradient{From: AlphaCol(0x080b14, 0), To: AlphaCol(0x080b14, .56), Angle: 180}, 0)

@@ -52,12 +52,12 @@ fn apply(pending:&Path,target:&Path,data:&Path,pid:u32,settings:u32,pipe:&str)->
  if before["processId"].as_u64()!=Some(pid as u64)||!win::process_image(pid).is_some_and(|p|same_path(&p,&target.join("LyricIsland.exe"))){return Err(err("运行实例不匹配，未安装模块"));}
  let stage_dir=work.join("install");std::fs::create_dir_all(&stage_dir)?;std::fs::copy(&candidate,stage_dir.join(&filename))?;
  let journal=data.join("module-update-result.json");paths::write_json(&journal,&json!({"phase":"applying","id":id,"message":"正在保存并替换模块"}))?;
- // A separately opened settings window must also release its DLL, and only its verified process is closed.
- if settings!=0&&win::process_image(settings).is_some_and(|p|same_path(&p,&target.join("LyricIsland.Settings.exe"))){win::close_main_windows(settings);}
+ // The unified center must release its embedded desktop DLL before replacement.
+ if settings!=0&&win::process_image(settings).is_some_and(|p|same_path(&p,&target.join("LyricIsland.Center.exe"))){win::close_main_windows(settings);}
  updater::stop_app(pipe)?;let mut recovery=RestartGuard{target:target.into(),data:data.into(),active:true};updater::wait(pid as i32)?;if settings!=0{updater::wait(settings as i32)?;}
  let backup=work.join("backup");let mut restarted=None;
  let mut after=||->Result<()> {
-  run_bounded(Command::new(target.join("LyricIsland.Settings.exe")).arg("--module-health").arg(work.join("settings-health")),Duration::from_secs(30))?;
+  run_bounded(Command::new(target.join("LyricIsland.Center.exe")).arg("--module-health").arg(work.join("center-health")),Duration::from_secs(30))?;
   let mut child=Command::new(target.join("LyricIsland.exe")).arg("--data-dir").arg(data).current_dir(target).creation_flags(0x08000000).spawn()?;
   let deadline=Instant::now()+Duration::from_secs(20);let mut ready=false;
   while Instant::now()<deadline {if child.try_wait()?.is_some(){break;}if let Ok(v)=win::pipe_request(pipe,&json!({"version":1,"command":"state"}),Duration::from_secs(1)){

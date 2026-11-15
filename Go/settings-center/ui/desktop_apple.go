@@ -41,7 +41,7 @@ func (a *App) appleWidgetsGallery(c *ui.Context, x, y, w float32) float32 {
 		for j, sz := range widgetSizes {
 			Chip(c, p, "size-"+entry.kind+sz.key, xx+18+float32(j)*(chipW+5), yy+252, chipW, 32, sz.label, size == sz.key, func() { a.setWidgetSize(entry.kind, sz.key) })
 		}
-		Button(c, p, "add-"+entry.kind+"Original", xx+cw-126, yy+250, 108, 36, "添加到桌面", "add", false, a.Connected && a.widgetCount() < 16, func() { a.command("widgetAdd", map[string]any{"kind": entry.kind, "size": size, "style": "Original"}) })
+		Button(c, p, "add-"+entry.kind+"Original", xx+cw-126, yy+250, 108, 36, "添加到桌面", "add", false, a.Connected && a.widgetCount() < 16, func() { a.command("widgetAdd", map[string]any{"kind": entry.kind, "size": size, "style": "original"}) })
 	}
 	y += float32((len(widgetKindLabels)+1)/2)*(cardH+20) + 12
 	if msg := stateString(a.State, "", "desktopWidgetError"); msg != "" {
@@ -153,8 +153,9 @@ func (a *App) appleDesktopPreview(c *ui.Context, p *Palette, kind, size string, 
 				if small {
 					font, textW = 30, ww
 				}
-				Label(c, clock, xx, yy+29, font, s.OnSurface, true, textW)
-				Label(c, detail, xx, yy+72, 10, s.OnSurfaceVariant, false, textW)
+				clockY := yy + 23
+				Label(c, clock, xx, clockY, font, s.OnSurface, true, textW)
+				Label(c, detail, xx, clockY+LineHeight(font)+5, 10, s.OnSurfaceVariant, false, textW)
 			}
 			label, icon := "开始专注", "play_arrow"
 			if ts := a.timerItems(); len(ts) > 0 && ts[0].Running {

@@ -43,7 +43,7 @@ def main():
     name='DotIsle-'+args.version
     runtime=out/name;assert not runtime.exists(),'Use a fresh version directory'
     runtime.mkdir()
-    binaries={'LyricIsland.exe':'LyricIsland.exe','lyric-island-settings.exe':'LyricIsland.Settings.exe','lyric-updater.exe':'LyricIsland.Updater.exe','lyric-uninstall.exe':'Uninstall.exe'}
+    binaries={'LyricIsland.exe':'LyricIsland.exe','lyric-updater.exe':'LyricIsland.Updater.exe','lyric-uninstall.exe':'Uninstall.exe'}
     for built,shipped in binaries.items():
         target=runtime/shipped
         shutil.copy2(args.binary_dir/built,target)
@@ -52,7 +52,7 @@ def main():
     # prefers it); its icon and manifest are embedded at link time via
     # rsrc_windows_amd64.syso, so no PE resource rewrite here.
     shutil.copy2(center,runtime/'LyricIsland.Center.exe')
-    for module in ['dotisle_core.dll', 'dotisle_settings.dll', 'dotisle_focus.dll', 'dotisle_todos.dll', 'dotisle_music.dll', 'dotisle_lyrics.dll', 'dotisle_notifications.dll', 'dotisle_history.dll', 'dotisle_automation.dll', 'dotisle_devices.dll', 'dotisle_osd.dll', 'dotisle_sound.dll', 'dotisle_widgets.dll', 'dotisle_themes.dll', 'dotisle_glow.dll']:
+    for module in ['dotisle_core.dll', 'dotisle_desktop.dll', 'dotisle_focus.dll', 'dotisle_todos.dll', 'dotisle_music.dll', 'dotisle_lyrics.dll', 'dotisle_notifications.dll', 'dotisle_history.dll', 'dotisle_automation.dll', 'dotisle_devices.dll', 'dotisle_osd.dll', 'dotisle_sound.dll', 'dotisle_widgets.dll', 'dotisle_themes.dll', 'dotisle_glow.dll']:
         shutil.copy2(args.binary_dir/module,runtime/module)
     shutil.copytree(root/'Assets',runtime/'Assets',ignore=shutil.ignore_patterns('ShaderCache'))
     shutil.copytree(args.shader_cache,runtime/'Assets/ShaderCache/Hybrid29')
@@ -64,6 +64,7 @@ def main():
     # Preserve relative wordmark references in the bundled README.
     shutil.copytree(root/'docs/brand',runtime/'docs/brand')
     shutil.copy2(root/'docs/PLUGIN-DEVELOPMENT.md',runtime/'docs/PLUGIN-DEVELOPMENT.md')
+    shutil.copy2(root/'docs/UNIFIED-CONTROL-CENTER.md',runtime/'docs/UNIFIED-CONTROL-CENTER.md')
     shutil.copytree(root/'examples/plugins',runtime/'examples/plugins')
     shutil.copy2(out/(name+'-Notes.md'),runtime/'发布说明.md')
     installer_stage=scratch/'installer-stage'

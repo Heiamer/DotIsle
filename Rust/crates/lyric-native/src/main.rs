@@ -19,6 +19,8 @@ mod window_level;
 use std::os::windows::process::CommandExt;
 pub const DISPLAY_VERSION: &str = env!("CARGO_PKG_VERSION");
 mod activities;
+#[cfg(test)]
+mod activity_delete_tests;
 mod app_icon;
 mod app_rules;
 mod banner;
@@ -246,6 +248,7 @@ struct App {
     last_dynamic_system: Option<u32>,
     expanded: bool,
     held: bool,
+    suppress_hover_expand: bool,
     hover_since: Instant,
     tooltip_visible: bool,
     volume: volume::Volume,
@@ -279,6 +282,7 @@ struct App {
     updates: update_activity::Hub,
     update_return: String,
     update_until: Option<Instant>,
+    update_card_deleted: bool,
     devices: devices::Hub,
     timers: timers::Store,
     selected: String,
@@ -320,7 +324,6 @@ struct App {
     widget_metrics: widget_metrics::Hub,
     last_widget_host: Instant,
     greeting_pending: bool,
-    settings_process: Option<std::process::Child>,
     center_process: Option<std::process::Child>,
     settings_wake: Option<io::SettingsWake>,
     renderer_generation: u64,
@@ -478,6 +481,7 @@ impl App {
             updates,
             update_return: "music".into(),
             update_until: None,
+            update_card_deleted: false,
             banner: banner::Banner::default(),
             osd_banner: banner::Banner::default(),
             osd: osd::Hub::default(),
@@ -512,6 +516,7 @@ impl App {
             last_dynamic_system: None,
             expanded: false,
             held: false,
+            suppress_hover_expand: false,
             hover_since: now,
             tooltip_visible: false,
             volume: volume::Volume::default(),
@@ -588,7 +593,6 @@ impl App {
             screen_time,
             plugins,
             last_context_poll: now-Duration::from_secs(2),
-            settings_process: None,
             center_process: None,
             settings_wake: io::SettingsWake::new(),
             renderer_generation: 0,
@@ -665,7 +669,7 @@ impl App {
     }
     fn refresh_components(&mut self) {
         let mut components = vec![];
-        if self.updates.selectable() {
+        if self.updates.selectable() && !self.update_card_deleted {
             components.push("update".into());
         }
         if self.demo || self.snapshot["track"].is_object() {
@@ -1072,6 +1076,59 @@ impl App {
         }
         Ok(())
     }
+    fn delete_activity(&mut self) -> std::result::Result<(), String> {
+        if self.selected == "music" || self.panel.is_none() || !self.expanded {
+            return Ok(());
+        }
+        let selected = self.selected.clone();
+        if let Some(id) = selected.strip_prefix("timer:") {
+            let revision = self.timers.items.iter().find(|t|t.id==id).map(|t|t.revision);
+            self.timers.act(id, "delete", revision)?;
+        } else if let Some(id) = selected.strip_prefix("plugin:") {
+            self.plugins.change(id, None)?;
+        } else if selected == "todos" {
+            let before = self.settings["TodoIslandEnabled"].clone();
+            self.settings["TodoIslandEnabled"] = json!(false);
+            if let Err(error) = self.save() {
+                self.settings["TodoIslandEnabled"] = before;
+                return Err(error);
+            }
+        } else if selected == "update" {
+            // Delete the presentation without cancelling work owned by the updater.
+            self.update_card_deleted = true;
+            self.updates.reminder = false;
+            self.update_until = None;
+        } else {
+            return Ok(());
+        }
+        self.held = false;
+        self.manual_until = None;
+        self.leave_at = None;
+        self.suppress_hover_expand = true;
+        self.cursor_inside = true;
+        self.retarget(false);
+        self.refresh_components();
+        self.compact_key.clear();
+        self.dirty = true;
+        if let Some(wake) = &self.settings_wake { wake.signal(); }
+        Ok(())
+    }
+    fn track_pointer_presence(&mut self, inside: bool) {
+        // A closing surface can cross the pointer; wait for the morph to settle.
+        if !inside && self.transition.is_none() {
+            self.suppress_hover_expand = false;
+        }
+        if !self.banner.visible() && inside && !self.cursor_inside {
+            self.leave_at = None;
+            if !self.suppress_hover_expand && !self.mini() && self.flag("HoverExpand", false) {
+                self.retarget(true)
+            }
+        }
+        if !inside && self.cursor_inside && !self.held {
+            self.leave_at = Some(Instant::now());
+        }
+        self.cursor_inside = inside;
+    }
     fn retarget(&mut self, expanded: bool) {
         if self.expanded && !expanded {
             self.manual_until = None;
@@ -1194,7 +1251,7 @@ impl App {
             page.to_owned()
         });
         // A running MyGo center picks up pendingPage from its next state refresh,
-        // so waking it is enough. The Rust settings host is a separate process.
+        // so waking it is enough. Its embedded DLL owns the desktop widgets.
         if self
             .center_process
             .as_mut()
@@ -1205,15 +1262,7 @@ impl App {
             }
             return;
         }
-        // The visible control center prefers the MyGo front-end when it ships in the
-        // runtime; the Rust settings exe stays the desktop-widget host either way.
-        let center = self.base.join("LyricIsland.Center.exe");
-        let mygo = center.is_file();
-        let exe = if mygo {
-            center
-        } else {
-            self.base.join("LyricIsland.Settings.exe")
-        };
+        let exe = self.base.join("LyricIsland.Center.exe");
         if exe.exists() {
             let spawned = std::process::Command::new(exe)
                 .creation_flags(0x08000000)
@@ -1226,54 +1275,22 @@ impl App {
                 .current_dir(&self.base)
                 .spawn()
                 .ok();
-            if mygo {
-                self.center_process = spawned;
-            } else {
-                self.settings_process = spawned;
-            }
+            self.center_process = spawned;
         } else {
             self.error = Some("设置组件缺失，请完整解压运行包".into());
         }
     }
     fn ensure_widget_host(&mut self) {
-        if self.demo
-            || self.desktop_widgets.items.is_empty()
-            || widget_metrics::host_running(&self.data)
-        {
-            return;
-        }
-        if self
-            .settings_process
-            .as_mut()
-            .is_some_and(|p| p.try_wait().ok().flatten().is_none())
-        {
-            return;
-        }
-        if self.last_widget_host.elapsed() < Duration::from_secs(5) {
-            return;
-        }
-        self.last_widget_host = Instant::now();
-        let exe = self.base.join("LyricIsland.Settings.exe");
-        if !exe.is_file() {
-            self.error = Some("桌面组件需要完整的控制中心运行文件".into());
-            return;
-        }
-        self.settings_process = std::process::Command::new(exe)
-                .creation_flags(0x08000000)
-            .arg("--warm")
-            .env(
-                "LYRICISLAND_TEST_PIPE",
-                std::env::var("LYRICISLAND_TEST_PIPE")
-                    .unwrap_or_else(|_| "LyricIsland.Native.Settings.v1".into()),
-            )
-            .env("LYRICISLAND_NATIVE_DATA", &self.data)
-            .current_dir(&self.base)
-            .spawn()
-            .map_err(|e| {
-                self.error = Some(format!("无法启动桌面组件：{e}"));
-                e
-            })
-            .ok();
+        if self.demo || self.desktop_widgets.items.is_empty() || widget_metrics::host_running(&self.data) { return; }
+        if self.center_process.as_mut().is_some_and(|p|p.try_wait().ok().flatten().is_none()) { return; }
+        if self.last_widget_host.elapsed() < Duration::from_secs(5) { return; }
+        self.last_widget_host=Instant::now();
+        let exe=self.base.join("LyricIsland.Center.exe");
+        if !exe.is_file(){self.error=Some("桌面组件需要完整的控制中心运行文件".into());return;}
+        self.center_process=std::process::Command::new(exe).creation_flags(0x08000000)
+            .arg("--warm").env("LYRICISLAND_TEST_PIPE",std::env::var("LYRICISLAND_TEST_PIPE").unwrap_or_else(|_|"LyricIsland.Native.Settings.v1".into()))
+            .env("LYRICISLAND_NATIVE_DATA",&self.data).current_dir(&self.base).spawn()
+            .map_err(|e|{self.error=Some(format!("无法启动桌面组件：{e}"));e}).ok();
     }
     /// Register the configured quick-reminder hotkey. The previous binding is
     /// removed first; a conflict is reported so the caller can roll the setting back.
@@ -1853,7 +1870,7 @@ impl App {
                 valid,
                 self.snapshot["isPlaying"] == true,
                 self.flag("HideWhenPaused", true),
-                self.timers.items.iter().any(|t| t.running && !t.finished) || self.updates.busy() || !self.plugins.island_ids().is_empty(),
+                self.timers.items.iter().any(|t| t.running && !t.finished) || (self.updates.busy() && !self.update_card_deleted) || !self.plugins.island_ids().is_empty(),
                 self.banner.visible() || self.osd_banner.visible() || self.updates.busy(),
                 !self.queue.is_empty(),
                 self.held,
@@ -1909,7 +1926,7 @@ impl App {
             valid,
             self.snapshot["isPlaying"] == true,
             self.flag("HideWhenPaused", true),
-            self.timers.items.iter().any(|t| t.running && !t.finished) || self.updates.busy() || !self.plugins.island_ids().is_empty(),
+            self.timers.items.iter().any(|t| t.running && !t.finished) || (self.updates.busy() && !self.update_card_deleted) || !self.plugins.island_ids().is_empty(),
             false,
             false,
             self.held,
@@ -2005,6 +2022,9 @@ impl App {
                 let x = (x - shape.x) / scale;
                 let y = (y - shape.y) / scale - self.frame.content_offset_y;
                 let w = self.layout.card.w;
+                if self.selected != "update" && layout::activity_close(w).contains(x, y) {
+                    return layout::ACTIVITY_CLOSE;
+                }
                 if self.selected == "update" {
                     if self.updates.phase() == "available" && layout::update_skip(w).contains(x, y)
                     {
@@ -2033,9 +2053,6 @@ impl App {
                         return 7;
                     }
                 } else if !self.selected.starts_with("plugin:") {
-                    if layout::timer_close(w).contains(x, y) {
-                        return 53;
-                    }
                     for (id, rect) in layout::timer_buttons(w, self.layout.card.h) {
                         if rect.contains(x, y) {
                             return id;
@@ -2235,7 +2252,12 @@ impl App {
                 }
                 _ => {}
             },
-            51 => self.close_update(),
+            51 | layout::ACTIVITY_CLOSE => {
+                if let Err(error) = self.delete_activity() {
+                    self.error = Some(error.clone());
+                    self.show_notice(notifications::Notice{app_id:"LyricIsland.System.Delete".into(),app_name:"点屿".into(),title:"删除失败".into(),body:error,icon:None},true,None,false);
+                }
+            },
             52 => {
                 if self.updates.skip() {
                     self.close_update();
@@ -2245,9 +2267,6 @@ impl App {
             21 => self.cycle_component(-1),
             30 => self.active_timer_action("toggle"),
             31 => self.active_timer_action("reset"),
-            53 => {
-                self.active_timer_action("delete");
-            }
             40..=42 => {
                 let task = self
                     .panel
@@ -3062,6 +3081,7 @@ impl App {
             self.dirty = true;
         }
         if self.updates.reminder {
+            self.update_card_deleted = false;
             self.updates.reminder = false;
             if !self.flag("PauseNotifications", false) {
                 if self.selected != "update" {
@@ -3259,8 +3279,7 @@ impl App {
                         let code=if self.flag("VerificationCodeEnabled",true){verification_code::extract(&notice.title,&notice.body)}else{None};
                         if let Some(code)=code{
                             if !self.user_hidden&&!self.session_locked{
-                                let mut alert=capsule_alert::Alert::new(format!("otp:{}:{code}",notice.app_id),"Code",notice.app_name.clone(),"点击复制验证码".into());
-                                alert.trailing=code.clone();alert.code=Some(code);alert.hold=12.;alert.width=364.;alert.height=72.;self.alerts.enqueue(alert);
+                                self.alerts.enqueue(capsule_alert::Alert::verification(&notice.app_id,&notice.app_name,code));
                             }
                         }else{
                             if !self.user_hidden{self.enqueue(Queued{notice:notice.clone(),todo:None,chime:true});}
@@ -3401,15 +3420,7 @@ impl App {
                 *t = Instant::now() + Duration::from_secs(6);
             }
         }
-        if !self.banner.visible() && inside && !self.cursor_inside {
-            self.leave_at = None;
-            if !self.mini() && self.flag("HoverExpand", false) {
-                self.retarget(true)
-            }
-        }
-        if !inside && self.cursor_inside && !self.held {
-            self.leave_at = Some(Instant::now());
-        }
+        self.track_pointer_presence(inside);
         if self.swipe.is_none()
             && !self.banner.visible()
             && self
@@ -3460,14 +3471,13 @@ impl App {
                 self.dirty = true;
             }
         }
-        self.cursor_inside = inside;
         if self.hover != hit {
             self.hover = hit;
             self.hover_since = Instant::now();
             self.dirty = true;
         }
         if hit == volume::BUTTON {let old=(self.volume.level,self.volume.muted);self.volume.refresh(false);if old!=(self.volume.level,self.volume.muted){self.dirty=true}} else {self.volume.leave();}
-        let tooltip = (hit == 6 || hit == volume::BUTTON) && self.hover_since.elapsed() >= Duration::from_millis(450);
+        let tooltip = (hit == 6 || hit == volume::BUTTON || hit == 51 || hit == layout::ACTIVITY_CLOSE) && self.hover_since.elapsed() >= Duration::from_millis(450);
         if self.tooltip_visible != tooltip {
             self.tooltip_visible = tooltip;
             self.dirty = true;
@@ -3810,7 +3820,7 @@ impl App {
                 self.todo_now = todos::Now::local();
                 let t = &self.snapshot["track"];
                 let mut module_versions=dotisle_module_api::versions();module_versions["core"]=json!(DISPLAY_VERSION);
-                let mut state = json!({"success":true,"version":DISPLAY_VERSION,"bundleVersion":lyric_backend::updates::installed_version(),"settings":self.settings,"moduleManagement":self.module_updates.state,"moduleVersions":module_versions,"moduleErrors":dotisle_module_api::initialization_errors(),"moduleReady":dotisle_module_api::initialization_errors().as_object().is_some_and(|m|m.is_empty()),"softwareUpdate":self.updates.state,"updateChannel":self.updates.channel(),"settingsDark":match self.settings["SettingsTheme"].as_str().unwrap_or("System"){"Dark"=>true,"Light"=>false,_=>theme_accent::system_dark()},"dataDirectory":self.data.to_string_lossy(),"musicPreview":self.music_preview(),"activeSource":self.snapshot["activeSource"],"nativeStatus":self.snapshot["nativeStatus"],"title":t["title"],"artist":t["artist"],"songId":t["songId"],"player":t["sourceApp"],"position":self.snapshot["positionSeconds"],"duration":t["durationSeconds"],"timeline":self.snapshot["clockStatus"],"lyricSource":self.snapshot["lyricSource"],"isPlaying":self.snapshot["isPlaying"],"canSeek":self.snapshot["canSeek"],"seekStatus":self.snapshot["seekStatus"],"neteaseAttention":lyric_backend::netease_control::attention_diagnostics(),"mediaCommand":self.snapshot["mediaCommand"],"expanded":self.expanded,"islandEnabled":!self.user_hidden,"islandVisible":self.opacity>0.001,"processId":std::process::id(),"windowLevel":unsafe{window_level::snapshot(self.visual_hwnd,self.hwnd)},"glassCaptures":self.renderer.as_ref().map_or(0,Renderer::glass_captures),"rendererGeneration":self.renderer_generation,"renderFrames":self.render_frames,"renderer":"Vello Hybrid 0.2 / wgpu 29","lastError":self.error,"notificationState":self.notification_state,"notificationVisible":self.banner.visible(),"notificationGeometry":self.notification_geometry(),"osdVisible":self.osd_banner.visible()||self.bottom_osd.visible(),"bottomOsdVisible":self.bottom_osd.visible(),"systemState":self.osd.status(),"todos":self.todos.list(&self.todo_now),"todoError":self.todos.error,"today":self.todo_now.date,"now":self.todo_now.time,"pendingPage":self.pending_page,"pendingRequestId":self.pending_request,"pendingCenterAction":self.pending_center_action,"centerFrontend":if self.base.join("LyricIsland.Center.exe").is_file(){"go"}else{"rust"},"islandGeometry":{"mini":self.mini(),"capsule":self.layout.capsule,"card":self.layout.card,"satellite":!self.mini()&&self.components.len()>1,"horizontalGestures":self.flag("SwipeActivities",true)},"miniContrast":{"enabled":self.mini()&&self.flag("MiniAutoContrast",true)&&self.settings["MiniMaterial"]=="Glass","sampledLuminance":self.mini_contrast.sampled,"darkText":self.mini_contrast.dark,"foreground":format!("#{:06X}",self.mini_contrast.ink()&0xffffff)},"compactTargetWidth":self.compact_size.width_target,"compactWidth":self.compact_size.width,"compactHeight":self.compact_size.height,"compactSecondary":self.compact_secondary,"timers":self.timers.list(),"timerError":self.timers.error,"screenTime":self.screen_time.snapshot(),"weather":self.widget_data.value["island-weather"],"capsuleAlertVisible":self.alerts.visible(),"widgetData":self.widget_data.value,"desktopWidgets":self.desktop_widgets.list(),"desktopWidgetError":self.desktop_widgets.error,"systemMetrics":self.widget_metrics.value,"activeComponent":self.selected,"components":self.components,"notificationHistory":self.history.list(),"historyError":self.history.error,"quickHotkey":self.settings["QuickReminderHotkey"],"pendingAction":self.pending_action,"sessionLocked":self.session_locked,"focusResume":self.focus_resume.as_ref().map(|r|json!({"generation":r.generation,"ids":r.ids,"prompted":r.prompted})),"templates":self.templates.list(),"workflowTemplateError":self.templates.error,"appRules":self.rules.list(&self.todo_now.date),"appRuleError":self.rules.error,"foreground":{"path":self.foreground.path,"name":self.foreground.name,"unreadable":self.foreground.unreadable},"lockWatch":true});
+                let mut state = json!({"success":true,"version":DISPLAY_VERSION,"bundleVersion":lyric_backend::updates::installed_version(),"settings":self.settings,"moduleManagement":self.module_updates.state,"moduleVersions":module_versions,"moduleErrors":dotisle_module_api::initialization_errors(),"moduleReady":dotisle_module_api::initialization_errors().as_object().is_some_and(|m|m.is_empty()),"softwareUpdate":self.updates.state,"updateChannel":self.updates.channel(),"settingsDark":match self.settings["SettingsTheme"].as_str().unwrap_or("System"){"Dark"=>true,"Light"=>false,_=>theme_accent::system_dark()},"dataDirectory":self.data.to_string_lossy(),"musicPreview":self.music_preview(),"activeSource":self.snapshot["activeSource"],"nativeStatus":self.snapshot["nativeStatus"],"title":t["title"],"artist":t["artist"],"songId":t["songId"],"player":t["sourceApp"],"position":self.snapshot["positionSeconds"],"duration":t["durationSeconds"],"timeline":self.snapshot["clockStatus"],"lyricSource":self.snapshot["lyricSource"],"isPlaying":self.snapshot["isPlaying"],"canSeek":self.snapshot["canSeek"],"seekStatus":self.snapshot["seekStatus"],"neteaseAttention":lyric_backend::netease_control::attention_diagnostics(),"mediaCommand":self.snapshot["mediaCommand"],"expanded":self.expanded,"islandEnabled":!self.user_hidden,"islandVisible":self.opacity>0.001,"processId":std::process::id(),"windowLevel":unsafe{window_level::snapshot(self.visual_hwnd,self.hwnd)},"glassCaptures":self.renderer.as_ref().map_or(0,Renderer::glass_captures),"rendererGeneration":self.renderer_generation,"renderFrames":self.render_frames,"renderer":"Vello Hybrid 0.2 / wgpu 29","lastError":self.error,"notificationState":self.notification_state,"notificationVisible":self.banner.visible(),"notificationGeometry":self.notification_geometry(),"osdVisible":self.osd_banner.visible()||self.bottom_osd.visible(),"bottomOsdVisible":self.bottom_osd.visible(),"systemState":self.osd.status(),"todos":self.todos.list(&self.todo_now),"todoError":self.todos.error,"today":self.todo_now.date,"now":self.todo_now.time,"pendingPage":self.pending_page,"pendingRequestId":self.pending_request,"pendingCenterAction":self.pending_center_action,"centerFrontend":if self.base.join("LyricIsland.Center.exe").is_file(){"go"}else{"missing"},"islandGeometry":{"mini":self.mini(),"capsule":self.layout.capsule,"card":self.layout.card,"satellite":!self.mini()&&self.components.len()>1,"horizontalGestures":self.flag("SwipeActivities",true)},"miniContrast":{"enabled":self.mini()&&self.flag("MiniAutoContrast",true)&&self.settings["MiniMaterial"]=="Glass","sampledLuminance":self.mini_contrast.sampled,"darkText":self.mini_contrast.dark,"foreground":format!("#{:06X}",self.mini_contrast.ink()&0xffffff)},"compactTargetWidth":self.compact_size.width_target,"compactWidth":self.compact_size.width,"compactHeight":self.compact_size.height,"compactSecondary":self.compact_secondary,"timers":self.timers.list(),"timerError":self.timers.error,"screenTime":self.screen_time.snapshot(),"weather":self.widget_data.value["island-weather"],"capsuleAlertVisible":self.alerts.visible(),"widgetData":self.widget_data.value,"desktopWidgets":self.desktop_widgets.list(),"desktopWidgetError":self.desktop_widgets.error,"systemMetrics":self.widget_metrics.value,"activeComponent":self.selected,"components":self.components,"notificationHistory":self.history.list(),"historyError":self.history.error,"quickHotkey":self.settings["QuickReminderHotkey"],"pendingAction":self.pending_action,"sessionLocked":self.session_locked,"focusResume":self.focus_resume.as_ref().map(|r|json!({"generation":r.generation,"ids":r.ids,"prompted":r.prompted})),"templates":self.templates.list(),"workflowTemplateError":self.templates.error,"appRules":self.rules.list(&self.todo_now.date),"appRuleError":self.rules.error,"foreground":{"path":self.foreground.path,"name":self.foreground.name,"unreadable":self.foreground.unreadable},"lockWatch":true});
                 state["glassRefraction"] = self
                     .renderer
                     .as_ref()
@@ -3834,6 +3844,7 @@ impl App {
                 json!({"success":true,"nonce":self.updates.nonce,"jobId":self.updates.job})
             }
             "showUpdate" => {
+                self.update_card_deleted = false;
                 self.refresh_components();
                 if self.updates.selectable() {
                     self.select_component("update", 1);
@@ -3874,6 +3885,7 @@ impl App {
                     .unwrap_or_else(|_| "LyricIsland.Native.Settings.v1".into());
                 match self.updates.begin(&self.base, &self.data, &pipe) {
                     Ok(()) => {
+                        self.update_card_deleted = false;
                         if self.selected != "update" {
                             self.update_return = self.selected.clone();
                         }
@@ -4318,7 +4330,7 @@ impl App {
                 if let Err(e) = self.save().and_then(|_| self.timers.persist()) {
                     return json!({"success":false,"message":e});
                 }
-                if let Some(mut child) = self.settings_process.take() {
+                if let Some(mut child) = self.center_process.take() {
                     let _ = child.kill();
                     let _ = child.wait();
                 }
@@ -4345,7 +4357,7 @@ impl App {
                 match result {
                     Ok(()) => {
                         let _ = self.save();
-                        if let Some(mut settings) = self.settings_process.take() {
+                        if let Some(mut settings) = self.center_process.take() {
                             let _ = settings.kill();
                             let _ = settings.wait();
                         }
@@ -4967,7 +4979,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 }
                 WM_CLOSE => {
                     a.widget_data.flush();
-                    if let Some(mut child) = a.settings_process.take() {
+                    if let Some(mut child) = a.center_process.take() {
                         let _ = child.kill();
                         let _ = child.wait();
                     }
@@ -6177,7 +6189,7 @@ fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
             args.iter().any(|a| a == "--startup"),
             app.flag("GestureTutorialSeen", false),
         ) {
-            app.show_settings_page("island");
+            app.show_settings_page("overview");
         }
         app.greeting_pending = app.flag("StartupGreetingEnabled", true)
             && !app.demo

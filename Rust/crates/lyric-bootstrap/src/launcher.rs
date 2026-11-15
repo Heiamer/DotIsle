@@ -9,7 +9,8 @@ use std::time::Duration;
 
 const COMPLETE_FILES: &[&str] = &[
     "LyricIsland.exe",
-    "LyricIsland.Settings.exe",
+    "LyricIsland.Center.exe",
+    "dotisle_desktop.dll",
     "e_sqlite3.dll",
     "Assets/Fonts/GoogleSansFlex-Regular.ttf",
     "Assets/Fonts/GoogleSansFlex-Medium.ttf",

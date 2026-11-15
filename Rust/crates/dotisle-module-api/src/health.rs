@@ -3,7 +3,7 @@ use serde_json::{json,Value};
 pub fn run(id:&str,dispatch:impl Fn(Value)->Result<Value,String>)->Result<Value,String>{
  let mut count=0;let mut invoke=|method:&str,args:Value|{count+=1;dispatch(json!({"method":method,"args":args}))};
  let (service,new_args,commands):(&str,Value,Vec<(&str,Value)>)=match id {
- "core"|"settings"=>return Ok(json!({"success":true,"commands":0})),
+ "core"|"desktop"=>return Ok(json!({"success":true,"commands":0})),
  "focus"=>("store",json!({"path":""}),vec![("create",json!({"v":{"mode":"countdown","duration":60}})),("advance",json!({"ms":1000})),("list",json!({}))]),
  "todos"=>("store",json!({"path":""}),vec![("list",json!({"now":{"date":"2000-01-01","time":"12:00"}}))]),
  "history"=>("store",json!({"path":""}),vec![("list",json!({}))]),

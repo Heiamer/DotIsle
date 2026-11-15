@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "5.0.0-rc1"
+  #define AppVersion "5.0.0-rc2"
 #endif
 #ifndef AppId
   #define AppId "DotIsle"
@@ -52,6 +52,11 @@ Source: "{#EngineFile}"; DestDir: "{tmp}"; DestName: "DotIsle.Verify.exe"; Flags
 Name: "{group}\点屿"; Filename: "{app}\LyricIsland.exe"
 Name: "{group}\卸载点屿"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\点屿"; Filename: "{app}\LyricIsland.exe"; Tasks: desktopicon
+
+[InstallDelete]
+Type: files; Name: "{app}\LyricIsland.Settings.exe"
+Type: files; Name: "{app}\lyric-island-settings.exe"
+Type: files; Name: "{app}\dotisle_settings.dll"
 
 [Run]
 Filename: "{app}\LyricIsland.exe"; Description: "启动点屿"; Flags: nowait postinstall skipifsilent

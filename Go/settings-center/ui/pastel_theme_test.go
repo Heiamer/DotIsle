@@ -55,15 +55,25 @@ func TestPastelIsOptInAndKeepsReadablePairs(t *testing.T) {
 	}
 }
 
-func TestDeckDifferentHeightsStayContinuous(t *testing.T) {
-	for _, heights := range [][2]float32{{430, 280}, {280, 430}, {280, 280}, {430, 430}} {
-		for i := 0; i <= 100; i++ {
-			phase := float64(i) / 100
-			y, h := deckPairGeometry(phase, heights[0], heights[1], 0)
-			ny, _ := deckPairGeometry(phase, heights[0], heights[1], 1)
-			if math.Abs(y+float64(h)-ny-16) > .001 {
-				t.Fatal("shell overlap changed", phase, heights)
-			}
+func TestDeckEveryPageUsesTheSameBounds(t *testing.T) {
+	a := newTestApp(t)
+	a.overview.loaded = true
+	a.overview.config = prefs.DefaultOverview()
+	a.overview.config.View = "scroll"
+	defer func() { deckPos, deckTarget, deckSpringIdle = 0, 0, true }()
+	var first ui.Rect
+	tt := ui.NewTester(a.View, 1200, 800)
+	for i, key := range a.scrollPages() {
+		a.deckTo(float64(i)*deckStep, true)
+		tt.Frame()
+		r, ok := tt.Find("浏览" + overviewName(key) + "卡片")
+		if !ok {
+			t.Fatal("page missing", key)
+		}
+		if i == 0 {
+			first = r
+		} else if r.W != first.W || r.H != first.H || r.X != first.X || r.Y != first.Y {
+			t.Fatalf("page %s changed bounds: first=%v got=%v", key, first, r)
 		}
 	}
 }

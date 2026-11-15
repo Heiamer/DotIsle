@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/brand/dotisle-wordmark-light.svg">
-  <img src="docs/brand/dotisle-wordmark.svg" width="440" alt="点屿 · DotIsle">
+  <img src="docs/brand/dotisle-wordmark.svg" width="320" alt="点屿 · DotIsle">
 </picture>
 
 # 点屿 · DotIsle
@@ -11,7 +11,7 @@
 
 Windows 10 / 11 · x64 · 原生桌面应用
 
-[下载正式版](https://github.com/Heiamer/DotIsle/releases/latest) · [体验 V5.0RC1](https://github.com/Heiamer/DotIsle/releases/tag/v5.0.0-rc1) · [更新日志](CHANGELOG.md) · [反馈问题](https://github.com/Heiamer/DotIsle/issues)
+[下载正式版](https://github.com/Heiamer/DotIsle/releases/latest) · [体验 V5.0RC2](https://github.com/Heiamer/DotIsle/releases/tag/v5.0.0-rc2) · [更新日志](CHANGELOG.md) · [反馈问题](https://github.com/Heiamer/DotIsle/issues)
 
 </div>
 
@@ -21,7 +21,7 @@ Windows 10 / 11 · x64 · 原生桌面应用
 
 控制中心采用固定窗口、HarmonyOS Sans、柔和的连续曲线边角与分层阴影。导航平时收起，点击左上按钮展开左侧白色毛玻璃栏，选好页面后自动隐藏。明暗外观、背景和动效有各自的设置；动态取色 **Beta** 默认关闭，开启后使用低饱和的浅彩色。
 
-**V5.0RC1 是预发行测试版本。** 日常使用建议选择正式版；需要体验和反馈 5.0 时，再进入测试版通道。RC1 更新内容与已知限制见 [发行说明](release-notes/DotIsle-5.0.0-rc1-Notes.md)。
+**V5.0RC2 是预发行测试版本。** 日常使用建议选择正式版；需要体验和反馈 5.0 时，再进入测试版通道。RC2 更新内容与已知限制见 [发行说明](release-notes/DotIsle-5.0.0-rc2-Notes.md)。
 
 ## 岛上与桌面上
 
@@ -38,7 +38,7 @@ Windows 10 / 11 · x64 · 原生桌面应用
 
 ## 下载与开始使用
 
-从 [Releases](https://github.com/Heiamer/DotIsle/releases) 选择版本。5.0 测试包位于 [V5.0RC1 发行页](https://github.com/Heiamer/DotIsle/releases/tag/v5.0.0-rc1)，由 [Windows Release 工作流](.github/workflows/windows-release.yml) 构建并在验收通过后发布。
+从 [Releases](https://github.com/Heiamer/DotIsle/releases) 选择版本。5.0 测试包位于 [V5.0RC2 发行页](https://github.com/Heiamer/DotIsle/releases/tag/v5.0.0-rc2)，发布前先本地构建和验收，再由 [发布工作流](.github/workflows/publish-verified-windows.yml) 核验并发布。
 
 | 文件 | 用途 |
 | --- | --- |
@@ -46,7 +46,7 @@ Windows 10 / 11 · x64 · 原生桌面应用
 | `DotIsle-<版本>-Portable.zip` | 便携版，完整解压到可写目录后运行 `LyricIsland.exe`。 |
 | `DotIsle-<版本>-Source.zip` | 对应发行版本的源码与资源。 |
 | `DotIsle-<版本>-SHA256.txt` | 下载文件的 SHA-256 校验清单。 |
-| `DotIsle-<版本>-Validation.zip` | 自动验收报告与界面记录，供排查和开发使用。 |
+
 
 1. 安装，或把便携包完整解压；不要在压缩包内直接运行 EXE。
 2. 启动 `LyricIsland.exe`，从系统托盘打开控制中心。
@@ -56,9 +56,9 @@ Windows 10 / 11 · x64 · 原生桌面应用
 运行发行包不需要安装 Rust、Go、Python 或 .NET。请保留程序旁的 DLL、资源、字体和更新助手，不要只复制一个 EXE。关闭控制中心后，灵动岛和桌面组件可以继续运行；完全退出点屿后不再提供提醒。
 
 <details>
-<summary>为什么同时有 Center.exe 和 Settings.exe？</summary>
+<summary>控制中心与桌面组件如何运行？</summary>
 
-5.0 的可见控制中心是 `LyricIsland.Center.exe`。`LyricIsland.Settings.exe` 是仍保留的 Rust 宿主，负责桌面组件，并兼容旧设置入口；主程序通常以隐藏模式启动它。两者目前是迁移期间的分工。直接删除 Settings 会导致桌面组件不可用，普通使用只需启动 `LyricIsland.exe`。
+新运行包只有一个控制中心 `LyricIsland.Center.exe`。桌面组件通过 C ABI 加载 `dotisle_desktop.dll`，与控制中心位于同一进程；旧设置程序及旧设置 DLL 已删除。添加桌面组件后，关闭控制中心窗口会隐藏窗口并保留组件；完全退出点屿时一起退出。普通使用只需启动 `LyricIsland.exe`。
 
 </details>
 
@@ -92,7 +92,7 @@ API v1 提供四种基本积木：`text`、`metric`、`progress`、`divider`，�
 - **设备电量**：需要 Windows 或设备提供可读取的电量数据；读不到时不会虚构百分比。
 - **天气**：填写城市并联网后获取，降水开始和结束时间属于预报，受数据覆盖与更新影响。
 - **用机时长**：记录点屿运行期间的活跃使用，不补算点屿未运行时的 Windows 历史记录。
-- **材质与性能**：云母、模糊和实际流畅度受 Windows 版本、显卡、DPI 与系统合成影响。RC1 不承诺所有设备稳定 120Hz。
+- **材质与性能**：云母、模糊和实际流畅度受 Windows 版本、显卡、DPI 与系统合成影响。RC2 不承诺所有设备稳定 120Hz。
 
 ## 源码与构建
 

@@ -678,7 +678,7 @@ func (a *App) windowBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	y = leafHeading(c, p, "启动与窗口", x, y, w)
 	y = a.leafToggles(c, p, x, y, w, []leafToggleRow{
 		{"开机启动", "登录 Windows 后驻留托盘。", "AutoStart", true},
-		{"设置开场动画", "打开设置时，以单色手写 Dotisle 开场；点击可跳过。", "StartupSignatureEnabled", true},
+		{"设置开场动画", "Rossela 字标落墨入场，随后淡入控制中心；点击可跳过。", "StartupSignatureEnabled", true},
 		{"开机问候", "启动时显示昨日用机时长和今日天气。", "StartupGreetingEnabled", true},
 	})
 	y = leafHeading(c, p, "天气与日常", x, y, w)

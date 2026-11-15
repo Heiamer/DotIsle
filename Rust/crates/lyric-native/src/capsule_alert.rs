@@ -14,6 +14,10 @@ impl Alert{
         Self{key,icon:icon.into(),title,detail,trailing:String::new(),image:None,code:None,
             expires:Instant::now()+Duration::from_secs(90),hold:5.,width:400.,height:48.}
     }
+    pub fn verification(id:&str,name:&str,code:String)->Self{
+        let mut a=Self::new(format!("otp:{id}:{code}"),"Code",name.into(),"点击复制验证码".into());
+        a.code=Some(code);a.hold=12.;a.width=crate::verification_code::WIDTH;a.height=crate::verification_code::HEIGHT;a
+    }
     pub fn message(id:&str,name:&str,icon:Option<&[u8]>)->Self{
         let epoch=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
         let mut a=Self::new(format!("message:{id}:{epoch}"),&format!("Message:{id}"),format!("{name}有新消息"),String::new());

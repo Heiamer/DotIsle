@@ -30,8 +30,13 @@ class Runtime:
         self.process = None
         self.log = None
 
-    def start(self):
+    def start(self, preserve_settings=False):
         self.data.mkdir(parents=True, exist_ok=True)
+        if not preserve_settings:
+            self.write_settings()
+        return self.launch()
+
+    def write_settings(self):
         (self.data / 'settings.json').write_text(json.dumps({
             'AutoStart': False, 'AutoCheckUpdatesEnabled': False,
             'DeviceRemindersEnabled': False, 'SystemStateHintsEnabled': False,
@@ -39,6 +44,7 @@ class Runtime:
             'NotificationSoundEnabled': False, 'DeviceSoundEnabled': False,
             'GestureTutorialSeen': True, 'OnlineSongInfo': False,
         }), encoding='utf-8')
+    def launch(self):
         environment = dict(os.environ, LYRICISLAND_TEST_PIPE=self.pipe.split('\\')[-1])
         self.log = (self.data / 'process.log').open('ab')
         self.process = subprocess.Popen(

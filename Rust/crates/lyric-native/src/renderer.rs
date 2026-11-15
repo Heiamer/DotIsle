@@ -1468,13 +1468,22 @@ impl Renderer {
     fn tool_expanded(&mut self, s: &Scene<'_>, p: &crate::activities::Panel) {
         if p.kind==4 {
             let c=self.m3(s);let w=s.layout.card.w;let ink=0xff000000|c.on_surface;let muted=0xff000000|c.on_surface_variant;let accent=0xff000000|c.primary;
-            self.text_at(&p.title,Rect::new(20.,18.,w-40.,22.),14.,600,ink,0.);let mut y=52.;
+            self.activity_close_button(s,crate::layout::ACTIVITY_CLOSE,crate::layout::activity_close(w));
+            self.text_at(&p.title,Rect::new(20.,18.,w-80.,22.),14.,600,ink,0.);let mut y=52.;
             for b in &p.blocks {let height=match b.kind.as_str(){"metric"=>56.,"progress"=>40.,"divider"=>12.,_=>28.};
                 if b.kind=="divider"{self.fill(Rect::new(20.,y+5.,w-40.,1.),0.5,0x22777777);}
                 else if b.kind=="progress"{self.text_at(&b.label,Rect::new(20.,y,w-40.,18.),11.,400,muted,0.);self.fill(Rect::new(20.,y+25.,w-40.,4.),2.,0x22777777);if b.value>0.{self.fill(Rect::new(20.,y+25.,(w-40.)*b.value,4.),2.,accent);}}
                 else {self.text_at(&b.text,Rect::new(20.,y,w-40.,if b.kind=="metric"{32.}else{22.}),if b.kind=="metric"{26.}else{13.},500,ink,0.);if b.kind=="metric"{self.text_at(&b.label,Rect::new(20.,y+34.,w-40.,18.),11.,400,muted,0.);}}y+=height;
             }
         }else{self.expressive_tools(s, p)}
+        let id=if p.kind==3{51}else{crate::layout::ACTIVITY_CLOSE};
+        if s.translation_tooltip && s.hover==id {
+            let w=s.layout.card.w;let close=if p.kind==3{crate::layout::update_close(w)}else{crate::layout::activity_close(w)};
+            let label=p.delete_hint();let tw=(self.text.measure_weighted(label,11.,500)+24.).min(w-40.);
+            let tip=Rect::new(w-20.-tw,close.y+close.h+6.,tw,30.);
+            self.fill(tip,10.,0xffe9edef);
+            self.text_at(label,Rect::new(tip.x+8.,tip.y+6.,tip.w-16.,18.),11.,500,0xff20272b,0.5);
+        }
     }
     fn expanded_view(&mut self, s: &Scene<'_>) {
         let mut expanded = *s;
@@ -1581,6 +1590,39 @@ impl Renderer {
         }
         self.canvas.pop_layer();
     }
+    fn elided_line(&mut self,text:&str,width:f64,size:f32,weight:u16)->String{
+        if self.text.measure_weighted(text,size,weight)<=width{return text.into()}
+        let ends=text.char_indices().map(|(i,_)|i).chain(Some(text.len())).collect::<Vec<_>>();
+        let available=(width-self.text.measure_weighted("…",size,weight)).max(0.);
+        let(mut lo,mut hi)=(0,ends.len()-1);
+        while lo<hi{let mid=(lo+hi+1)/2;if self.text.measure_weighted(&text[..ends[mid]],size,weight)<=available{lo=mid}else{hi=mid-1}}
+        format!("{}…",&text[..ends[lo]])
+    }
+    fn copy_glyph(&mut self,r:Rect,ink:u32){
+        let x=r.x+r.w*0.16;let y=r.y+r.h*0.12;
+        self.line((x+r.w*0.48,y),(x,y),ink,1.5);
+        self.line((x,y),(x,y+r.h*0.62),ink,1.5);
+        self.outline(Rect::new(r.x+r.w*0.35,r.y+r.h*0.3,r.w*0.52,r.h*0.58),1.5,ink,1.5);
+    }
+    fn verification_content(&mut self,a:&crate::capsule_alert::Alert,g:crate::verification_code::Layout){
+        let Some(code)=a.code.as_deref()else{return};
+        let copied=a.detail=="已复制验证码";let failed=!copied&&a.detail!="点击复制验证码";
+        let ink=0xfff5f5f7;let blue=0xff75b4ff;
+        let label=if copied{"已复制"}else if failed{"重试复制"}else{"点击复制"};
+        let source=if failed{a.detail.as_str()}else if a.title.trim().is_empty(){"验证码"}else{a.title.as_str()};
+        let source=self.elided_line(source,g.source.w,12.,500);
+        self.fill(g.icon,10.,0xff172536);
+        if copied{self.icon(Icon::Check,Rect::new(g.icon.x+6.,g.icon.y+6.,18.,18.),blue)}else{self.copy_glyph(Rect::new(g.icon.x+6.,g.icon.y+6.,18.,18.),blue)}
+        self.text_line(&source,g.source,12.,500,0xffaeb4c0);
+        // Fit the complete code to its own lane; never ellipsize or clip a digit.
+        let measured=self.text.measure_weighted(code,28.,600).max(1.);
+        let size=28.*(g.digits.w/measured).min(1.);
+        self.text_line(code,g.digits,size,600,ink);
+        self.fill(g.action,14.,if copied{0xff19354d}else{0xff24272d});
+        if g.compact_action{
+            if copied{self.icon(Icon::Check,Rect::new(g.action.x+6.,g.action.y+6.,16.,16.),blue)}else{self.copy_glyph(Rect::new(g.action.x+6.,g.action.y+6.,16.,16.),blue)}
+        }else{self.text_at(label,g.action,11.,500,if copied{blue}else{ink},0.5);}
+    }
     fn capsule_alert_content(&mut self,a:&crate::capsule_alert::Alert,r:Rect){
         let ink=0xfff5f5f7;let muted=0xffaeb4c0;let blue=0xff75b4ff;
         let glyph=Rect::new(r.x+17.,r.y+(r.h-25.)/2.,25.,25.);
@@ -1600,15 +1642,11 @@ impl Renderer {
                     else{self.line((x,glyph.y+20.),(x-2.,glyph.y+25.),blue,1.8);}
                 }
             },
-            "Code"=>{dotisle_render::material_symbols::paint(&mut self.canvas,"content_copy",glyph.x,glyph.y,glyph.w,blue);},
+            "Code"=>self.copy_glyph(glyph,blue),
             kind=>self.device_glyph(glyph,kind,blue),
         }}
         let x=r.x+56.;let w=(r.w-76.).max(0.);
-        if a.code.is_some(){
-            self.text_line(&a.title,Rect::new(x,r.y+12.,w-130.,17.),11.5,500,muted);
-            self.text_line(&a.detail,Rect::new(x,r.y+36.,w-130.,18.),11.,400,muted);
-            self.text_at(&a.trailing,Rect::new(r.x+r.w-156.,r.y+17.,136.,36.),28.,600,ink,1.);
-        }else if a.detail.is_empty(){
+        if a.detail.is_empty(){
             self.text_line(&a.title,Rect::new(x,r.y+(r.h-20.)/2.,if a.icon.starts_with("Message:"){w}else{w-65.},22.),13.,500,ink);
             self.text_at(&a.trailing,Rect::new(r.x+r.w-74.,r.y+(r.h-22.)/2.,54.,24.),15.,600,ink,1.);
         }else{
@@ -1997,8 +2035,14 @@ impl Renderer {
             self.canvas.pop_layer();
         }
         if let Some(a)=s.alert{
-            self.clip(shape,radius,if s.transient_only{1.}else{s.alert_mix as f32});
-            self.capsule_alert_content(a,shape);self.canvas.pop_layer();
+            if a.code.is_some(){
+                self.clip(shape,radius,crate::verification_code::content_alpha(shape.h,s.alert_mix));
+                self.verification_content(a,crate::verification_code::layout(shape,s.layout.host.w));
+            }else{
+                self.clip(shape,radius,if s.transient_only{1.}else{s.alert_mix as f32});
+                self.capsule_alert_content(a,shape);
+            }
+            self.canvas.pop_layer();
         }
         if let Some(n) = s.osd {
             self.clip(

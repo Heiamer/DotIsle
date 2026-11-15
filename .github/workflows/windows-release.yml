@@ -9,7 +9,7 @@ on:
       version:
         description: Release version without the leading v
         required: true
-        default: "5.0.0-rc1"
+        default: "5.0.0-rc2"
       publish:
         description: Publish the release instead of leaving a draft
         type: boolean
@@ -144,6 +144,7 @@ jobs:
         working-directory: Go/settings-center
         run: |
           $env:DOTISLE_DESIGN_CAPTURE=Join-Path $env:GITHUB_WORKSPACE 'validation/control-center'
+          $env:DOTISLE_DESKTOP_DLL=Join-Path $env:GITHUB_WORKSPACE 'target/release/dotisle_desktop.dll'
           & "$env:RUNNER_TEMP/go/go/bin/go.exe" test ./ui -run 'TestV3SurfaceCaptures|TestAlbumFrostAndPastelCaptures|TestPluginSurfaceCaptures' -count=1
           if($LASTEXITCODE -ne 0){throw 'Control center capture failed'}
 
@@ -248,10 +249,15 @@ jobs:
 
       - name: Require successful acceptance reports
         run: |
-          foreach($report in @('validation/source/report.json','validation/settings/report.json','validation/settings/layout-audit/report.json','validation/themes/report.json','validation/themes/background-report.json','validation/covers/report.json','validation/native-timers/report.json','validation/liquid/report.json','validation/glow/report.json','validation/modules/report.json')){
+          foreach($report in @('validation/source/report.json','validation/center/report.json','validation/center/control-center/report.json','validation/center/desktop/report.json','validation/desktop/report.json','validation/native-timers/report.json','validation/liquid/report.json','validation/glow/report.json','validation/modules/report.json')){
             if(-not(Test-Path -LiteralPath $report)){throw "Missing acceptance report: $report"}
             if((Get-Content -LiteralPath $report -Raw | ConvertFrom-Json).success -ne $true){throw "Acceptance failed: $report"}
           }
+
+      - name: Select public downloads
+        run: |
+          python build/prepare_public_release.py --directory publish/release-output --output publish/public-release --version $env:VERSION --plan validation/public-assets.json
+          if($LASTEXITCODE -ne 0){throw 'Public asset selection failed'}
 
       - name: Create draft release and upload artifacts
         if: ${{ !inputs.verify_only }}
@@ -265,7 +271,7 @@ jobs:
           if($env:PRERELEASE -eq 'true'){$releaseArgs+='--prerelease'}
           gh @releaseArgs
           if($LASTEXITCODE -ne 0){throw 'Draft release creation failed'}
-          $files=@(Get-ChildItem 'publish/release-output' -File | ForEach-Object FullName)
+          $files=@(Get-ChildItem 'publish/public-release' -File | ForEach-Object FullName)
           gh release upload $tag @files
           if($LASTEXITCODE -ne 0){throw 'Release upload failed'}
 

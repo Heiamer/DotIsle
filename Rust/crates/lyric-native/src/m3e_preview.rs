@@ -8,20 +8,24 @@ pub unsafe fn run(a:&mut App,dir:&Path)->Result<(),Box<dyn std::error::Error>>{
  if let Ok(v)=std::env::var("DOTISLE_TRANSPORT_THEME"){a.settings["TransportTheme"]=json!(v);}
  if let Ok(v)=std::env::var("DOTISLE_PROGRESS_STYLE"){a.settings["ProgressBarStyle"]=json!(v);}
  if let Ok(v)=std::env::var("DOTISLE_PROGRESS_THUMB"){a.settings["ProgressBarThumb"]=json!(v);a.settings["ProgressBarThumbEnabled"]=json!(true);}
+ if std::env::var_os("DOTISLE_OTP_ONLY").is_some(){return verification_preview(a,dir)}
  let font=a.base.join("Assets/Fonts/NotoSansSC.ttf");let mut captures=vec![];
  for dpi in if std::env::var_os("DOTISLE_MUSIC_ONLY").is_some(){vec![]}else{vec![96.,144.,192.]}{for dark in [false,true]{for mini in [false,true]{for w in [400.,592.]{
   a.settings["SettingsTheme"]=json!(if dark{"Dark"}else{"Light"});a.settings["IslandSizeMode"]=json!(if mini{"Mini"}else{"Classic"});a.settings["Animation"]=json!(false);
   a.layout=layout::Layout::new(260.);a.layout.host.w=w+48.;a.layout.card=Rect::new(24.,24.,w,220.);a.layout.set_compact(260.,if mini{14.}else{40.});
   let scale=dpi/96.;let mut r=Renderer::new(a.visual_hwnd,(a.layout.host.w*scale)as u32,(a.layout.host.h*scale)as u32,dpi as f32,&font)?;
-  for(name,p)in [("timer",Panel{kind:1,title:"专注计时".into(),value:"24:38".into(),subtitle:"专注 · 第 1 / 4 轮".into(),progress:0.43,running:true,..Default::default()}),("long-clock",Panel{kind:1,title:"长时间秒表".into(),value:"12:34:56.78".into(),subtitle:"正向计时 · 已暂停".into(),..Default::default()}),("todos",Panel{kind:2,title:"待办清单".into(),tasks:(0..3).map(|i|Task{title:format!("{} · 这是一条很长的中英文待办内容 Open source",i+1),detail:"今天 18:30 · 每天重复".into(),..Default::default()}).collect(),..Default::default()})]{
+  for(name,p)in [("plugin",Panel{kind:4,title:"创作进度".into(),blocks:serde_json::from_value(json!([{ "kind":"text","text":"创作进度" },{ "kind":"metric","text":"16","label":"今日完成" },{ "kind":"progress","label":"本次进度","value":0.88 }])).unwrap(),..Default::default()}),("timer",Panel{kind:1,title:"专注计时".into(),value:"24:38".into(),subtitle:"专注 · 第 1 / 4 轮".into(),progress:0.43,running:true,..Default::default()}),("long-clock",Panel{kind:1,title:"长时间秒表".into(),value:"12:34:56.78".into(),subtitle:"正向计时 · 已暂停".into(),..Default::default()}),("todos",Panel{kind:2,title:"待办清单".into(),tasks:(0..3).map(|i|Task{title:format!("{} · 这是一条很长的中英文待办内容 Open source",i+1),detail:"今天 18:30 · 每天重复".into(),..Default::default()}).collect(),..Default::default()})]{
    let mut s=a.scene();s.panel=Some(&p);s.layout.card.h=220.;s.component_count=3;s.layout_scale=scale;
-   r.render(&s,false)?;let name=format!("{name}-{}-{}-{w:.0}-{dpi:.0}.png",if dark{"dark"}else{"light"},if mini{"mini"}else{"classic"});r.snapshot(&dir.join(&name))?;captures.push(name);
+   r.render(&s,false)?;let name=format!("{name}-{}-{}-{w:.0}-{dpi:.0}.png",if dark{"dark"}else{"light"},if mini{"mini"}else{"classic"});r.snapshot(&dir.join(&name))?;captures.push(name.clone());
+   s.hover=layout::ACTIVITY_CLOSE;s.translation_tooltip=true;
+   r.render(&s,false)?;let name=format!("{name}-delete-hint.png");r.snapshot(&dir.join(&name))?;captures.push(name);
   }
   for phase in ["checking","available","downloading","unknown","verifying","ready","applying","failed"]{
    a.updates.state=json!({"phase":if phase=="unknown"{"downloading"}else{phase},"version":"演示版本 3.2.0","percent":if phase=="unknown"{None}else{Some(43)},"receivedBytes":4300000,"totalBytes":if phase=="unknown"{None}else{Some(10000000)},"message":"预览状态 · 不会下载或安装"});let p=a.updates.panel();let mut s=a.scene();s.panel=Some(&p);s.layout.card.h=220.;s.component_count=1;s.layout_scale=scale;s.time_ms=800.;r.render(&s,false)?;
    let name=format!("update-{phase}-{}-{}-{w:.0}-{dpi:.0}.png",if dark{"dark"}else{"light"},if mini{"mini"}else{"classic"});r.snapshot(&dir.join(&name))?;captures.push(name);
   }
  }}}}
+ if std::env::var_os("DOTISLE_CARDS_ONLY").is_some(){std::fs::write(dir.join("report.json"),serde_json::to_vec_pretty(&json!({"success":true,"captures":captures}))?)?;return Ok(())}
  // The takeover window reuses this exact material, so the export is captured here too.
  a.layout.host=Rect::new(0.,0.,468.,268.);a.layout.card=Rect::new(24.,24.,420.,220.);a.updates.state=json!({"phase":"applying","version":"3.2.0","message":"正在保存数据并安装"});
  if a.renderer.is_none(){a.renderer=Some(Renderer::new(a.visual_hwnd,468,268,96.,&font)?);}a.export_update_appearance_to(dir.join("appearance"));a.renderer=None;
@@ -54,4 +58,31 @@ pub unsafe fn benchmark(a:&mut App,out:&Path)->Result<(),Box<dyn std::error::Err
   submit.sort_by(f64::total_cmp);completed.sort_by(f64::total_cmp);let stat=|v:&Vec<f64>|json!({"medianMs":v[v.len()/2],"p95Ms":v[v.len()*95/100],"p99Ms":v[v.len()*99/100],"maxMs":v[v.len()-1]});reports.push(json!({"scene":name,"frames":submit.len(),"cpuSubmit":stat(&submit),"gpuCompleted":stat(&completed)}));
  }
  a.renderer=Some(r);std::fs::write(out.join("performance.json"),serde_json::to_vec_pretty(&json!({"scope":"production scene and GPU completion, offscreen synthetic benchmark; excludes OS scheduling and live media","scenes":reports}))?)?;Ok(())
+}
+
+/// Synthetic OTPs only; no notification listener, clipboard write or history export.
+unsafe fn verification_preview(a:&mut App,dir:&Path)->Result<(),Box<dyn std::error::Error>>{
+ let font=a.base.join("Assets/Fonts/NotoSansSC.ttf");let mut captures=vec![];let mut metrics=vec![];
+ for dpi in [96.,144.,192.]{for host in [352.,448.,640.]{for mini in [false,true]{
+  a.settings["IslandSizeMode"]=json!(if mini{"Mini"}else{"Classic"});a.settings["Animation"]=json!(true);
+  a.layout=layout::Layout::new(260.);a.layout.host.w=host;a.layout.set_compact(if mini{100.}else{260.},if mini{18.}else{40.});
+  let scale=dpi/96.;let mut r=Renderer::new(a.visual_hwnd,(host*scale)as u32,(a.layout.host.h*scale)as u32,dpi as f32,&font)?;
+  for (name,source,code,detail) in [
+   ("four","短信","0042","点击复制验证码"),
+   ("six","点屿验证测试","002468","点击复制验证码"),
+   ("eight-long-source","这是一条很长的验证通知来源 · DotIsle Synthetic Notification Source","00135790","点击复制验证码"),
+   ("copied","DotIsle Verification Preview","00135790","已复制验证码"),
+   ("clipboard-busy","验证测试","00135790","剪贴板正忙，请再点一次")]{
+   let mut alert=crate::capsule_alert::Alert::verification("synthetic-preview",source,code.into());alert.detail=detail.into();
+   let mut hub=crate::capsule_alert::Hub::default();hub.enqueue(alert);hub.begin(a.layout.capsule,a.layout.capsule.h/2.,host,24.,0.,true);
+   let times=if name=="eight-long-source"&&host==448.&&dpi==144.{vec![0.,0.04,0.08,0.12,0.2,0.4,1.]}else{vec![1.]};
+   for now in times{let(shell,radius,mix)=hub.banner.presentation(now);let mut s=a.scene();s.alert=hub.active.as_ref();s.alert_rect=shell;s.alert_radius=radius;s.alert_mix=mix;
+    s.frame=Frame::hidden(a.options());s.panel=None;s.notification=None;s.osd=None;s.transient_only=true;s.layout_scale=scale;s.lyric="";s.title="";s.artist="";
+    r.render(&s,false)?;let path=format!("otp-{name}-{}-{host:.0}-{dpi:.0}-{:04}.png",if mini{"mini"}else{"classic"},(now*1000.)as u32);r.snapshot(&dir.join(&path))?;captures.push(path);
+    if now==1.{let g=crate::verification_code::layout(shell,host);let measured=r.measure_line(code,28.)?;
+     metrics.push(json!({"codeLength":code.len(),"hostWidth":host,"dpi":dpi,"mini":mini,"codeLaneWidth":g.digits.w,"unweightedCodeWidth":measured,"synthetic":true}));}
+   }
+  }
+ }}}
+ std::fs::write(dir.join("report.json"),serde_json::to_vec_pretty(&json!({"success":true,"captures":captures,"metrics":metrics,"data":"synthetic OTPs only"}))?)?;Ok(())
 }

@@ -1,3 +1,5 @@
+> 历史迁移评审：本文中的旧设置回退及独立 Rust 宿主已删除。当前结构见 [统一控制中心](../../docs/UNIFIED-CONTROL-CENTER.md)。
+
 # MyGo 控制中心 — 代码审查交接文档
 
 > 审查对象：`Go/settings-center/`（新增）+ `Rust/crates/` 六个文件的少量修改。

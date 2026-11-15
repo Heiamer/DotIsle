@@ -11,6 +11,7 @@ pub fn mini_timer_buttons(w:f64,h:f64)->[(i32,Rect);3]{let y=h-48.;[(31,Rect::ne
 pub fn mini_todos(w:f64)->[Rect;1]{[Rect::new(20.,38.,w-40.,30.)]}
 pub fn mini_primary(w:f64,h:f64,_kind:u8)->Rect{Rect::new(20.,h-44.,w-40.,32.)}
 pub fn mini_hit(w:f64,h:f64,panel:Option<&crate::activities::Panel>,x:f64,y:f64)->i32{
+    if panel.is_some_and(|p|p.kind!=3)&&activity_close(w).contains(x,y){return ACTIVITY_CLOSE}
     match panel.map(|p|p.kind){
         None=>{let t=mini_track(w,h);if Rect::new(t.x,t.y-5.,t.w,13.).contains(x,y){return 10}for(id,r)in mini_music_buttons(w,h){if r.contains(x,y){return id}}},
         Some(2)=>{for(i,r)in mini_todos(w).iter().enumerate().take(panel.map(|p|p.tasks.len()).unwrap_or(0)){if r.contains(x,y){return 40+i as i32}}if mini_primary(w,h,2).contains(x,y){return 7}},
@@ -63,7 +64,8 @@ pub fn mini_hit(w:f64,h:f64,panel:Option<&crate::activities::Panel>,x:f64,y:f64)
 
 pub fn update_close(w:f64)->Rect{let r=dotisle_render::update_card::close(w);Rect::new(r.x0,r.y0,r.width(),r.height())}
 pub fn update_skip(w:f64)->Rect{let r=dotisle_render::update_card::skip(w);Rect::new(r.x0,r.y0,r.width(),r.height())}
-pub fn timer_close(w:f64)->Rect{Rect::new(w-44.,14.,24.,24.)}
+pub const ACTIVITY_CLOSE:i32=53;
+pub fn activity_close(w:f64)->Rect{Rect::new(w-48.,14.,28.,28.)}
 pub fn update_primary(w:f64,h:f64)->Rect{let r=dotisle_render::update_card::primary(w,h);Rect::new(r.x0,r.y0,r.width(),r.height())}
 
 #[cfg(test)]mod expressive_tests{use super::*;

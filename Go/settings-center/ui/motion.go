@@ -94,8 +94,15 @@ func (a *App) opening(c *ui.Context, w, h float32) {
 		return
 	}
 	cover.Children(func() {
-		a.drawSignature(c, (w-420)/2, h*.44-72, 420, 144, elapsed, reduced)
-		CenteredText(c, stateString(a.State, "5.0.0", "version"), 0, h*.44+92-TitlebarH, w, 24, 12, s.OnSurfaceVariant, false)
+		wordW := min(float32(328), w-96)
+		wordH := wordW * signatureHeight / signatureWidth
+		wordY := (h - TitlebarH - wordH - 52) / 2
+		a.drawSignature(c, (w-wordW)/2, wordY, wordW, wordH, elapsed, reduced)
+		versionAlpha := float32(1)
+		if !reduced {
+			versionAlpha = motionEase(float32(clampF64((elapsed/sigSlow()-.62)/.22, 0, 1)))
+		}
+		CenteredText(c, stateString(a.State, "5.0.0-rc2", "version"), 0, wordY+wordH+28, w, 24, 12, s.OnSurfaceVariant, false).Opacity(versionAlpha)
 	})
 	c.AnimationFrame()
 }

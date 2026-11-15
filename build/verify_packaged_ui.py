@@ -1,64 +1,33 @@
-"""Run native acceptance with bounded waits and visible capture progress."""
+"""Verify the shipped Go executable, its embedded desktop DLL and native state flow."""
 from pathlib import Path
 import argparse
 import json
 import os
 import subprocess
-import time
+import sys
 import uuid
 
-
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--runtime', type=Path, required=True)
-    parser.add_argument('--output', type=Path, required=True)
-    args = parser.parse_args()
-    runtime = args.runtime.resolve()
-    output = args.output.resolve()
-    output.mkdir(parents=True, exist_ok=True)
-    environment = dict(os.environ, DOTISLE_TRACE_GPU='1', DOTISLE_LAYOUT_AUDIT='1', DOTISLE_LAYOUT_AUDIT_CAPTURE='0', LYRICISLAND_TEST_PIPE='LyricIsland.Settings.test.ci.' + uuid.uuid4().hex)
-    checks = [('settings', '--verify', 2700), ('themes', '--theme-capture', 900), ('covers', '--cover-capture', 600)]
-    for name, flag, timeout in checks:
-        destination = output / name
-        destination.mkdir(exist_ok=True)
-        started = time.monotonic()
-        print(f'[{name}] Starting native acceptance; timeout {timeout}s', flush=True)
-        with (destination / 'process.log').open('wb') as log:
-            process = subprocess.Popen([str(runtime / 'LyricIsland.Settings.exe'), flag, str(destination)],
-                cwd=runtime, env=environment, stdout=log, stderr=log,
-                creationflags=subprocess.CREATE_NO_WINDOW)
-            try:
-                while True:
-                    try:
-                        code = process.wait(timeout=30)
-                        break
-                    except subprocess.TimeoutExpired:
-                        captures = list(destination.rglob('*.png'))
-                        latest = max(captures, key=lambda p: p.stat().st_mtime).relative_to(destination) if captures else 'initializing'
-                        elapsed = round(time.monotonic() - started)
-                        print(f'[{name}] {elapsed}s; {len(captures)} captures; latest: {latest}', flush=True)
-                        if elapsed >= timeout:
-                            raise TimeoutError(f'{name} exceeded {timeout}s; last capture: {latest}')
-            finally:
-                if process.poll() is None:
-                    process.kill()
-                    process.wait(timeout=15)
-        if code != 0:
-            for filename in ('failure.txt', 'process.log'):
-                evidence = destination / filename
-                if evidence.is_file():
-                    print(f'[{name}] {filename}:\n{evidence.read_text(encoding="utf-8-sig", errors="replace")[-8000:]}', flush=True)
-            raise RuntimeError(f'{name} exited with {code}; see {destination / "process.log"}')
-        report = json.loads((destination / 'report.json').read_text(encoding='utf-8-sig'))
-        if report.get('success') is not True:
-            raise RuntimeError(f'{name} acceptance failed: {report}')
-        if name == 'settings':
-            layout_path = destination / 'layout-audit' / 'report.json'
-            layout_report = json.loads(layout_path.read_text(encoding='utf-8-sig'))
-            if layout_report.get('success') is not True:
-                raise RuntimeError(f'Layout audit failed: {layout_path}')
-        print(f'[{name}] Passed in {time.monotonic() - started:.1f}s', flush=True)
+    ap=argparse.ArgumentParser()
+    ap.add_argument('--runtime',type=Path,required=True)
+    ap.add_argument('--output',type=Path,required=True)
+    args=ap.parse_args();runtime=args.runtime.resolve();output=args.output.resolve()
+    output.mkdir(parents=True,exist_ok=True)
+    if any((runtime/name).exists() for name in ('LyricIsland.Settings.exe','dotisle_settings.dll')):
+        raise RuntimeError('Legacy settings must not ship in the unified runtime')
+    environment=dict(os.environ, LYRICISLAND_TEST_PIPE='LyricIsland.Settings.test.ci.'+uuid.uuid4().hex)
+    for name in ('DOTISLE_MODULE_DIR','DOTISLE_DESKTOP_DLL'):
+        environment.pop(name,None)
+    destination=output/'center';destination.mkdir(exist_ok=True)
+    with (destination/'process.log').open('wb') as log:
+        subprocess.run([str(runtime/'LyricIsland.Center.exe'),'--verify',str(destination)],cwd=runtime,env=environment,
+            stdout=log,stderr=log,timeout=1200,check=True,creationflags=subprocess.CREATE_NO_WINDOW)
+    for relative in ('report.json','control-center/report.json','desktop/report.json'):
+        report=json.loads((destination/relative).read_text(encoding='utf-8-sig'))
+        if report.get('success') is not True: raise RuntimeError(f'UI acceptance failed: {relative}: {report}')
+    print('Packaged Go views and Rust desktop renderer passed',flush=True)
+    root=Path(__file__).resolve().parents[1]
+    subprocess.run([sys.executable,str(root/'tests/verify_unified_center.py'),'--runtime',str(runtime),'--scratch',str(output/'desktop-runtime'),'--report',str(output/'desktop/report.json')],
+        env=environment,timeout=180,check=True,creationflags=subprocess.CREATE_NO_WINDOW)
 
-
-if __name__ == '__main__':
-    main()
+if __name__=='__main__': main()

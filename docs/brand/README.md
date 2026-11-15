@@ -1,10 +1,10 @@
 # 点屿字标
 
-对外展示统一使用这版单色 Dotisle 手写字标，与设置开场和关于页共用相同的矢量轮廓。
+开屏、关于页与 README 统一使用用户指定的 Rossela 字形，正文仍为 HarmonyOS Sans。
 
-- `dotisle-wordmark.svg`：深色笔画，适用于浅色背景。
-- `dotisle-wordmark-light.svg`：浅色笔画，适用于深色背景。
-- README 使用 `<picture>` 按显示主题切换；按比例缩放并保留四周留白。
-- 形状来源：`Rust/crates/dotisle-render/src/brand_signature.rs` 的 `OUTLINES`，应用开场使用同稿沿笔路书写。
+- `dotisle-wordmark.svg` 与 `dotisle-wordmark-light.svg`：深浅两版，七个字母均为同一份实际字体轮廓，保留字体自身连笔与间距。
+- Go 的 `signature_outlines.go` 和 Rust 的 `wordmark_outlines.rs` 使用相同坐标；显示时等比缩放并按可见轮廓居中。
+- `wordmark-source.json` 记录作者、字体摘要与来源；仓库不附带 TTF。
+- 字体来源为 LetterStuff Typefoundry（2018）的 Rossela-Demo。当前用于本地设计验证；公开分发前须确认作者授予的字标使用权限，转换成矢量不改变授权要求。
 
-此字标用于 README、文档与宣传展示。应用任务栏、托盘等小尺寸方形位置继续采用胶囊图标。
+应用任务栏和托盘继续使用胶囊图标。

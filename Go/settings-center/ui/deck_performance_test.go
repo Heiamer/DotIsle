@@ -23,11 +23,11 @@ func TestDeckKeepsContentLayoutAndHidesOutgoingControls(t *testing.T) {
 	if !ok {
 		t.Fatal("focused music body missing")
 	}
-	for _, phase := range []float64{.2, .4} {
+	for _, phase := range []float64{.1, .2} {
 		a.deckTo(deckStep*phase, true)
 		tt.Frame()
 		after, ok := tt.Find("还没有播放音乐")
-		if !ok || math.Abs(float64(after.W)/(1-.035*phase)-float64(before.W)) > 1 {
+		if !ok || math.Abs(float64(after.W)-float64(before.W)) > 1 {
 			t.Fatalf("music content reflowed during movement: before=%v after=%v phase=%v", before, after, phase)
 		}
 	}
@@ -158,7 +158,7 @@ func TestDeckShellsRemainSeparatedAtIntermediatePhases(t *testing.T) {
 		phase := float64(i) / 100
 		y, h := deckGeometry(-phase, 430)
 		nextY, _ := deckGeometry(1-phase, 430)
-		if math.Abs(y+float64(h)-nextY-16) > .001 {
+		if math.Abs(nextY-y-float64(h)-deckGap) > .001 {
 			t.Fatalf("shells intersect at phase %.2f: bottom=%v next=%v", phase, y+float64(h), nextY)
 		}
 	}

@@ -7,8 +7,8 @@ import re
 import zipfile
 
 REPORTS = (
-    'source/report.json', 'settings/report.json', 'settings/layout-audit/report.json',
-    'themes/report.json', 'themes/background-report.json', 'covers/report.json',
+    'source/report.json', 'center/report.json', 'center/control-center/report.json',
+    'center/desktop/report.json',
     'native-timers/report.json', 'liquid/report.json', 'glow/report.json',
     'modules/report.json', 'desktop/report.json',
 )
@@ -54,7 +54,7 @@ def verify(directory, version, source_commit, manifest_sha256):
     require(all(evidence.get('checks', {}).get(key) is True for key in CHECKS), 'Local command checks are incomplete')
     with zipfile.ZipFile(directory / f'{prefix}-Validation.zip') as archive:
         for relative in REPORTS:
-            matches = [name for name in archive.namelist() if name == relative or name.endswith('/' + relative)]
+            matches = [name for name in archive.namelist() if name == relative or name == 'validation/' + relative]
             require(len(matches) == 1, f'Missing or ambiguous acceptance report: {relative}')
             report = json.loads(archive.read(matches[0]).decode('utf-8-sig'))
             require(report.get('success') is True, f'Acceptance failed: {relative}')
@@ -70,7 +70,9 @@ def verify(directory, version, source_commit, manifest_sha256):
                     runtime[parts[1]] = hashlib.file_digest(stream, 'sha256').hexdigest()
         require(runtime and runtime == evidence.get('runtimeSha256'), 'Portable runtime differs from the locally accepted binaries')
         require(sum(name.startswith('dotisle_') and name.endswith('.dll') for name in runtime) == 15, 'Expected 15 service DLLs')
-        require({'LyricIsland.exe', 'LyricIsland.Center.exe', 'LyricIsland.Settings.exe', 'LyricIsland.Updater.exe'} <= runtime.keys(), 'Missing a runtime executable')
+        require({'LyricIsland.exe', 'LyricIsland.Center.exe', 'LyricIsland.Updater.exe'} <= runtime.keys(), 'Missing a runtime executable')
+        require('dotisle_desktop.dll' in runtime, 'Missing embedded desktop renderer')
+        require('dotisle_settings.dll' not in runtime and 'LyricIsland.Settings.exe' not in runtime, 'Legacy settings leaked into the unified runtime')
     index = json.loads((directory / f'LyricIsland-{version}-Modules.json').read_text(encoding='utf-8-sig'))
     require(index.get('version') == version and index.get('runtimeVersion') == version, 'Module index version mismatch')
     require(index.get('packages'), 'Empty module index')

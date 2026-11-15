@@ -89,11 +89,11 @@ func TestSignaturePaintAndOpeningLifecycle(t *testing.T) {
 	// untransformed source coordinates. This catches the original clipped ink.
 	tt := ui.NewTester(func(c *ui.Context) {
 		ui.Box(c).Fill().Background(ui.RGB(255, 255, 255))
-		a.drawSignature(c, 136, 60, 328, 106, .12, false)
+		a.drawSignature(c, 136, 60, 328, 166, .28, false)
 	}, 600, 220)
 	dark := 0
 	img := tt.Image()
-	for y := 45; y < 175; y++ {
+	for y := 45; y < 215; y++ {
 		for x := 130; x < 470; x++ {
 			r, g, b, _ := img.At(x, y).RGBA()
 			if r < 32000 && g < 32000 && b < 32000 {

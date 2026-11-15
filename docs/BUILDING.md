@@ -1,76 +1,57 @@
-# 构建点屿 2.0.2
+# 构建点屿 5.0
 
-本目录说明开发环境、依赖配置和发行构建。普通使用说明请参阅根目录的 NATIVE-README.md。
-
-所有构建、打包与端到端验证都由 Rust 工具 `lyric-tools` 完成；源码不再包含 Python、PowerShell 或 C#。
+控制中心使用 Go + MyGo，主程序和功能模块使用 Rust。普通用户只需运行发布包，无需安装构建工具。
 
 ## 环境
 
-- Windows x64、Git、Rust stable 的 `x86_64-pc-windows-gnu` 工具链。
-- LLVM 的 `llvm-dlltool.exe`。
-- Windows SDK 的 `fxc.exe`。
-- C 编译器驱动；现有配置使用调用 `zig cc` 的包装脚本。
-- 打包时需要 SQLite 原生库，默认读取 `%USERPROFILE%/.nuget/packages/sqlitepclraw.lib.e_sqlite3/2.1.6/runtimes/win-x64/native/e_sqlite3.dll`，也可用 `--sqlite` 指定。
+- Windows x64、Git、Rust stable GNU 工具链和锁定依赖。
+- Go 版本以 `Go/settings-center/go.mod` 为准。
+- LLVM 的 `llvm-dlltool.exe`、`llvm-ar.exe`，以及 Zig C 编译器。
+- 打包需 Inno Setup，资源和字体由仓库提供。
 
-## 字体资源
-
-源码已包含完整 Noto Sans SC 与 Noto Sans JP 变量字体，无需额外下载或安装到系统。请保留 `Assets/Fonts/` 与对应许可文件，打包时会校验完整字体的 SHA256。两套字体均使用 SIL Open Font License 1.1，见 `FONT-NOTICE.md`。
-
-## 编译
-
-先构建工具本身：
+在仓库根配置工具和输出位置，使用 `tools/li-cargo.ps1`，由脚本设置链接器、静态 CRT 和本地库路径：
 
 ```powershell
-rustup default stable-x86_64-pc-windows-gnu
-cargo build --release --package lyric-tools
+$env:DOTISLE_TARGET_DIR = "$pwd/target"
+$env:DOTISLE_DLLTOOL = 'C:/Tools/LLVM/bin/llvm-dlltool.exe'
+$env:DOTISLE_ZIG = 'C:/Tools/Zig/zig.exe'
+& ./tools/li-cargo.ps1 build --release --workspace --bins --lib --locked
 ```
 
-再由工具配置 GNU 工具链、运行工作区测试并构建发行二进制：
+依赖已缓存时可加 `--offline`。该构建生成主程序、桌面 DLL、其他功能模块及安装/更新辅助程序，不再生成旧设置程序。
+
+然后在 Go 项目目录构建唯一控制中心，输出到同一 binary-dir：
 
 ```powershell
-./Rust/target/release/lyric-tools.exe build `
-  --dlltool 'C:/Tools/LLVM/bin/llvm-dlltool.exe' `
-  --fxc 'C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64/fxc.exe' `
-  --zig-cc 'C:/Tools/zig-cc.cmd'
+Push-Location Go/settings-center
+$env:GOTOOLCHAIN = 'local'
+go test ./...
+go vet ./...
+go build -trimpath -ldflags '-s -w -H=windowsgui' -o ../../target/release/LyricIsland.Center.exe .
+Pop-Location
 ```
 
-依赖已缓存时可加 `--offline`。输出位于 `Rust/target-native/release/`，包括主程序、设置程序、安装程序、卸载程序、更新器与工具本身。
+若 `Go/settings-center/LyricIsland.Center.exe` 中还保留先前构建，打包前须同步为当前构建；脚本会拒绝两份文件哈希不同的输入。
 
-运行时需要完整 `Assets/Fonts/`、设置程序、更新器及 SQLite 原生库，不能只复制主程序。
-
-## 打包
+## 测试与本地打包
 
 ```powershell
-./Rust/target-native/release/lyric-tools.exe package `
-  --version 2.0.2 `
-  --binary-dir Rust/target-native/release `
-  --output publish/outputs202 --iscc C:/Tools/InnoSetup/ISCC.exe
+$env:DOTISLE_MODULE_DIR = "$pwd/target/release"
+$env:DOTISLE_TEST_SQLITE3 = "$pwd/build/e_sqlite3.dll"
+& ./tools/li-cargo.ps1 test --workspace --locked
+python build/verify_release_source.py --version 5.0.0-rc2 --report validation/source/report.json
 ```
 
-打包产出安装版、便携包、OTA 兼容包、源码包与 SHA256 清单，并生成 `publish/DotIsle-2.0.2/` 运行时目录。安装版由 Inno Setup 6.7+ 标准向导编译，Windows 卸载登记与程序文件清理由 Inno Setup 管理；迁移、数据所有权校验、可选数据清理由 Rust lyric-bootstrap 负责。官方简体中文语言文件随源码保存于 build/。不需要 .NET Framework、Python 或 PowerShell。
+某些 Windows 注册表与命名管道测试需要正常桌面会话权限。所有集成测试使用专用临时数据和测试管道。
 
-## 端到端验证
+先把 `release-notes/DotIsle-<版本>-Notes.md` 复制到新的输出目录，然后运行：
 
 ```powershell
-./Rust/target-native/release/lyric-tools.exe verify e2e publish/DotIsle-2.0.2 `
-  --version 2.0.2 --artifacts publish/outputs202 --report publish/verification.json
-./Rust/target-native/release/lyric-tools.exe verify redesign publish/DotIsle-2.0.2 publish/verify-redesign
-./Rust/target-native/release/lyric-tools.exe verify notifications --runtime publish/DotIsle-2.0.2 --work publish/verify-notifications
-./Rust/target-native/release/lyric-tools.exe verify installer publish/verify-installer publish/verify-installer/report.json
+python build/package_preflight.py --binary-dir target/release --output publish/local --version 5.0.0-rc2 --shader-cache Assets/ShaderCache/Hybrid29 --iscc C:/Tools/InnoSetup/ISCC.exe
+python build/package_release.py --binary-dir target/release --output publish/local --work-dir publish/package-work --version 5.0.0-rc2 --shader-cache Assets/ShaderCache/Hybrid29 --iscc C:/Tools/InnoSetup/ISCC.exe
+python build/verify_packaged_ui.py --runtime publish/local/DotIsle-5.0.0-rc2 --output validation
 ```
 
-更新器与进度验证需要一个以测试管道运行的实例：
+版本号需与仓库和发布说明一致。输出目录与 package-work 应全新创建，避免混入旧程序。`package_release.py` 生成安装版与两种命名的便携包；源码归档、模块包及校验清单由发布流程另行生成。
 
-```powershell
-$env:LYRICISLAND_TEST_PIPE = 'LyricIsland.Settings.test.progress.local'
-./publish/DotIsle-2.0.2/LyricIsland.exe --data-dir publish/verify-progress/Data --run-ms 120000
-./Rust/target-native/release/lyric-tools.exe verify progress $env:LYRICISLAND_TEST_PIPE publish/verify-progress publish/verify-progress/report.json
-```
-
-```powershell
-./Rust/target-native/release/lyric-tools.exe verify updater `
-  publish/outputs202/OTA-Compatibility/LyricIsland-2.0.2-Portable.zip `
-  <OTA-SHA256> publish/verify-updater publish/verify-updater/report.json 2.0.2
-```
-
-端到端验证会启动打包好的运行时、驱动设置管道、运行设置窗口自检、重启持久化，并核对安装包自检与产物摘要。`success: true` 才算通过。
+包内验证调用实际生产 Go 页面和 Rust 桌面渲染器，并进行真实管道/进程集成测试。还需查看截图、检查首次启动和隐藏/唤起，并运行计时、模块、安装器与升级验收。当前架构及旧 OTA 边界见 [UNIFIED-CONTROL-CENTER.md](UNIFIED-CONTROL-CENTER.md)。

@@ -167,7 +167,7 @@ pub fn copy_data(source: &Path, target: &Path) -> Result<()> {
 pub fn stop_owned_programs(target: &Path) -> Result<()> {
     let _ = stop_running(Some(target));
     let current = win::current_pid();
-    let names = ["LyricIsland.Settings", "lyric-island-settings", "LyricIsland", "LyricIsland.Updater"];
+    let names = ["LyricIsland.Center", "LyricIsland.Settings", "lyric-island-settings", "LyricIsland", "LyricIsland.Updater"];
     for entry in win::processes() {
         if entry.pid == current { continue; }
         let matches = names.iter().any(|name| entry.name.eq_ignore_ascii_case(&format!("{name}.exe")) || entry.name.eq_ignore_ascii_case(name));

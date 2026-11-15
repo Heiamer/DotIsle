@@ -53,9 +53,12 @@ type App struct {
 	workflowDraftError string
 
 	// Widgets page: per-kind size choices (model.widget_sizes), default medium.
-	widgetSizes    map[string]string
-	widgetEditor   *widgetEditorState
-	widgetExamples *App
+	widgetSizes     map[string]string
+	musicEditor     *musicEditor
+	gestureTutorial *gestureTutorial
+	curveDraft      *motionCurveDraft
+	widgetEditor    *widgetEditorState
+	widgetExamples  *App
 
 	// Open color picker dialog and the toast message (fresh for a few seconds).
 	picker         *pickerState

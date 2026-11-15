@@ -229,7 +229,7 @@ func (a *App) musicLayoutChoices(c *ui.Context, p *Palette, x, y, w float32) flo
 	for i, opt := range options {
 		cardX := x + float32(i)*(cw+12)
 		on := selected == opt[1]
-		card := ui.ButtonBase(c).Absolute().Left(cardX).Top(y).Width(cw).Height(120).
+		card := ui.ButtonBase(c).Absolute().Left(cardX).Top(y).Width(cw).Height(164).
 			Radius(16).Label("选择" + opt[0])
 		if on {
 			card.Background(Col(s.PrimaryContainer)).Border(2, Col(s.Primary))
@@ -257,11 +257,11 @@ func (a *App) musicLayoutChoices(c *ui.Context, p *Palette, x, y, w float32) flo
 				ui.Box(c).Absolute().Left(20).Top(58).Width(cw - 40).Height(8).Radius(4).Background(Col(ink))
 				ui.Box(c).Absolute().Left(20).Top(80).Width(cw - 72).Height(6).Radius(3).Background(Col(s.OutlineVariant))
 			}
-			Label(c, opt[0], 12, 92, 12, s.OnSurface, true, cw-24)
-			Label(c, opt[2], 12, 104, 10, s.OnSurfaceVariant, false, cw-24)
+			Label(c, opt[0], 16, 112, 13, s.OnSurface, true, cw-32)
+			Label(c, opt[2], 16, 138, 11, s.OnSurfaceVariant, false, cw-32)
 		})
 	}
-	return y + 136
+	return y + 180
 }
 
 // islandTabMaterial is tab 129: 材质与取色.
@@ -308,7 +308,7 @@ func (a *App) islandTabGestures(c *ui.Context, p *Palette, x, y, w float32) floa
 	Panel(c, p, x, y, w, 104, s.PrimaryContainer)
 	Label(c, "认识你的灵动岛", x+24, y+19, 18, s.OnPrimaryContainer, true, w-230)
 	Label(c, "展开、切换、隐藏与托盘找回 · 交互式手势教程", x+24, y+54, 12, s.OnPrimaryContainer, false, w-230)
-	Button(c, p, "再看一次", x+w-174, y+29, 150, 46, "再看一次", "play_arrow", false, true, nil)
+	Button(c, p, "再看一次", x+w-174, y+29, 150, 46, "再看一次", "play_arrow", false, true, a.startGestureTutorial)
 	y += 128
 	y = a.islandHeading(c, p, "出现与退场", x, y, w)
 	y = a.islandToggles(c, p, x, y, w, []islandToggleRow{
@@ -352,8 +352,7 @@ func (a *App) islandTabMotion(c *ui.Context, p *Palette, x, y, w float32) float3
 	Label(c, "仅经典岛显示外围光效，Mini 不显示。", x, y, 13, p.Scheme.OnSurfaceVariant, false, w)
 	y += 36
 	y = a.islandHeading(c, p, "动效曲线与弹簧", x, y, w)
-	Label(c, "贝塞尔手柄编辑器随后接入；下方滑条实时生效。", x, y, 12, p.Scheme.OnSurfaceVariant, false, w-8)
-	y += 30
+	y = a.motionCurveEditor(c, p, x, y, w)
 	// def/min/max mirror island_settings.rs motion rows; the ranges must stay
 	// inside config.rs validate_setting or the island silently rejects the commit
 	// and the knob snaps back (MotionDuration 250–1200, Collapse 150–700, Gap 0–24,

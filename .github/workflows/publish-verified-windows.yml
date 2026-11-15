@@ -6,7 +6,7 @@ on:
       version:
         description: Version of the locally verified draft release
         required: true
-        default: '5.0.0-rc1'
+        default: '5.0.0-rc2'
       manifest_sha256:
         description: SHA-256 of the checksum manifest verified locally
         required: true
@@ -43,6 +43,18 @@ jobs:
       - name: Verify checksums, source, runtime and local acceptance reports
         run: |
           python build/verify_prebuilt_release.py --directory incoming --version "$RELEASE_VERSION" --source-commit "$GITHUB_SHA" --manifest-sha256 "$MANIFEST_SHA256" --report validation/publish/report.json
+
+      - name: Keep only public downloads
+        run: |
+          python build/prepare_public_release.py --directory incoming --output public --version "$RELEASE_VERSION" --plan validation/public-assets.json
+          python - <<'PY'
+          import json, os, subprocess
+          version=os.environ['RELEASE_VERSION']; tag='v'+version
+          plan=json.load(open('validation/public-assets.json'))
+          subprocess.run(['gh','release','upload',tag,f'public/DotIsle-{version}-SHA256.txt',f'public/LyricIsland-{version}-SHA256.txt','--clobber'],check=True)
+          for name in plan['remove']:
+              subprocess.run(['gh','release','delete-asset',tag,name,'--yes'],check=True)
+          PY
 
       - name: Publish accepted release
         run: |
