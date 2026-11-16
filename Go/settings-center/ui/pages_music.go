@@ -2,7 +2,6 @@
 package ui
 
 import (
-	"bytes"
 	"dotisle/settings/island"
 	"image"
 	"os"
@@ -50,20 +49,19 @@ func (a *App) coverBitmap() *ui.Bitmap {
 	if coverCache.path == path && coverCache.bmp != nil {
 		return coverCache.bmp
 	}
-	raw, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		clearCoverCache()
 		return nil
 	}
-	src, _, err := image.Decode(bytes.NewReader(raw))
+	defer file.Close()
+	src, _, err := image.Decode(file)
 	if err != nil {
 		clearCoverCache()
 		return nil
 	}
-	pixels := toNRGBA(src)
-	if w, h := fitWithin(pixels.Rect.Dx(), pixels.Rect.Dy(), coverCacheMax, coverCacheMax); w != pixels.Rect.Dx() || h != pixels.Rect.Dy() {
-		pixels = scaleNRGBA(pixels, w, h)
-	}
+	w, h := fitWithin(src.Bounds().Dx(), src.Bounds().Dy(), coverCacheMax, coverCacheMax)
+	pixels := scaledImage(src, w, h)
 	coverCache.path, coverCache.bmp, coverCache.at = path, ui.NewBitmap(pixels), time.Now()
 	coverCache.frost, coverCache.seed = frostPixels(pixels)
 	trimDecodedImageMemory()

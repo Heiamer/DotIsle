@@ -45,8 +45,12 @@ fn request_access(url:&str,method:&str,body:&[u8],content_type:&str,refer:&str,c
     let agent=wide("Mozilla/5.0 (Windows NT 10.0; Win64; x64) LyricIsland/1.2");
     unsafe{
         let session=Owned::new(WinHttpOpen(agent.as_ptr(),access,null(),null(),0))?; // 1: direct; 4: system/user proxy
-        let remaining=ctx.deadline.saturating_duration_since(Instant::now()).as_millis().clamp(1,5000) as i32;
-        WinHttpSetTimeouts(session.0,remaining.min(2000),remaining.min(2000),remaining.min(2000),remaining.min(1500));
+        let remaining=ctx.deadline.saturating_duration_since(Instant::now()).as_millis().clamp(1,if access==4{10_000}else{5000}) as i32;
+        // System update sources can take several seconds to prepare a release list.
+        // Use their request budget instead of the low-latency music timeout.
+        if access==4{WinHttpSetTimeouts(session.0,remaining,remaining,remaining,remaining);}else{
+            WinHttpSetTimeouts(session.0,remaining.min(2000),remaining.min(2000),remaining.min(2000),remaining.min(1500));
+        }
         let decompression=3u32;WinHttpSetOption(session.0,118,&decompression as *const _ as _,4);
         let host=wide(host);let connection=Owned::new(WinHttpConnect(session.0,host.as_ptr(),port,0))?;
         let path=wide(&path);let method=wide(method);let refer_w=wide(refer);

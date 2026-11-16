@@ -149,20 +149,25 @@ pub fn domestic_pair(target: &Path, version: &str) -> Result<(String, String)> {
     }
 }
 
+fn primary_pair(version:&str,preferred:&Option<(String,String)>)->(String,String){
+ let prefix="https://github.com/Heiamer/DotIsle/releases/download/";
+ if let Some(pair)=preferred.as_ref().filter(|(a,b)|a.starts_with(prefix)&&b.starts_with(prefix)){return pair.clone()}
+ let root=format!("{prefix}v{version}/LyricIsland-{version}");(format!("{root}-SHA256.txt"),format!("{root}-Portable.zip"))
+}
+
 pub fn download_bundle(target: &Path, version: &str, scratch: &Path, preferred: Option<(String, String)>, reporter: &mut Reporter) -> Result<()> {
-    let name = format!("LyricIsland-{version}");
-    let github = format!("https://github.com/Heiamer/DotIsle/releases/download/v{version}/");
+    let primary = primary_pair(version, &preferred);
     let mut errors = Vec::new();
     let mut tried = HashSet::new();
     let mut pinned: Option<String> = None;
     for step in 0..3 {
         let pair = match step {
-            0 => preferred.clone(),
-            1 => match domestic_pair(target, version) {
+            0 => Some(primary.clone()),
+            1 => preferred.clone(),
+            _ => match domestic_pair(target, version) {
                 Ok(pair) => Some(pair),
                 Err(error) => { errors.push(format!("Gitee：{error}")); continue; }
             },
-            _ => Some((format!("{github}{name}-SHA256.txt"), format!("{github}{name}-Portable.zip"))),
         };
         let Some((manifest_url, zip_url)) = pair else { continue };
         if !tried.insert(manifest_url.clone()) { continue; }
@@ -192,6 +197,17 @@ pub fn download_bundle(target: &Path, version: &str, scratch: &Path, preferred: 
         }
     }
     Err(Error(format!("国内源与 GitHub 均未能完成更新下载：{}", errors.join("；"))))
+}
+
+#[cfg(test)]
+mod source_priority_tests{
+ use super::*;
+ #[test]fn github_download_is_primary_even_when_the_candidate_came_from_gitee(){
+  let domestic=Some(("https://gitee.com/mirror/checksum".into(),"https://gitee.com/mirror/archive".into()));
+  assert_eq!(primary_pair("5.0.3-rc3",&domestic).0,"https://github.com/Heiamer/DotIsle/releases/download/v5.0.3-rc3/LyricIsland-5.0.3-rc3-SHA256.txt");
+  let exact=Some(("https://github.com/Heiamer/DotIsle/releases/download/v5.0.3-rc3/custom-hash".into(),"https://github.com/Heiamer/DotIsle/releases/download/v5.0.3-rc3/custom-zip".into()));
+  assert_eq!(primary_pair("5.0.3-rc3",&exact),exact.unwrap());
+ }
 }
 
 pub fn apply(stage: &Path, target: &Path, backup: &Path, fail_after: usize, after: Option<&mut dyn FnMut() -> Result<()>>) -> Result<()> {

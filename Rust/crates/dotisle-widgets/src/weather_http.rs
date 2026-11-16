@@ -80,7 +80,8 @@ fn wide(value: &str) -> Vec<u16> {
 }
 pub fn get_json(url: &str) -> Result<serde_json::Value, String> {
     if !(url.starts_with("https://api.open-meteo.com/")
-        || url.starts_with("https://geocoding-api.open-meteo.com/"))
+        || url.starts_with("https://geocoding-api.open-meteo.com/")
+        || url.starts_with("https://wttr.in/"))
     {
         return Err("weather endpoint is not allowed".into());
     }
@@ -145,4 +146,13 @@ pub fn get_json(url: &str) -> Result<serde_json::Value, String> {
         }
         serde_json::from_slice(&body).map_err(|e| e.to_string())
     }
+}
+
+#[cfg(test)]
+#[test]
+#[ignore = "requires the public Open-Meteo service"]
+fn live_weather_http() {
+    let result=get_json("https://geocoding-api.open-meteo.com/v1/search?name=Shanghai&count=1&language=zh&format=json");
+    println!("{result:?}");
+    assert!(result.is_ok());
 }

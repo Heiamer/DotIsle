@@ -4,7 +4,6 @@
 package ui
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"image"
@@ -18,6 +17,7 @@ import (
 
 	"dotisle/settings/prefs"
 	"github.com/egoist/mygo/ui"
+	xdraw "golang.org/x/image/draw"
 )
 
 // decode() caps in background.rs: a 64 MB file, a 16384 source limit the thumbnail cap
@@ -184,13 +184,14 @@ func decodeWallpaper(path string, maxW, maxH int, cover bool) (*image.NRGBA, err
 	if info.Size() > wallpaperMaxBytes {
 		return nil, errors.New("图片超过 64 MB，请选择较小的图")
 	}
-	raw, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, errors.New("无法打开图片")
 	}
+	defer file.Close()
 	// The decoders for PNG, JPEG, GIF, BMP and WebP are registered by mygo's own
 	// DecodeBitmap imports, so plain image.Decode covers the same set as image::.
-	img, _, err := image.Decode(bytes.NewReader(raw))
+	img, _, err := image.Decode(file)
 	if err != nil {
 		return nil, errors.New("图片损坏或格式不支持，请选择 PNG、JPEG 或 BMP")
 	}
@@ -198,15 +199,28 @@ func decodeWallpaper(path string, maxW, maxH int, cover bool) (*image.NRGBA, err
 	if b.Dx() == 0 || b.Dy() == 0 {
 		return nil, errors.New("图片尺寸无效")
 	}
-	src := toNRGBA(img)
 	if b.Dx() > maxW || b.Dy() > maxH {
 		w, h := fitWithin(b.Dx(), b.Dy(), maxW, maxH)
 		if cover {
 			w, h = coverWithin(b.Dx(), b.Dy(), maxW, maxH)
 		}
-		src = scaleNRGBA(src, w, h)
+		return scaledImage(img, w, h), nil
 	}
-	return src, nil
+	return toNRGBA(img), nil
+}
+
+// Scale the decoded source directly. Converting a full-size JPEG to NRGBA
+// first would allocate four bytes for every source pixel just to discard it.
+func scaledImage(src image.Image, w, h int) *image.NRGBA {
+	if m, ok := src.(*image.NRGBA); ok && m.Rect.Min == (image.Point{}) {
+		return scaleNRGBA(m, w, h)
+	}
+	if src.Bounds().Dx() == w && src.Bounds().Dy() == h {
+		return toNRGBA(src)
+	}
+	dst := image.NewNRGBA(image.Rect(0, 0, w, h))
+	xdraw.BiLinear.Scale(dst, dst.Bounds(), src, src.Bounds(), xdraw.Src, nil)
+	return dst
 }
 
 // frosted approximates background.rs frosted(): three separable box passes reach a

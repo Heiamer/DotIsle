@@ -16,6 +16,7 @@ if method.starts_with("placements."){
 }
 match method{
 "data.advance_focus"=>s.data.advance_focus(&parse::<Vec<timers::Timer>>(a,"timers")?,parse(a,"elapsed")?),"data.flush"=>s.data.flush(),"data.poll"=>s.data.poll(&parse::<Vec<desktop_widgets::Placement>>(a,"placements")?),
+"metrics.refresh_wireless"=>{s.metrics.refresh_wireless();return Ok(Value::Null);},
 "metrics.poll"=>{s.metrics.poll();return Ok(json!(s.metrics.value));},_=>return Err("unknown widget method".into())};Ok(json!({"value":s.data.value}))
 })}
 dotisle_module_api::export_service!("widgets",dispatch);

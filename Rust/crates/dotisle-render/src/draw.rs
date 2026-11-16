@@ -138,6 +138,14 @@ const THEME_FONTS: [(&str, &str); 6] = [
     ("Source Serif 4", "SourceSerif4.ttf"),
     ("Noto Serif SC", "NotoSerifSC.ttf"),
 ];
+const HARMONY_FONTS: [(&str, &str); 6] = [
+    ("HarmonyOS Sans", "HarmonyOS_Sans_Regular.ttf"),
+    ("HarmonyOS Sans", "HarmonyOS_Sans_Medium.ttf"),
+    ("HarmonyOS Sans", "HarmonyOS_Sans_Bold.ttf"),
+    ("HarmonyOS Sans SC", "HarmonyOS_Sans_SC_Regular.ttf"),
+    ("HarmonyOS Sans SC", "HarmonyOS_Sans_SC_Medium.ttf"),
+    ("HarmonyOS Sans SC", "HarmonyOS_Sans_SC_Bold.ttf"),
+];
 pub struct Text {
     deferred_faces: Vec<(&'static str, std::path::PathBuf)>,
     system_fonts: bool,
@@ -189,20 +197,16 @@ impl Text {
         for name in LATIN_FONTS.iter().chain(["NotoSansSC.ttf"].iter()) {
             let _ = text.register(&dir.join(name));
         }
-        for family in ["HarmonyOS_Sans", "HarmonyOS_Sans_SC"] {
-            for weight in ["Regular", "Medium", "Bold"] {
-                let _=text.register(&dir.join(format!("{family}_{weight}.ttf")));
-            }
-        }
         text.deferred_faces = THEME_FONTS
             .iter()
             .map(|(family, file)| (*family, dir.join(file)))
             .collect();
+        text.defer_harmony(&dir);
         text.japanese = Some(dir.join("NotoSansJP.ttf"));
         text
     }
     fn ensure_face(&mut self, family: &str) {
-        if let Some(index) = self
+        while let Some(index) = self
             .deferred_faces
             .iter()
             .position(|(name, _)| name.eq_ignore_ascii_case(family))
@@ -210,6 +214,10 @@ impl Text {
             let (_, path) = self.deferred_faces.remove(index);
             let _ = self.register(&path);
         }
+    }
+    /// Bundled families load on first use; unrelated surfaces keep no CJK copies.
+    pub fn defer_harmony(&mut self, dir: &std::path::Path) {
+        self.deferred_faces.extend(HARMONY_FONTS.iter().map(|(family, file)| (*family, dir.join(file))));
     }
     fn ensure_script(&mut self, text: &str) {
         if self.japanese.is_some()
@@ -420,8 +428,7 @@ impl Text {
             self.ensure_face(family);
             self.family = family.into();
             if family != "Google Sans Flex"
-                && !THEME_FONTS
-                    .iter()
+                && !THEME_FONTS.iter().chain(HARMONY_FONTS.iter())
                     .any(|(name, _)| name.eq_ignore_ascii_case(family))
             {
                 self.enable_system_fonts();
@@ -1382,11 +1389,11 @@ mod deferred_font_tests {
     #[test]
     fn a_theme_loads_only_its_requested_face_once() {
         let mut text = Text::new_lazy_japanese();
-        assert_eq!(text.deferred_faces.len(), THEME_FONTS.len());
+        assert_eq!(text.deferred_faces.len(), THEME_FONTS.len() + HARMONY_FONTS.len());
         let initial = text.registered.len();
         assert!(text.face_width("Noto Serif SC", "点屿", 24., 600) > 0.);
         assert_eq!(text.registered.len(), initial + 1);
-        assert_eq!(text.deferred_faces.len(), THEME_FONTS.len() - 1);
+        assert_eq!(text.deferred_faces.len(), THEME_FONTS.len() + HARMONY_FONTS.len() - 1);
         text.face_width("Noto Serif SC", "点屿", 24., 600);
         assert_eq!(text.registered.len(), initial + 1);
         assert!(!text.system_fonts);
@@ -1397,5 +1404,16 @@ mod deferred_font_tests {
         assert!(text.japanese.is_some());
         assert!(text.face_width("Space Mono", "君に届け", 14., 400) > 0.);
         assert!(text.japanese.is_none());
+    }
+    #[test]
+    fn bundled_harmony_does_not_enable_the_system_font_catalog() {
+        let mut text = Text::new_lazy_japanese();
+        let initial = text.registered.len();
+        text.set_family("HarmonyOS Sans SC");
+        assert_eq!(text.registered.len(), initial + 3);
+        assert!(!text.system_fonts);
+        assert!(text.face_width("HarmonyOS Sans SC", "点屿 Memory 123", 16., 600) > 0.);
+        assert_eq!(text.registered.len(), initial + 3);
+        assert!(!text.system_fonts);
     }
 }

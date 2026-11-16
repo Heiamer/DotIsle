@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
-const base=new URL('../Rust/crates/lyric-backend/src/',import.meta.url);
+const base=new URL('../Rust/crates/dotisle-music/src/',import.meta.url);
 const scripts={seek:fs.readFileSync(new URL('netease_seek.js',base),'utf8')};
 function run(kind,p,args,{modern=false,change=false,missing=false}={}){
  const calls=[];let reads=0;

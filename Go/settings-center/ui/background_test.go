@@ -75,6 +75,40 @@ func absInt(v int) int {
 	return v
 }
 
+func TestScaledImageReadsDecodedSourceWithoutFullSizeConversion(t *testing.T) {
+	// JPEGs decode to YCbCr; sample a cropped source as well as the full frame.
+	source := image.NewYCbCr(image.Rect(7, 11, 71, 59), image.YCbCrSubsampleRatio420)
+	for i := range source.Y {
+		source.Y[i] = 150
+	}
+	for i := range source.Cb {
+		source.Cb[i], source.Cr[i] = 80, 190
+	}
+	got := scaledImage(source, 16, 12)
+	want := color.NRGBAModel.Convert(source.At(7, 11)).(color.NRGBA)
+	if got.Rect != image.Rect(0, 0, 16, 12) {
+		t.Fatalf("wrong scaled bounds: %v", got.Rect)
+	}
+	for y := 0; y < 12; y++ {
+		for x := 0; x < 16; x++ {
+			pixel := got.NRGBAAt(x, y)
+			if absInt(int(pixel.R)-int(want.R)) > 1 || absInt(int(pixel.G)-int(want.G)) > 1 || absInt(int(pixel.B)-int(want.B)) > 1 || pixel.A != 255 {
+				t.Fatalf("JPEG color changed: %v, expected %v", pixel, want)
+			}
+		}
+	}
+	alpha := image.NewNRGBA(image.Rect(4, 6, 24, 26))
+	for y := 6; y < 26; y++ {
+		for x := 4; x < 24; x++ {
+			alpha.SetNRGBA(x, y, color.NRGBA{R: 120, G: 80, B: 200, A: 128})
+		}
+	}
+	pixel := scaledImage(alpha, 10, 10).NRGBAAt(5, 5)
+	if pixel.A != 128 || absInt(int(pixel.R)-120) > 1 || absInt(int(pixel.B)-200) > 1 {
+		t.Fatalf("transparent cropped source changed: %v", pixel)
+	}
+}
+
 func TestDecodeWallpaperGuards(t *testing.T) {
 	dir := t.TempDir()
 	good := writeImage(t, dir, "good.png", checker(64, 48, 8),

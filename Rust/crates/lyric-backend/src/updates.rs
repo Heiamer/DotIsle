@@ -104,9 +104,23 @@ fn check_github(channel:&str)->Result<Value,String>{
 
 fn check_github_beta()->Result<Value,String>{
  let ctx=crate::http::RequestContext::new(Duration::from_secs(10));
- let releases=crate::http::get_system("https://api.github.com/repos/Heiamer/DotIsle/releases?per_page=100",&ctx)?;
- let release=choose_release(&releases,"beta",&installed_version())?;
+ let primary=crate::http::get_system("https://api.github.com/repos/Heiamer/DotIsle/releases?per_page=100",&ctx)
+  .and_then(|releases|choose_release(&releases,"beta",&installed_version()));
+ let (release,warning)=match primary{
+  Ok(release)=>(release,None),
+  Err(error)=>{
+   // Unlike /latest, the public release list also includes prereleases. Keep
+   // the beta channel on GitHub when its API is slow or rate limited.
+   let ctx=crate::http::RequestContext::new(Duration::from_secs(10));
+   let release=crate::http::request_system("https://github.com/Heiamer/DotIsle/releases",&ctx,4*1024*1024)
+    .and_then(|bytes|page_channel_release(&String::from_utf8_lossy(&bytes),"beta",&installed_version()))
+    .map_err(|page_error|format!("测试版 API：{error}；发行列表：{page_error}"))?;
+   (release,Some(error))
+  }
+ };
  let mut result=describe_channel(&release,&installed_version(),"beta")?;
+ result["metadataRoute"]=json!(if warning.is_some(){"releasePage"}else{"api"});
+ if let Some(warning)=warning{result["sourceWarnings"]=json!([format!("GitHub API：{warning}；已使用 GitHub 发行列表")]);}
  let tag=release["tag_name"].as_str().ok_or("版本号缺失")?;
  let v=tag.trim_start_matches('v');
  let base=format!("https://github.com/Heiamer/DotIsle/releases/download/{tag}/LyricIsland-{v}");
@@ -114,32 +128,51 @@ fn check_github_beta()->Result<Value,String>{
  result["manifestUrl"]=json!(format!("{base}-SHA256.txt"));result["zipUrl"]=json!(format!("{base}-Portable.zip"));Ok(result)
 }
 pub fn check()->Result<Value,String>{check_channel("stable")}
-// Compare complete release records after both sources respond; never combine a
-// tag, checksum and archive from different records or from another channel.
+// GitHub is authoritative. The domestic mirror is queried only on failure;
+// keep each candidate's tag and asset URLs together throughout selection.
 pub fn check_channel(channel:&str)->Result<Value,String>{
  if !valid_channel(channel){return Err("更新渠道无效".into())}
- let config=sources();let repo=config["giteeRepository"].as_str().unwrap_or("").to_owned();
- let(tx,rx)=std::sync::mpsc::channel();let mut count=1;
- if !repo.is_empty(){let tx=tx.clone();let channel=channel.to_owned();count+=1;std::thread::spawn(move||{let _=tx.send(("Gitee 国内源",check_gitee(&repo,&channel)));});}
- let github_tx=tx.clone();let channel_owned=channel.to_owned();
- std::thread::spawn(move||{let _=github_tx.send(("GitHub",check_github(&channel_owned)));});drop(tx);
- let mut available:Option<Value>=None;let mut errors=vec![];
- for _ in 0..count{
-  match rx.recv_timeout(Duration::from_secs(32)){
-   Ok((source,Ok(mut result)))=>{
-    let message=result["message"].as_str().unwrap_or("").to_owned();result["message"]=json!(format!("{message} · {source}"));
-    if available.as_ref().is_none_or(|old|release_version(result["version"].as_str().unwrap_or(""))>release_version(old["version"].as_str().unwrap_or(""))){available=Some(result)}
-   },
-   Ok((source,Err(e)))=>errors.push(format!("{source}：{e}")),
-   Err(_)=>{errors.push("其他更新源请求超时".into());break}
+ let config=sources();let repo=config["giteeRepository"].as_str().unwrap_or("");
+ check_sources(channel,&installed_version(),||check_github(channel),||{
+  if repo.is_empty(){Err("未配置国内更新源".into())}else{check_gitee(repo,channel)}
+ })
+}
+fn check_sources(channel:&str,current:&str,github:impl FnOnce()->Result<Value,String>,domestic:impl FnOnce()->Result<Value,String>)->Result<Value,String>{
+ let mut result=match github(){
+  Ok(result)=>result,
+  Err(primary)=>{
+   let mut fallback=domestic().map_err(|error|format!("检查更新失败。GitHub：{primary}；国内后备源：{error}。请检查网络或系统代理。"))?;
+   if release_version(fallback["version"].as_str().unwrap_or(""))<release_version(current){
+    return Err(format!("GitHub 检查失败：{primary}；国内后备源仅有 {}，早于当前版本 {current}，无法确认此渠道是否有更新。",fallback["version"].as_str().unwrap_or("未知版本")))
+   }
+   let mut warnings=fallback["sourceWarnings"].as_array().cloned().unwrap_or_default();warnings.push(json!(format!("GitHub：{primary}；已使用国内后备源")));fallback["sourceWarnings"]=json!(warnings);fallback
   }
+ };
+ let source=result["source"].as_str().unwrap_or("未知源").to_owned();
+ let message=result["message"].as_str().unwrap_or("").to_owned();result["message"]=json!(format!("{message} · {source}"));
+ result["channel"]=json!(channel);Ok(result)
+}
+fn page_channel_release(html:&str,channel:&str,current:&str)->Result<Value,String>{
+ let links=regex::Regex::new(r"(?is)<a\b[^>]*>").unwrap();
+ let attributes=regex::Regex::new(r#"(?i)(?:^|\s)(href|class)\s*=\s*["']([^"']*)["']"#).unwrap();
+ let mut releases=vec![];
+ for link in links.find_iter(html){
+  let(mut href,mut class)=(None,None);
+  for attribute in attributes.captures_iter(link.as_str()){
+   if attribute[1].eq_ignore_ascii_case("href"){href=attribute.get(2).map(|m|m.as_str());}else{class=attribute.get(2).map(|m|m.as_str());}
+  }
+  if !class.is_some_and(|c|c.split_whitespace().any(|v|v=="Link--primary")){continue}
+  let Some(tag)=href.and_then(|url|url.strip_prefix("https://github.com").unwrap_or(url).strip_prefix("/Heiamer/DotIsle/releases/tag/"))else{continue};
+  let Some(version)=release_version(tag)else{continue};
+  // GitHub can mark a numeric tag as a preview; read the title's badge too.
+  let tail=&html[link.end()..];
+  let end=tail.find("</div>").unwrap_or(tail.len());
+  let next=links.find(tail).map_or(tail.len(),|m|m.start());
+  let header=&tail[..end.min(next)];
+  let preview=regex::Regex::new(r#"(?is)<span\b[^>]*class\s*=\s*["'][^"']*\bLabel\b[^"']*["'][^>]*>\s*Pre-release\s*</span>"#).unwrap().is_match(header);
+  releases.push(json!({"tag_name":tag,"prerelease":version.1!=4||preview,"draft":false}));
  }
- if let Some(mut result)=available{
-  result["channel"]=json!(channel);
-  if !errors.is_empty(){result["sourceWarnings"]=json!(errors)}
-  return Ok(result)
- }
- Err(format!("检查更新失败。{}。请检查网络或系统代理。",errors.join("；")))
+ choose_release(&json!(releases),channel,current)
 }
 fn page_release(html:&str)->Result<Value,String>{
     let meta=regex::Regex::new(r"(?is)<meta\b[^>]*>").unwrap();
@@ -235,6 +268,25 @@ pub fn launch_candidate(release:&Value,base:&std::path::Path,data:&std::path::Pa
  assert_eq!(describe_channel(&json!({"tag_name":"v5.0.1"}),"5.0.1-beta.2","stable").unwrap()["newer"],true);
  assert_eq!(describe_channel(&json!({"tag_name":"v5.0.0"}),"5.1.0-beta.1","stable").unwrap()["newer"],false);
 }
+#[test]fn github_primary_never_queries_or_gets_overridden_by_the_mirror(){
+ let primary=describe_channel(&json!({"tag_name":"v5.0.3-beta.2","prerelease":true}),"5.0.2","beta").unwrap();
+ let mut primary=primary;primary["source"]=json!("GitHub");primary["zipUrl"]=json!("github-exact-pair");
+ let result=check_sources("beta","5.0.2",||Ok(primary),||panic!("mirror must remain a fallback even if it advertises v99")).unwrap();
+ assert_eq!(result["version"],"v5.0.3-beta.2");assert_eq!(result["source"],"GitHub");assert_eq!(result["zipUrl"],"github-exact-pair");
+}
+#[test]fn outdated_domestic_fallback_cannot_claim_no_updates(){
+ let mirror=|tag:&str|{let mut r=describe_channel(&json!({"tag_name":tag}),"5.0.2","beta").unwrap();r["source"]=json!("Gitee 国内源");r};
+ assert!(check_sources("beta","5.0.2",||Err("offline".into()),||Ok(mirror("v3.2.0"))).unwrap_err().contains("无法确认"));
+ let result=check_sources("beta","5.0.2",||Err("offline".into()),||Ok(mirror("v5.0.3"))).unwrap();
+ assert_eq!(result["version"],"v5.0.3");assert!(result["sourceWarnings"].is_array());
+ assert!(check_sources("beta","5.0.2",||Err("offline".into()),||Err("offline".into())).is_err());
+}
+#[test]fn public_release_list_fallback_reads_beta_titles_and_rejects_foreign_links(){
+ let html=r#"<a class="Link--primary Link" href="/Heiamer/DotIsle/releases/tag/v5.0.3-rc2">rc</a><a href='/Heiamer/DotIsle/releases/tag/v5.0.3-rc3' class='Link--primary'>rc3</a><a href='/Heiamer/DotIsle/releases/tag/v5.0.2' class='Link--primary'>stable</a><a href='/Heiamer/DotIsle/releases/tag/v99.0.0'>body link</a><a class='Link--primary' href='https://evil.test/Heiamer/DotIsle/releases/tag/v99.0.0'>foreign</a>"#;
+ assert_eq!(page_channel_release(html,"beta","5.0.2").unwrap()["tag_name"],"v5.0.3-rc3");
+ assert_eq!(page_channel_release(html,"stable","5.0.2").unwrap()["tag_name"],"v5.0.2");
+ assert!(page_channel_release("<a class='Link--primary' href='/Heiamer/DotIsle/releases/tag/v5.0.3-rc3/evil'>bad</a>","beta","5.0.2").is_err());
+}
 #[test]fn release_selection_is_numeric_and_draft_safe(){
  let list=json!([{"tag_name":"v5.0.1-beta.9","prerelease":true},{"tag_name":"v99.0.0","draft":true},{"tag_name":"v5.0.1-beta.10","prerelease":true},{"tag_name":"v5.0.0"}]);
  assert_eq!(choose_release(&list,"beta","5.0.0").unwrap()["tag_name"],"v5.0.1-beta.10");
@@ -243,4 +295,11 @@ pub fn launch_candidate(release:&Value,base:&std::path::Path,data:&std::path::Pa
  assert!(describe_channel(&json!({"tag_name":"v5.0.1-beta.1"}),"5.0.0","beta").is_err());
  assert!(!valid_channel("nightly"));
 }
+}
+
+#[test]
+fn release_page_respects_preview_badge_on_numeric_tags() {
+ let html=r#"<div><a class='Link--primary' href='/Heiamer/DotIsle/releases/tag/v5.1.0'>preview</a><span class='Label Label--warning'>Pre-release</span></div><div><a class='Link--primary' href='/Heiamer/DotIsle/releases/tag/v5.0.2'>stable</a></div>"#;
+ assert_eq!(page_channel_release(html,"stable","5.0.0").unwrap()["tag_name"],"v5.0.2");
+ assert_eq!(page_channel_release(html,"beta","5.0.0").unwrap()["tag_name"],"v5.1.0");
 }

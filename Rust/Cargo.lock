@@ -527,7 +527,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-desktop"
-version = "5.0.2"
+version = "5.0.3"
 dependencies = [
  "base64",
  "dotisle-domain",
@@ -561,7 +561,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-domain"
-version = "5.0.2"
+version = "5.0.3"
 dependencies = [
  "dotisle-module-api",
  "lyric-backend",
@@ -688,7 +688,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-render"
-version = "5.0.2"
+version = "5.0.3"
 dependencies = [
  "dotisle-scene",
  "fontique",
@@ -701,7 +701,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-scene"
-version = "5.0.2"
+version = "5.0.3"
 dependencies = [
  "glifo",
  "vello_common",
@@ -1520,7 +1520,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-archive"
-version = "5.0.2"
+version = "5.0.3"
 dependencies = [
  "flate2",
  "sha2",
@@ -1528,7 +1528,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-backend"
-version = "5.0.2"
+version = "5.0.3"
 dependencies = [
  "aes",
  "base64",
@@ -1547,7 +1547,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-bootstrap"
-version = "5.0.2"
+version = "5.0.3"
 dependencies = [
  "dotisle-module-api",
  "dotisle-render",
@@ -1563,7 +1563,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-core"
-version = "5.0.2"
+version = "5.0.3"
 dependencies = [
  "regex",
  "serde",
@@ -1574,7 +1574,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-native"
-version = "5.0.2"
+version = "5.0.3"
 dependencies = [
  "base64",
  "dotisle-domain",

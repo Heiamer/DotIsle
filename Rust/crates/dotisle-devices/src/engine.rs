@@ -7,7 +7,7 @@ use windows::{core::{implement,GUID,HSTRING,PCWSTR},Win32::{
     Foundation::{HANDLE,HWND},
     Media::Audio::{IMMDevice,IMMDeviceEnumerator,IMMNotificationClient,IMMNotificationClient_Impl,DEVICE_STATE,DEVICE_STATE_ACTIVE,EDataFlow,ERole,MMDeviceEnumerator,PKEY_AudioEndpoint_FormFactor,eRender},
     System::{Com::{CoCreateInstance,CLSCTX_ALL,STGM_READ,StructuredStorage::{PROPVARIANT,PropVariantClear}},Variant::{VT_CLSID,VT_I4,VT_LPWSTR,VT_UI4}},
-    UI::{Input::{GetRawInputDeviceInfoW,RIDEV_DEVNOTIFY,RIDI_DEVICEINFO,RID_DEVICE_INFO,RIM_TYPEHID,RIM_TYPEKEYBOARD,RIM_TYPEMOUSE,RAWINPUTDEVICE,RegisterRawInputDevices},WindowsAndMessaging::{GIDC_ARRIVAL,GIDC_REMOVAL}},
+    UI::{Input::{GetRawInputDeviceInfoW,RIDEV_DEVNOTIFY,RIDI_DEVICEINFO,RIDI_DEVICENAME,RID_DEVICE_INFO,GetRawInputDeviceList,RAWINPUTDEVICELIST,RIM_TYPEHID,RIM_TYPEKEYBOARD,RIM_TYPEMOUSE,RAWINPUTDEVICE,RegisterRawInputDevices},WindowsAndMessaging::{GIDC_ARRIVAL,GIDC_REMOVAL}},
 }};
 #[link(name="user32")]unsafe extern "system"{fn RegisterDeviceNotificationW(recipient:*mut c_void,filter:*const c_void,flags:u32)->*mut c_void;fn UnregisterDeviceNotification(handle:*mut c_void)->i32;}
 #[link(name="kernel32")]unsafe extern "system"{fn GetDriveTypeW(root:*const u16)->u32;}
@@ -45,7 +45,8 @@ impl Event{
         body:if self.connected{"设备已就绪，可以继续使用。".into()}else{"设备连接已断开。".into()},icon:None}}
 }
 
-struct RawPending{kind:Kind,connected:bool,at:Instant}
+#[derive(Clone)]struct RawInfo{kind:Kind,key:String,label:String}
+struct RawPending{kind:Kind,key:String,label:String,connected:bool,at:Instant}
 struct AudioPending{id:String,connected:bool,at:Instant}
 #[derive(Clone)]struct AudioInfo{kind:Kind,name:String,container:Option<String>}
 enum AudioSignal{Added(String),Removed(String),State(String,DEVICE_STATE)}
@@ -64,7 +65,7 @@ impl Drop for AudioListener{fn drop(&mut self){unsafe{let _=self.enumerator.Unre
 
 pub struct Hub{
     handles:Vec<*mut c_void>,pending:Vec<Event>,seen:HashMap<String,Instant>,
-    raw:HashMap<isize,Kind>,raw_pending:Vec<RawPending>,audio_pending:Vec<AudioPending>,
+    raw:HashMap<isize,RawInfo>,raw_pending:Vec<RawPending>,audio_pending:Vec<AudioPending>,
     audio:Option<AudioListener>,endpoints:HashMap<String,AudioInfo>,
 }
 impl Default for Hub{fn default()->Self{Self{handles:vec![],pending:vec![],seen:HashMap::new(),raw:HashMap::new(),raw_pending:vec![],audio_pending:vec![],audio:None,endpoints:HashMap::new()}}}
@@ -75,6 +76,13 @@ impl Hub{
         let usages=[(0x01,0x02),(0x01,0x06),(0x01,0x04),(0x01,0x05),(0x01,0x08)];
         let devices=usages.map(|(page,usage)|RAWINPUTDEVICE{usUsagePage:page,usUsage:usage,dwFlags:RIDEV_DEVNOTIFY,hwndTarget:hwnd});
         let _=RegisterRawInputDevices(&devices,std::mem::size_of::<RAWINPUTDEVICE>()as u32);
+        // Cache names/identities silently so the first removal is identifiable too.
+        let mut count=0;let size=std::mem::size_of::<RAWINPUTDEVICELIST>()as u32;
+        if GetRawInputDeviceList(None,&mut count,size)!=u32::MAX&&count<=1024{
+            let mut items=vec![RAWINPUTDEVICELIST::default();count as usize];
+            let read=GetRawInputDeviceList(Some(items.as_mut_ptr()),&mut count,size);
+            if read!=u32::MAX{for item in items.iter().take(read as usize){if let Some(info)=raw_info(item.hDevice.0 as isize){self.raw.insert(item.hDevice.0 as isize,info);}}}
+        }
         self.audio=AudioListener::listen();
         // The baseline is the set of endpoints that already exist; their removal still counts,
         // but their presence at startup must never be announced.
@@ -83,13 +91,8 @@ impl Hub{
     /// WM_INPUT_DEVICE_CHANGE: only the device identity is read, never key or pointer traffic.
     pub unsafe fn input_change(&mut self,action:u32,handle:isize){
         if action==GIDC_ARRIVAL{
-            let mut info=RID_DEVICE_INFO{cbSize:std::mem::size_of::<RID_DEVICE_INFO>()as u32,..Default::default()};let mut size=info.cbSize;
-            let read=GetRawInputDeviceInfoW(Some(HANDLE(handle as *mut c_void)),RIDI_DEVICEINFO,Some((&mut info as *mut RID_DEVICE_INFO).cast()),&mut size);
-            if read==u32::MAX{return}
-            let kind=if info.dwType==RIM_TYPEMOUSE{Some(Kind::Mouse)}else if info.dwType==RIM_TYPEKEYBOARD{Some(Kind::Keyboard)}
-                else if info.dwType==RIM_TYPEHID{let hid=info.Anonymous.hid;if hid.usUsagePage==0x01&&matches!(hid.usUsage,0x04|0x05|0x08){Some(Kind::Gamepad)}else{None}}else{None};
-            if let Some(kind)=kind{self.raw.insert(handle,kind);self.raw_pending.push(RawPending{kind,connected:true,at:Instant::now()});}
-        }else if action==GIDC_REMOVAL{if let Some(kind)=self.raw.remove(&handle){self.raw_pending.push(RawPending{kind,connected:false,at:Instant::now()});}}
+            if let Some(info)=raw_info(handle){self.raw.insert(handle,info.clone());self.raw_pending.push(RawPending{kind:info.kind,key:info.key,label:info.label,connected:true,at:Instant::now()});}
+        }else if action==GIDC_REMOVAL{if let Some(info)=self.raw.remove(&handle){self.raw_pending.push(RawPending{kind:info.kind,key:info.key,label:info.label,connected:false,at:Instant::now()});}}
     }
     pub unsafe fn message(&mut self,action:usize,data:isize){if ![0x8000,0x8004].contains(&action)||data==0{return}let h=&*(data as *const Header);let connected=action==0x8000;
         if h.kind==2&&h.size as usize>=std::mem::size_of::<Volume>(){let v=&*(data as *const Volume);for bit in 0..26{if v.mask&(1<<bit)!=0{let letter=(b'A'+bit as u8)as char;let root=format!("{letter}:\\").encode_utf16().chain(Some(0)).collect::<Vec<_>>();if connected&&GetDriveTypeW(root.as_ptr())!=2{continue}self.record(Event::new(format!("drive-{letter}"),Kind::Volume,connected,format!("移动磁盘 {letter}: ")));}}}
@@ -113,7 +116,7 @@ impl Hub{
         // Raw input: collapse multiple HID collections of one physical device into one notice.
         let mut keep_raw=Vec::new();
         for item in std::mem::take(&mut self.raw_pending){if item.at.elapsed()<Duration::from_millis(900){keep_raw.push(item);continue}
-            let event=Event::new(format!("raw-{}",item.kind.key()),item.kind,item.connected,item.kind.label().into());
+            let event=Event::new(item.key,item.kind,item.connected,item.label);
             if self.fresh(&event){ready.push(event);}
         }
         self.raw_pending=keep_raw;
@@ -153,6 +156,51 @@ impl Hub{
         ready
     }
 }
+// Resolve the raw-input interface through SetupAPI; no input reports are read.
+unsafe fn raw_info(handle:isize)->Option<RawInfo>{
+    let handle=Some(HANDLE(handle as *mut c_void));
+    let mut info=RID_DEVICE_INFO{cbSize:std::mem::size_of::<RID_DEVICE_INFO>()as u32,..Default::default()};let mut size=info.cbSize;
+    if GetRawInputDeviceInfoW(handle,RIDI_DEVICEINFO,Some((&mut info as *mut RID_DEVICE_INFO).cast()),&mut size)==u32::MAX{return None}
+    let kind=if info.dwType==RIM_TYPEMOUSE{Kind::Mouse}else if info.dwType==RIM_TYPEKEYBOARD{Kind::Keyboard}
+        else if info.dwType==RIM_TYPEHID{let hid=info.Anonymous.hid;if hid.usUsagePage==1&&matches!(hid.usUsage,4|5|8){Kind::Gamepad}else{return None}}else{return None};
+    let mut count=0;
+    if GetRawInputDeviceInfoW(handle,RIDI_DEVICENAME,None,&mut count)==u32::MAX||count==0||count>32768{return None}
+    let mut name=vec![0u16;count as usize+1];
+    if GetRawInputDeviceInfoW(handle,RIDI_DEVICENAME,Some(name.as_mut_ptr().cast()),&mut count)==u32::MAX{return None}
+    let path=String::from_utf16_lossy(&name[..name.iter().position(|c|*c==0).unwrap_or(name.len())]);
+    let (container,label)=interface_identity(&name);
+    Some(RawInfo{kind,key:container.unwrap_or(path),label:label.unwrap_or_else(||kind.label().into())})
+}
+unsafe fn interface_identity(path:&[u16])->(Option<String>,Option<String>){
+    use windows::Win32::Devices::{DeviceAndDriverInstallation::*,Properties::{DEVPROPTYPE,DEVPROP_TYPE_GUID,DEVPROP_TYPE_STRING,DEVPKEY_Device_ContainerId,DEVPKEY_Device_FriendlyName,DEVPKEY_Device_DeviceDesc}};
+    let Ok(set)=SetupDiCreateDeviceInfoList(None,None)else{return(None,None)};
+    let result=(||{
+        let mut interface=SP_DEVICE_INTERFACE_DATA{cbSize:std::mem::size_of::<SP_DEVICE_INTERFACE_DATA>()as u32,..Default::default()};
+        SetupDiOpenDeviceInterfaceW(set,PCWSTR(path.as_ptr()),0,Some(&mut interface)).ok()?;
+        let mut required=0;
+        let _=SetupDiGetDeviceInterfaceDetailW(set,&interface,None,0,Some(&mut required),None);
+        if required==0||required>65536{return None}
+        let mut detail=vec![0u64;(required as usize+7)/8];
+        let pointer=detail.as_mut_ptr().cast::<SP_DEVICE_INTERFACE_DETAIL_DATA_W>();
+        (*pointer).cbSize=std::mem::size_of::<SP_DEVICE_INTERFACE_DETAIL_DATA_W>()as u32;
+        let mut device=SP_DEVINFO_DATA{cbSize:std::mem::size_of::<SP_DEVINFO_DATA>()as u32,..Default::default()};
+        SetupDiGetDeviceInterfaceDetailW(set,&interface,Some(pointer),required,None,Some(&mut device)).ok()?;
+        let mut prop=DEVPROPTYPE::default();let mut raw=[0u8;16];let mut size=0;
+        let container=if SetupDiGetDevicePropertyW(set,&device,&DEVPKEY_Device_ContainerId,&mut prop,Some(&mut raw),Some(&mut size),0).is_ok()&&prop==DEVPROP_TYPE_GUID&&size==16{
+            let guid=std::ptr::read_unaligned(raw.as_ptr().cast::<GUID>());(guid!=GUID::zeroed()).then(||format!("{guid:?}"))
+        }else{None};
+        let mut label=None;
+        for key in [DEVPKEY_Device_FriendlyName,DEVPKEY_Device_DeviceDesc]{
+            let mut text=[0u8;2048];
+            if SetupDiGetDevicePropertyW(set,&device,&key,&mut prop,Some(&mut text),Some(&mut size),0).is_ok()&&prop==DEVPROP_TYPE_STRING&&size>=2&&size as usize<=text.len(){
+                let units=text[..size as usize].chunks_exact(2).map(|b|u16::from_le_bytes([b[0],b[1]])).take_while(|c|*c!=0).collect::<Vec<_>>();
+                let name=String::from_utf16_lossy(&units);if !name.trim().is_empty(){label=Some(name);break}
+            }
+        }
+        Some((container,label))
+    })().unwrap_or((None,None));
+    let _=SetupDiDestroyDeviceInfoList(set);result
+}
 impl AudioListener{
     fn listen()->Option<Self>{
         unsafe{
@@ -177,7 +225,7 @@ unsafe fn info_from(device:&IMMDevice)->Option<(AudioInfo,DEVICE_STATE)>{
     // endpoints are now simply not announced, so `None` here is the whole removal.
     let kind=read_u32(store.GetValue(&PKEY_AudioEndpoint_FormFactor).ok()?).and_then(|form|match form{3|5=>Some(Kind::Headphones),1=>Some(Kind::Speaker),_=>None})?;
     let name=read_string(store.GetValue(&PKEY_Device_FriendlyName).ok()?).filter(|n|!n.trim().is_empty()).unwrap_or_else(||kind.label().into());
-    let container=read_guid(store.GetValue(&PKEY_Device_ContainerId).ok()?);
+    let container=store.GetValue(&PKEY_Device_ContainerId).ok().and_then(read_guid);
     let state=device.GetState().ok()?;
     Some((AudioInfo{kind,name,container},state))
 }
@@ -193,8 +241,12 @@ fn gates()->Gates{Gates{master:true,disconnect:false,headphones:true,speaker:fal
     // There is no catch-all audio family left to gate: an endpoint that is neither is dropped at
     // classification, which the type system now enforces instead of a runtime check.
 }
-#[test]fn raw_collections_merge_and_disconnect_needs_opt_in(){let mut h=Hub::default();h.raw_pending.push(RawPending{kind:Kind::Mouse,connected:true,at:Instant::now()-Duration::from_millis(1000)});h.raw_pending.push(RawPending{kind:Kind::Mouse,connected:true,at:Instant::now()-Duration::from_millis(1000)});
+#[test]fn distinct_mice_keep_distinct_identities(){
+    let mut h=Hub::default();for key in ["mouse-a","mouse-b"]{h.raw_pending.push(RawPending{kind:Kind::Mouse,key:key.into(),label:"鼠标".into(),connected:true,at:Instant::now()-Duration::from_secs(1)});}
+    assert_eq!(h.poll(&gates()).len(),2);
+}
+#[test]fn raw_collections_merge_and_disconnect_needs_opt_in(){let mut h=Hub::default();h.raw_pending.push(RawPending{kind:Kind::Mouse,key:"physical-mouse".into(),label:"鼠标".into(),connected:true,at:Instant::now()-Duration::from_millis(1000)});h.raw_pending.push(RawPending{kind:Kind::Mouse,key:"physical-mouse".into(),label:"鼠标".into(),connected:true,at:Instant::now()-Duration::from_millis(1000)});
     let events=h.poll(&gates());assert_eq!(events.len(),1,"two collections of one mouse must not stack notices");assert_eq!(events[0].kind,Kind::Mouse);
-    let mut h=Hub::default();h.raw_pending.push(RawPending{kind:Kind::Keyboard,connected:false,at:Instant::now()-Duration::from_millis(1000)});assert!(h.poll(&gates()).is_empty());
-    let mut h=Hub::default();h.raw_pending.push(RawPending{kind:Kind::Keyboard,connected:false,at:Instant::now()-Duration::from_millis(1000)});assert_eq!(h.poll(&Gates{disconnect:true,..gates()}).len(),1);}
+    let mut h=Hub::default();h.raw_pending.push(RawPending{kind:Kind::Keyboard,key:"physical-keyboard".into(),label:"键盘".into(),connected:false,at:Instant::now()-Duration::from_millis(1000)});assert!(h.poll(&gates()).is_empty());
+    let mut h=Hub::default();h.raw_pending.push(RawPending{kind:Kind::Keyboard,key:"physical-keyboard".into(),label:"键盘".into(),connected:false,at:Instant::now()-Duration::from_millis(1000)});assert_eq!(h.poll(&Gates{disconnect:true,..gates()}).len(),1);}
 }

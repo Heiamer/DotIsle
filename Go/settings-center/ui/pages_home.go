@@ -97,7 +97,8 @@ func (a *App) homePage(c *ui.Context, x, y, w, viewportH float32) {
 	} else {
 		c.AnimationFrame()
 	}
-	// Slot identities survive the modulo seam and a captured drag.
+	// Four persistent slots recycle offscreen. Their layer state must survive
+	// a ring seam instead of leaving new native textures for the next GC.
 	progress := deckPos / deckStep
 	base := int(math.Floor(progress))
 	y = max(float32(24), (viewportH-h)/2)
@@ -125,16 +126,15 @@ func (a *App) homePage(c *ui.Context, x, y, w, viewportH float32) {
 				i := deckSlotIndex(slot, count)
 				d := float64(slot) - progress
 				visibility := float32(clampF64(2-math.Abs(d), 0, 1))
-				if visibility <= 0 {
-					continue
-				}
 				dy, visualH := deckGeometry(d, h)
 				ty := y + float32(dy)
-				if ty+h < 0 || ty > viewportH {
-					continue
+				hidden := visibility <= 0 || ty+h < 0 || ty > viewportH
+				identity := deckSlotIndex(slot, 4)
+				if count == 1 {
+					identity = 0
 				}
-				card := ui.ButtonBase(c).Role(ui.RoleGroup).Key("deck-slot-"+itoa(slot)).Label("浏览"+overviewName(pages[i])+"卡片").Absolute().Left(x).Top(y).
-					Width(cardW).Height(h).Translate(0, float32(dy)).Opacity(visibility)
+				card := ui.ButtonBase(c).Role(ui.RoleGroup).Key("deck-slot-"+itoa(identity)).Label("浏览"+overviewName(pages[i])+"卡片").Absolute().Left(x).Top(y).
+					Width(cardW).Height(h).Translate(0, float32(dy)).Opacity(visibility).Hidden(hidden)
 				dragged := a.deckGesture(c, card, count, h)
 				if card.Clicked() && !dragged && math.Abs(d) >= .5 {
 					a.deckTo(float64(slot)*deckStep, false)
@@ -245,9 +245,9 @@ func (a *App) deckCard(c *ui.Context, key string, w, h, visualH float32, d float
 	a.overviewCardSurface(c, overviewRect{key, 0, 0, w, h})
 	body := float32(.45 + .55*clampF64(1-math.Abs(d), 0, 1))
 	ui.Box(c).Key("deck-body").Absolute().Left(0).Top(0).Width(w).Height(h).
-		ClipInset(0, 12, 12, 12, 0).Opacity(body).
+		ClipInset(0, 12, 12, 12, 0).Opacity(body).Cache().
 		IgnoreInput(math.Abs(d) >= .5).AccessHidden(math.Abs(d) >= .5).Children(func() {
-		ui.Box(c).Key("deck-content").Width(w).Height(h).Cache().Children(func() {
+		ui.Box(c).Key("deck-content").Width(w).Height(h).Children(func() {
 			a.renderOverviewCardBody(c, overviewRect{key, 0, 0, w, h})
 		})
 	})

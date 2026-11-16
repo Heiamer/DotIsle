@@ -6,36 +6,39 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/egoist/mygo/ui"
 )
 
 // assetsRoot finds the Assets directory: next to the exe when installed, else the
 // repository root while developing from the source tree.
-func assetsRoot() string {
+var assetDirectory = sync.OnceValue(func() string {
 	var candidates []string
 	if exe, err := os.Executable(); err == nil {
 		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "Assets"))
 	}
-	candidates = append(candidates,
-		`C:\Users\miku\Documents\Trae-CN\temp_20261113_01\src\DotIsle-5.0.0-Source\Assets`,
-		filepath.Join(".", "Assets"),
-	)
-	for _, c := range candidates {
-		if st, err := os.Stat(c); err == nil && st.IsDir() {
-			return c
+	if dir, err := os.Getwd(); err == nil {
+		for i := 0; i < 5; i++ {
+			candidates = append(candidates, filepath.Join(dir, "Assets"))
+			dir = filepath.Dir(dir)
+		}
+	}
+	for _, candidate := range candidates {
+		if st, err := os.Stat(filepath.Join(candidate, "Fonts", "HarmonyOS_Sans_SC_Regular.ttf")); err == nil && st.Mode().IsRegular() {
+			return candidate
 		}
 	}
 	return ""
-}
+})
+
+func assetsRoot() string { return assetDirectory() }
 
 //go:embed assets/icons/*.svg
 var controlIcons embed.FS
 
-// The faces are embedded as byte slices, not read from controlFonts: the slice
-// points into the executable's read-only data, while ReadFile copied every face
-// (24 MB with the SC weights) onto the Go heap at startup. RegisterFont's DWrite
-// loader copies the data itself, so nothing here needs a heap copy.
+// Small Latin fallbacks stay embedded. The CJK faces are shared with the native
+// island in Assets/Fonts, without a second 24 MB copy inside the executable.
 //
 //go:embed assets/fonts/HarmonyOS_Sans_Regular.ttf
 var uiSansRegular []byte
@@ -46,15 +49,6 @@ var uiSansMedium []byte
 //go:embed assets/fonts/HarmonyOS_Sans_Bold.ttf
 var uiSansBold []byte
 
-//go:embed assets/fonts/HarmonyOS_Sans_SC_Regular.ttf
-var uiSansSCRegular []byte
-
-//go:embed assets/fonts/HarmonyOS_Sans_SC_Medium.ttf
-var uiSansSCMedium []byte
-
-//go:embed assets/fonts/HarmonyOS_Sans_SC_Bold.ttf
-var uiSansSCBold []byte
-
 var uiFontFaces = []struct {
 	name string
 	face string
@@ -63,22 +57,28 @@ var uiFontFaces = []struct {
 	{"HarmonyOS_Sans_Regular.ttf", "HarmonyOS Sans", uiSansRegular},
 	{"HarmonyOS_Sans_Medium.ttf", "HarmonyOS Sans", uiSansMedium},
 	{"HarmonyOS_Sans_Bold.ttf", "HarmonyOS Sans", uiSansBold},
-	{"HarmonyOS_Sans_SC_Regular.ttf", "HarmonyOS Sans SC", uiSansSCRegular},
-	{"HarmonyOS_Sans_SC_Medium.ttf", "HarmonyOS Sans SC", uiSansSCMedium},
-	{"HarmonyOS_Sans_SC_Bold.ttf", "HarmonyOS Sans SC", uiSansSCBold},
+	{"HarmonyOS_Sans_SC_Regular.ttf", "HarmonyOS Sans SC", nil},
+	{"HarmonyOS_Sans_SC_Medium.ttf", "HarmonyOS Sans SC", nil},
+	{"HarmonyOS_Sans_SC_Bold.ttf", "HarmonyOS Sans SC", nil},
 }
 
 var fontsRegistered bool
 
-// RegisterFonts embeds the control center's HarmonyOS Sans faces. Native island
-// preview faces remain available for the user's independent font selection.
+// RegisterFonts uses the same complete font files as the native island. The
+// Windows loader maps their input instead of allocating a transient Go copy.
 func RegisterFonts() {
 	if fontsRegistered {
 		return
 	}
 	fontsRegistered = true
 	for _, f := range uiFontFaces {
-		if err := ui.RegisterFont(f.data, f.face); err != nil {
+		var err error
+		if len(f.data) != 0 {
+			err = ui.RegisterFont(f.data, f.face)
+		} else {
+			err = registerFontFile(filepath.Join(assetsRoot(), "Fonts", f.name), f.face)
+		}
+		if err != nil {
 			log.Printf("register %s: %v", f.name, err)
 		}
 	}

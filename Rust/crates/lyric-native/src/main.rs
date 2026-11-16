@@ -25,6 +25,8 @@ mod app_icon;
 mod app_rules;
 mod banner;
 mod capsule_alert;
+mod device_data_preview;
+mod resident_preview;
 mod verification_code;
 mod volume;
 mod screen_time;
@@ -1878,12 +1880,12 @@ impl App {
                     .as_str()
                     .unwrap_or("")
                     .ends_with("|ProcessFallback");
-            let flag = island_needed(
+            let flag = self.flag("IslandResidentEnabled", false) || island_needed(
                 valid,
                 self.snapshot["isPlaying"] == true,
                 self.flag("HideWhenPaused", true),
-                self.timers.items.iter().any(|t| t.running && !t.finished) || (self.updates.busy() && !self.update_card_deleted) || !self.plugins.island_ids().is_empty(),
-                self.banner.visible() || self.osd_banner.visible() || self.updates.busy(),
+                self.active_tasks(),
+                self.banner.visible() || self.osd_banner.visible() || self.alerts.visible() || self.alerts.pending() || self.updates.busy(),
                 !self.queue.is_empty(),
                 self.held,
                 self.manual_until.is_some_and(|t| Instant::now() < t),
@@ -1926,6 +1928,23 @@ impl App {
             || (self.snapshot["isPlaying"] != true
                 && previous["positionSeconds"] != self.snapshot["positionSeconds"]);
     }
+    fn active_tasks(&self) -> bool {
+        self.timers.items.iter().any(|t| t.running && !t.finished)
+            || (self.updates.busy() && !self.update_card_deleted)
+            || !self.plugins.island_ids().is_empty()
+    }
+    fn resident_idle(&self) -> bool {
+        // Presence is a preference; an occupied island is determined by live tasks.
+        self.flag("IslandResidentEnabled", false)
+            && self.snapshot["isPlaying"] != true
+            && !self.active_tasks()
+            && !self.updates.busy()
+            && !self.banner.visible() && !self.osd_banner.visible()
+            && !self.alerts.visible() && !self.alerts.pending() && self.queue.is_empty()
+    }
+    fn background_opacity(&self) -> f32 {
+        if self.resident_idle() { 0. } else { 1. }
+    }
     fn base_needed(&self) -> bool {
         let valid = self.snapshot["track"]["title"]
             .as_str()
@@ -1934,11 +1953,11 @@ impl App {
                 .as_str()
                 .unwrap_or("")
                 .ends_with("|ProcessFallback");
-        island_needed(
+        self.flag("IslandResidentEnabled", false) || island_needed(
             valid,
             self.snapshot["isPlaying"] == true,
             self.flag("HideWhenPaused", true),
-            self.timers.items.iter().any(|t| t.running && !t.finished) || (self.updates.busy() && !self.update_card_deleted) || !self.plugins.island_ids().is_empty(),
+            self.active_tasks(),
             false,
             false,
             self.held,
@@ -1951,7 +1970,7 @@ impl App {
             && !self.alerts.visible()
             && !self.alerts.pending()
             && self.queue.is_empty()
-            && !self.base_needed()
+            && (self.restore_hidden || !self.base_needed())
         {
             self.display_wanted = false;
             self.missing_since = None;
@@ -1987,6 +2006,7 @@ impl App {
         alert.width=432.;alert.height=104.;alert.hold=8.;self.alerts.enqueue(alert);
     }
     fn enqueue_device(&mut self,event:&devices::Event){
+        self.widget_metrics.refresh_wireless();
         let telemetry=self.device_watch.lookup(&event.key);
         let id=telemetry.map(|d|d.id.as_str()).unwrap_or(&event.key);
         let name=telemetry.map(|d|d.name.as_str()).unwrap_or(&event.label);
@@ -2000,7 +2020,7 @@ impl App {
                 && self.music_controls.value > 0.08)
     }
     fn hit(&self, x: f64, y: f64) -> i32 {
-        if self.opacity < 0.01 {
+        if self.opacity < 0.01 || self.resident_idle() {
             return -1;
         }
         if self.alerts.visible(){
@@ -2161,7 +2181,7 @@ impl App {
         } else {
             Rect::default()
         };
-        let key = if self.opacity < 0.01 {
+        let key = if self.opacity < 0.01 || self.resident_idle() {
             [0; 10]
         } else {
             [
@@ -2593,6 +2613,7 @@ impl App {
             .presentation(self.start.elapsed().as_secs_f64());
         let (alert_rect,alert_radius,alert_mix)=self.alerts.banner.presentation(self.start.elapsed().as_secs_f64());
         Scene {
+            background_opacity: self.background_opacity(),
             alert: self.alerts.active.as_ref().filter(|_|self.alerts.visible()),
             alert_rect, alert_radius, alert_mix,
             glow: self.glow.frame(
@@ -2789,7 +2810,7 @@ impl App {
             ),
             hover: self.hover,
             pressed: self.pressed,
-            opacity: self.opacity as f32,
+            opacity: if self.resident_idle() { 0. } else { self.opacity as f32 },
             transparent: self.transparent,
             floating: !self.mini() && self.flag("Floating", false),
             favorite_enabled: track["sourceApp"]
@@ -3205,6 +3226,7 @@ impl App {
             self.widget_data.poll(&placements);
             let m=&self.widget_metrics.value;
             let device_alerts=self.device_watch.update(&m.wireless_devices,m.wireless_updated_at,m.wireless_status=="ready");
+            if self.alerts.refresh_devices(&self.device_watch){self.dirty=true;}
             if gates.master&&!self.user_hidden{
                 for alert in device_alerts{
                     let allowed=match alert.icon.as_str(){"Headphones"=>gates.headphones,"Speaker"=>gates.speaker,"Mouse"=>gates.mouse,"Keyboard"=>gates.keyboard,"Gamepad"=>gates.gamepad,_=>true};
@@ -3423,7 +3445,7 @@ impl App {
         }
         if !self.banner.visible() && self.hide_at.is_some_and(|t| Instant::now() >= t) {
             self.hide_at = None;
-            self.fade(0.);
+            if !self.base_needed() { self.fade(0.); }
         }
         if (self.opacity - self.fade_to).abs() > 0.00001 {
             let t = if self.flag("Animation", true) {
@@ -3853,6 +3875,13 @@ impl App {
                 let t = &self.snapshot["track"];
                 let mut module_versions=dotisle_module_api::versions();module_versions["core"]=json!(DISPLAY_VERSION);
                 let mut state = json!({"success":true,"version":DISPLAY_VERSION,"bundleVersion":lyric_backend::updates::installed_version(),"settings":self.settings,"moduleManagement":self.module_updates.state,"moduleVersions":module_versions,"moduleErrors":dotisle_module_api::initialization_errors(),"moduleReady":dotisle_module_api::initialization_errors().as_object().is_some_and(|m|m.is_empty()),"softwareUpdate":self.updates.state,"updateChannel":self.updates.channel(),"settingsDark":match self.settings["SettingsTheme"].as_str().unwrap_or("System"){"Dark"=>true,"Light"=>false,_=>theme_accent::system_dark()},"dataDirectory":self.data.to_string_lossy(),"musicPreview":self.music_preview(),"activeSource":self.snapshot["activeSource"],"nativeStatus":self.snapshot["nativeStatus"],"title":t["title"],"artist":t["artist"],"songId":t["songId"],"player":t["sourceApp"],"position":self.snapshot["positionSeconds"],"duration":t["durationSeconds"],"timeline":self.snapshot["clockStatus"],"lyricSource":self.snapshot["lyricSource"],"isPlaying":self.snapshot["isPlaying"],"canSeek":self.snapshot["canSeek"],"seekStatus":self.snapshot["seekStatus"],"neteaseAttention":lyric_backend::netease_control::attention_diagnostics(),"mediaCommand":self.snapshot["mediaCommand"],"expanded":self.expanded,"islandEnabled":!self.user_hidden,"islandVisible":self.opacity>0.001,"processId":std::process::id(),"windowLevel":unsafe{window_level::snapshot(self.visual_hwnd,self.hwnd)},"glassCaptures":self.renderer.as_ref().map_or(0,Renderer::glass_captures),"rendererGeneration":self.renderer_generation,"renderFrames":self.render_frames,"renderer":"Vello Hybrid 0.2 / wgpu 29","lastError":self.error,"notificationState":self.notification_state,"notificationVisible":self.banner.visible(),"notificationGeometry":self.notification_geometry(),"osdVisible":self.osd_banner.visible()||self.bottom_osd.visible(),"bottomOsdVisible":self.bottom_osd.visible(),"systemState":self.osd.status(),"todos":self.todos.list(&self.todo_now),"todoError":self.todos.error,"today":self.todo_now.date,"now":self.todo_now.time,"pendingPage":self.pending_page,"pendingRequestId":self.pending_request,"pendingCenterAction":self.pending_center_action,"centerFrontend":if self.base.join("LyricIsland.Center.exe").is_file(){"go"}else{"missing"},"islandGeometry":{"mini":self.mini(),"capsule":self.layout.capsule,"card":self.layout.card,"satellite":!self.mini()&&self.components.len()>1,"horizontalGestures":self.flag("SwipeActivities",true)},"miniContrast":{"enabled":self.mini()&&self.flag("MiniAutoContrast",true)&&self.settings["MiniMaterial"]=="Glass","sampledLuminance":self.mini_contrast.sampled,"darkText":self.mini_contrast.dark,"foreground":format!("#{:06X}",self.mini_contrast.ink()&0xffffff)},"compactTargetWidth":self.compact_size.width_target,"compactWidth":self.compact_size.width,"compactHeight":self.compact_size.height,"compactSecondary":self.compact_secondary,"timers":self.timers.list(),"timerError":self.timers.error,"screenTime":self.screen_time.snapshot(),"weather":self.widget_data.value["island-weather"],"capsuleAlertVisible":self.alerts.visible(),"widgetData":self.widget_data.value,"desktopWidgets":self.desktop_widgets.list(),"overviewWidgets":self.overview_widgets.list(),"desktopWidgetError":self.desktop_widgets.error,"systemMetrics":self.widget_metrics.value,"activeComponent":self.selected,"components":self.components,"notificationHistory":self.history.list(),"historyError":self.history.error,"quickHotkey":self.settings["QuickReminderHotkey"],"pendingAction":self.pending_action,"sessionLocked":self.session_locked,"focusResume":self.focus_resume.as_ref().map(|r|json!({"generation":r.generation,"ids":r.ids,"prompted":r.prompted})),"templates":self.templates.list(),"workflowTemplateError":self.templates.error,"appRules":self.rules.list(&self.todo_now.date),"appRuleError":self.rules.error,"foreground":{"path":self.foreground.path,"name":self.foreground.name,"unreadable":self.foreground.unreadable},"lockWatch":true});
+                state["islandWindowPresent"] = json!(self.opacity > 0.001);
+                state["islandVisible"] = json!(self.opacity > 0.001 && !self.resident_idle());
+                state["idleClickThrough"] = json!(self.resident_idle() && self.input_region == Some([0; 10]));
+                state["verificationAlertVisible"] = json!(self.alerts.visible() && self.alerts.active.as_ref().is_some_and(|a|a.code.is_some()));
+                state["verificationCodeLength"] = json!(self.alerts.active.as_ref().and_then(|a|a.code.as_ref()).map(String::len));
+                state["residentIdle"] = json!(self.resident_idle());
+                state["backgroundOpacity"] = json!(self.background_opacity());
                 state["glassRefraction"] = self
                     .renderer
                     .as_ref()
@@ -4640,6 +4669,16 @@ impl App {
                 .contains(&r["value"]["key"].as_str().unwrap_or(""))
                 {
                     self.apply_osd();
+                }
+                if key == "IslandResidentEnabled" {
+                    if self.flag("IslandResidentEnabled", false) {
+                        self.hide_at = None;
+                        self.missing_since = None;
+                        self.display_wanted = true;
+                        if !self.user_hidden { self.fade(1.); }
+                    }
+                    self.poll();
+                    self.dirty = true;
                 }
                 self.sync_bottom_material();
                 self.transition = None;
@@ -5525,7 +5564,7 @@ fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
             }
         }
         if args.get(1).is_some_and(|s| s == "--check-update") {
-            let report = lyric_backend::updates::check()
+            let report = lyric_backend::updates::check_channel(args.get(3).map(String::as_str).unwrap_or("stable"))
                 .unwrap_or_else(|e| json!({"success":false,"message":e}));
             std::fs::write(
                 args.get(2).ok_or("missing report")?,
@@ -6055,6 +6094,14 @@ fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
             )?;
             let _ = DestroyWindow(app.hwnd);
             return Ok(());
+        }
+        if args.get(1).is_some_and(|s|s=="--resident-preview") {
+            resident_preview::run(&mut app,Path::new(args.get(2).ok_or("missing preview directory")?))?;
+            let _=DestroyWindow(app.hwnd);return Ok(());
+        }
+        if args.get(1).is_some_and(|s|s=="--device-data-preview") {
+            device_data_preview::run(&mut app,Path::new(args.get(2).ok_or("missing preview directory")?))?;
+            let _=DestroyWindow(app.hwnd);return Ok(());
         }
         if args.get(1).is_some_and(|s| s == "--integration-preview") {
             let directory = Path::new(args.get(2).ok_or("missing directory")?);
@@ -7667,3 +7714,72 @@ fn describe_only(_:serde_json::Value)->std::result::Result<serde_json::Value,Str
 dotisle_module_api::export_service!("core",describe_only);
 
 fn weather_description(code:u64)->&'static str{match code{0=>"晴",1..=3=>"多云",45|48=>"有雾",51..=67|80..=82=>"有雨",71..=77|85|86=>"有雪",95..=99=>"雷雨",_=>"天气"}}
+
+#[cfg(test)]
+mod resident_tests {
+    use super::*;
+    fn idle() -> App {
+        let mut a = App::new(PathBuf::new(), PathBuf::new(), true);
+        a.snapshot = json!({"track":null,"isPlaying":false});
+        a.expanded = false;
+        a.held = false;
+        a.settings["IslandResidentEnabled"] = json!(true);
+        a
+    }
+    #[test]
+    fn residency_keeps_idle_surface_after_transients_and_cancels_pending_hide() {
+        let mut a = idle();
+        a.demo = false;
+        a.display_wanted = false;
+        a.hide_at = Some(Instant::now());
+        a.poll();
+        assert!(a.display_wanted && a.base_needed());
+        assert!(a.hide_at.is_none());
+        a.finish_transient();
+        assert_eq!(a.fade_to, 1.);
+        assert!(a.resident_idle());
+        a.settings["IslandResidentEnabled"] = json!(false);
+        a.finish_transient();
+        assert_eq!(a.opacity, 0.);
+    }
+    #[test]
+    fn occupied_island_restores_background_even_without_music() {
+        let mut a = idle();
+        assert!(a.background_opacity() < 0.2);
+        a.snapshot = json!({"track":{"id":"song","title":"音乐"},"isPlaying":true});
+        assert_eq!(a.background_opacity(), 1.);
+        a.snapshot["isPlaying"] = json!(false);
+        assert!(a.resident_idle());
+        let (r, radius) = a.shape();
+        a.banner.show(Default::default(), r, radius, a.layout.host.w, 80., 0., false);
+        assert_eq!(a.background_opacity(), 1.);
+        a.banner = Default::default();
+        a.osd_banner.show_compact(Default::default(), r, radius, a.layout.host.w, 0., false);
+        assert_eq!(a.background_opacity(), 1.);
+        a.osd_banner = Default::default();
+        a.expanded = true;
+        assert_eq!(a.background_opacity(), 0.);
+        assert_eq!(a.scene().opacity, 0.);
+        assert_eq!(a.hit(a.layout.capsule.x + 10., a.layout.capsule.y + 10.), -1);
+        a.expanded = false;
+        a.settings["IslandResidentEnabled"] = json!(false);
+        assert_eq!(a.background_opacity(), 1.);
+    }
+    #[test]
+    fn verification_restores_manual_hide_even_when_residency_is_enabled() {
+        let mut a=idle();a.restore_hidden=true;a.user_hidden=false;a.opacity=1.;
+        a.finish_transient();
+        assert!(a.user_hidden && !a.restore_hidden);assert_eq!(a.opacity,0.);
+    }
+    #[test]
+    fn residency_does_not_override_explicit_hide() {
+        let mut a = idle();
+        a.demo = false;
+        a.user_hidden = true;
+        a.display_wanted = false;
+        a.opacity = 0.; a.fade_to = 0.;
+        a.poll();
+        assert!(a.display_wanted);
+        assert_eq!(a.fade_to, 0.);
+    }
+}

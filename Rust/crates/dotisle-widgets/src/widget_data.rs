@@ -113,6 +113,7 @@ impl Hub {
             match result {
                 Ok(data) => self.value[&id] = data,
                 Err(message) => {
+                    self.value[&id]["loading"] = json!(false);
                     self.value[&id]["error"] = json!(message);
                     self.value[&id]["stale"] = json!(true);
                 }
@@ -283,6 +284,17 @@ pub fn launch(placements: &[Placement], id: &str) -> Value {
 mod tests {
     use super::*;
     #[test]
+    fn failed_weather_stops_loading_and_preserves_cached_readings() {
+        let mut store=crate::desktop_widgets::Store::new(PathBuf::new());
+        let id=store.add(&json!({"kind":"weather","config":{"city":"上海"}})).unwrap();
+        let mut hub=Hub::new(PathBuf::new());hub.last=Instant::now();
+        hub.value[&id]=json!({"loading":true,"temperature":18});
+        hub.tx.send((id.clone(),"上海".into(),Err("请求失败".into()))).unwrap();
+        hub.poll(&store.items);
+        assert_eq!(hub.value[&id]["loading"],false);assert_eq!(hub.value[&id]["stale"],true);
+        assert_eq!(hub.value[&id]["temperature"],18);assert_eq!(hub.value[&id]["error"],"请求失败");
+    }
+    #[test]
     fn statistics_count_only_running_focus_and_bound_the_last_tick() {
         let mut store = crate::timers::Store::new(PathBuf::new());
         store
@@ -320,7 +332,7 @@ mod tests {
     fn live_weather_returns_real_city_temperature_and_timestamp() {
         let data = fetch_weather("Beijing").unwrap();
         assert!(data["temperature"].as_f64().is_some_and(f64::is_finite));
-        assert!(data["time"].as_str().is_some_and(|s| !s.is_empty()));
-        assert_eq!(data["source"], "Open-Meteo");
+        assert!(data["time"].as_i64().is_some_and(|t| t>0));
+        assert!(matches!(data["source"].as_str(),Some("Open-Meteo"|"wttr.in")));
     }
 }

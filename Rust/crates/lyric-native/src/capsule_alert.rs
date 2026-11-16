@@ -27,7 +27,7 @@ impl Alert{
     pub fn device(id:&str,icon:&str,name:&str,connected:bool,level:Option<u8>,low:bool)->Self{
         let mut a=Self::new(format!("device:{id}:{connected}:{low}"),icon,
             format!("{}{}",name,if low{"电量偏低"}else if connected{"已连接"}else{"已断开"}),String::new());
-        a.trailing=level.map(|v|format!("{v}%")).unwrap_or_else(||"—".into());
+        a.trailing=if connected{level.map(|v|format!("{v}%")).unwrap_or_default()}else{String::new()};
         a
     }
 }
@@ -37,11 +37,28 @@ impl Hub{
     pub fn visible(&self)->bool{self.banner.visible()}
     pub fn pending(&self)->bool{!self.queue.is_empty()}
     pub fn enqueue(&mut self,a:Alert){
-        self.seen.retain(|_,at|at.elapsed()<Duration::from_secs(120));
+        self.seen.retain(|key,at|at.elapsed()<Duration::from_secs(if key.starts_with("device:"){3}else{120}));
         if a.expires<=Instant::now()||self.seen.contains_key(&a.key){return}
         self.seen.insert(a.key.clone(),Instant::now());
         if self.queue.len()>=8{self.queue.pop_front();}
         if a.code.is_some(){self.queue.push_front(a)}else{self.queue.push_back(a)}
+    }
+    // Telemetry may arrive after the connection event. Update the existing
+    // surface in place and canonicalize its identity before deduplicating it.
+    pub fn refresh_devices(&mut self,watch:&DeviceWatch)->bool{
+        let mut changed=false;
+        for alert in self.active.iter_mut().chain(self.queue.iter_mut()){
+            let Some(rest)=alert.key.strip_prefix("device:")else{continue};
+            let mut parts=rest.rsplitn(3,':');
+            let low=parts.next()==Some("true");let connected=parts.next()==Some("true");
+            let Some(device)=parts.next().and_then(|id|watch.lookup(id))else{continue};
+            if !connected{continue}
+            let updated=Alert::device(&device.id,device_icon(&device.kind),&device.name,true,device.battery_percent,low);
+            if alert.trailing!=updated.trailing||alert.title!=updated.title||alert.icon!=updated.icon{changed=true;}
+            alert.trailing=updated.trailing;alert.title=updated.title;alert.icon=updated.icon;
+            if alert.key!=updated.key{self.seen.insert(updated.key.clone(),Instant::now());alert.key=updated.key;}
+        }
+        changed
     }
     pub fn begin(&mut self,base:Rect,radius:f64,host_width:f64,y:f64,now:f64,animate:bool)->bool{
         if self.visible(){return false}
@@ -73,9 +90,10 @@ impl DeviceWatch{
             let mut warned=old.is_some_and(|(_,v)|*v);
             if d.battery_percent.is_some_and(|v|v>=25){warned=false;}
             if self.baseline&&old.is_none(){out.push(Alert::device(&d.id,device_icon(&d.kind),&d.name,true,d.battery_percent,false));}
-            if d.battery_percent.is_some_and(|v|v<20)&&!warned{
+            if self.baseline&&d.battery_percent.is_some_and(|v|v<20)&&!warned{
                 warned=true;out.push(Alert::device(&d.id,device_icon(&d.kind),&d.name,true,d.battery_percent,true));
             }
+            if !self.baseline&&d.battery_percent.is_some_and(|v|v<20){warned=true;}
             next.insert(d.id.clone(),(d.clone(),warned));
         }
         // A successful empty snapshot is a disconnect; telemetry errors never are.
@@ -144,6 +162,26 @@ impl WeatherWatch{
     #[test]fn unknown_and_exact_twenty_do_not_trigger(){
         let mut w=DeviceWatch::default();assert!(w.update(&[d(None)],1,true).is_empty());
         assert!(w.update(&[d(Some(20))],2,true).is_empty());
+    }
+    #[test]fn delayed_battery_refreshes_existing_connection_without_second_popup(){
+        let mut watch=DeviceWatch::default();watch.update(&[],1,true);
+        let mut hub=Hub::default();hub.enqueue(Alert::device("{physical-a}","Headphones","耳机",true,None,false));
+        let mut device=d(Some(60));device.container_id=Some("physical-a".into());
+        let arrivals=watch.update(&[device],2,true);assert!(hub.refresh_devices(&watch));
+        for alert in arrivals{hub.enqueue(alert);}
+        assert_eq!(hub.queue.len(),1);assert_eq!(hub.queue[0].trailing,"60%");
+        let base=Rect::new(200.,24.,100.,18.);hub.begin(base,9.,600.,24.,0.,false);
+        let expires=hub.active.as_ref().unwrap().expires;
+        let mut device=d(Some(59));device.container_id=Some("physical-a".into());watch.update(&[device],3,true);
+        assert!(hub.refresh_devices(&watch));assert_eq!(hub.active.as_ref().unwrap().trailing,"59%");
+        assert_eq!(hub.active.as_ref().unwrap().expires,expires);
+    }
+    #[test]fn reconnect_is_not_suppressed_for_two_minutes(){
+        let mut hub=Hub::default();let alert=Alert::device("a","Mouse","鼠标",true,Some(50),false);
+        hub.enqueue(alert.clone());hub.queue.clear();
+        hub.seen.insert(alert.key.clone(),Instant::now()-Duration::from_secs(4));hub.enqueue(alert);
+        assert_eq!(hub.queue.len(),1);
+        let mut watch=DeviceWatch::default();assert!(watch.update(&[d(Some(10))],1,true).is_empty());
     }
     #[test]fn queue_is_bounded_and_one_message_uses_one_surface(){
         let mut h=Hub::default();for i in 0..20{h.enqueue(Alert::new(i.to_string(),"Sun","测试".into(),String::new()));}

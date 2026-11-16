@@ -311,8 +311,16 @@ func (a *App) islandTabGestures(c *ui.Context, p *Palette, x, y, w float32) floa
 	Button(c, p, "再看一次", x+w-174, y+29, 150, 46, "再看一次", "play_arrow", false, true, a.startGestureTutorial)
 	y += 128
 	y = a.islandHeading(c, p, "出现与退场", x, y, w)
+	on := a.islandBool("IslandResidentEnabled", false)
+	Panel(c, p, x, y, w, 88, s.Container)
+	ToggleRow(c, p, "IslandResidentEnabled", x+24, y+12, w-48, "灵动岛常驻", "空闲时整岛透明并穿透鼠标；任务占用时恢复显示。", on, func() {
+		a.pushNative("IslandResidentEnabled", !on)
+	})
+	ui.Box(c).Absolute().Left(x + 106).Top(y + 21).Width(38).Height(LineHeight(14)).Radius(7).Background(Col(s.SecondaryContainer)).IgnoreInput(true)
+	CenteredText(c, "Beta", x+106, y+21, 38, LineHeight(14), 10, s.OnSecondaryContainer, true).IgnoreInput(true)
+	y += 104
 	y = a.islandToggles(c, p, x, y, w, []islandToggleRow{
-		{"暂停音乐后隐藏", "有计时器等活动时继续显示。", "HideWhenPaused", true},
+		{"暂停音乐后隐藏", "有计时器等活动或开启常驻时继续显示。", "HideWhenPaused", true},
 		{"始终置顶", "不抢占键盘焦点。", "AlwaysOnTop", true},
 	})
 	y = a.islandHeading(c, p, "手势与位置", x, y, w)

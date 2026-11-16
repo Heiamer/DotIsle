@@ -50,6 +50,7 @@ func trimWhenHidden(win *mygo.Window) {
 }
 
 func main() {
+	startupMark("main")
 	tuneGC()
 	dataFlag := flag.String("data-dir", "", "island data directory")
 	warm := flag.Bool("warm", false, "start desktop widgets without showing the center")
@@ -86,9 +87,18 @@ func main() {
 	app.LoadStartupSettings()
 	host := desktop.New(data)
 	defer host.Stop()
+	// Connect while the native window and fonts initialize. The buffered pump
+	// retains its first snapshot until the UI thread can apply it.
+	snapshots := island.Run(data)
+	startupMark("preferences")
 
 	mygo.App.WhenReady(func() {
+		startupMark("ready")
 		ui.RegisterFonts()
+		startupMark("fonts")
+		if !*warm {
+			app.StartSignature()
+		}
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title:             "点屿 · 控制中心",
 			Hidden:            *warm,
@@ -103,17 +113,37 @@ func main() {
 			DisableFullScreen: true,
 			Frameless:         true,
 			Vibrancy:          mygo.VibrancyMica,
+			BackgroundColor:   "transparent",
 			Content:           mygoui.View(app.View),
 		})
-		if err := win.SetIcon(ui.AppIcon); err != nil {
-			log.Printf("window icon: %v", err)
-		}
+		win.OnReadyToShow(func() {
+			startupMark("first-frame")
+			if err := win.SetIcon(ui.AppIcon); err != nil {
+				log.Printf("window icon: %v", err)
+			}
+		})
+		startupMark("window")
 		app.Win = win
-		trimWhenHidden(win)
-		if !*warm {
-			app.StartSignature()
+		// Window creation also overlaps the pipe read. Install any ready packet
+		// before returning to the first frame, without waiting for a slow backend.
+		var initial *island.State
+		select {
+		case initial = <-snapshots:
+			if initial != nil {
+				if initial.Exited {
+					mygo.App.Quit()
+					return
+				}
+				if initial.Err == "" {
+					app.ApplyPacket(initial.Raw, true, "")
+					startupMark("first-state")
+				} else {
+					app.ApplyPacket(nil, false, initial.Err)
+				}
+			}
+		default:
 		}
-		win.SetBackgroundColor("transparent")
+		trimWhenHidden(win)
 		watchCenterShow(data, func() {
 			win.Update(func() {
 				if win.IsMinimized() {
@@ -122,10 +152,20 @@ func main() {
 				win.Show()
 			})
 		})
+		startupMark("watch")
 
 		// The island pump: every snapshot lands on the main thread through Update.
 		go func() {
-			for st := range island.Run(data) {
+			firstState := initial == nil || initial.Err != ""
+			if initial != nil && initial.Err == "" {
+				win.Update(func() {
+					if err := host.Apply(initial.Raw); err != nil {
+						log.Printf("desktop bridge: %v", err)
+						app.ReportError(err.Error())
+					}
+				})
+			}
+			for st := range snapshots {
 				island.PumpTrace("update enter err=%q", st.Err)
 				win.Update(func() {
 					if st.Exited {
@@ -137,6 +177,10 @@ func main() {
 						app.ApplyPacket(nil, false, st.Err)
 					} else {
 						app.ApplyPacket(st.Raw, true, "")
+						if firstState {
+							startupMark("first-state")
+							firstState = false
+						}
 						if err := host.Apply(st.Raw); err != nil {
 							log.Printf("desktop bridge: %v", err)
 							app.ReportError(err.Error())

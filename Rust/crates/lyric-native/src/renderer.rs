@@ -95,6 +95,7 @@ impl Renderer {
         // Register the Japanese fallback only when text first requires it.
         let japanese = font.with_file_name("NotoSansJP.ttf");
         text.defer_japanese(japanese);
+        if let Some(dir) = font.parent() { text.defer_harmony(dir); }
         Ok(Self {
             transport_ink: None,
             window: hwnd,
@@ -1645,8 +1646,8 @@ impl Renderer {
         }}
         let x=r.x+56.;let w=(r.w-76.).max(0.);
         if a.detail.is_empty(){
-            self.text_line(&a.title,Rect::new(x,r.y+(r.h-20.)/2.,if a.icon.starts_with("Message:"){w}else{w-65.},22.),13.,500,ink);
-            self.text_at(&a.trailing,Rect::new(r.x+r.w-74.,r.y+(r.h-22.)/2.,54.,24.),15.,600,ink,1.);
+            self.text_line(&a.title,Rect::new(x,r.y+(r.h-20.)/2.,if a.trailing.is_empty(){w}else{w-65.},22.),13.,500,ink);
+            if !a.trailing.is_empty(){self.text_at(&a.trailing,Rect::new(r.x+r.w-74.,r.y+(r.h-22.)/2.,54.,24.),15.,600,ink,1.);}
         }else{
             self.text_line(&a.title,Rect::new(x,r.y+13.,w,24.),17.,600,ink);
             for(i,line)in a.detail.lines().take(2).enumerate(){self.text_line(line,Rect::new(x,r.y+43.+i as f64*23.,w,20.),11.5,400,muted);}
@@ -1823,7 +1824,7 @@ impl Renderer {
     pub unsafe fn render(&mut self, s: &Scene<'_>, present: bool) -> Result<()> {
         self.glass_active = false;
         self.glass_live = present && !s.resizing && !s.drag_active;
-        self.glass_allowed = s.glass_refraction && !s.dynamic_high_contrast;
+        self.glass_allowed = s.glass_refraction && !s.dynamic_high_contrast && s.opacity > 0.;
         self.text.set_family(s.font_family);
         self.prepare_dynamic(s);
         let (mut themed, compact) = cover_scenes(s, Some(self.paint_palette));
@@ -1877,6 +1878,7 @@ impl Renderer {
             1.
         };
         self.clip(s.layout.host, 0., s.opacity * transient_alpha as f32);
+        self.clip(s.layout.host, 0., s.background_opacity);
         self.canvas.draw_blurred_rounded_rect(
             Affine::translate((0., 5.)),
             vr(shape),
@@ -1905,6 +1907,7 @@ impl Renderer {
         if s.alert.is_some(){surface.mini=false;surface.compact=s.classic_capsule;}
         self.material_surface(shape, radius, surface);
         self.paint_palette = saved_palette;
+        self.canvas.pop_layer();
         let alpha = crate::motion::content_weights(s.frame).0 * music_alpha;
         if alpha > 0.001 {
             let part = self.collect(|a| {
@@ -2017,7 +2020,9 @@ impl Renderer {
             self.canvas.pop_layer();
         }
         if !s.mini && s.component_count > 1 && s.notification.is_none() && s.osd.is_none() && s.alert.is_none() {
+            self.clip(s.layout.host, 0., s.background_opacity);
             self.satellite(&compact);
+            self.canvas.pop_layer();
         }
         if let Some(n) = s.notification {
             self.clip(
@@ -2234,6 +2239,7 @@ impl MaterialTheme {
 }
 #[derive(Clone, Copy)]
 pub struct Scene<'a> {
+    pub background_opacity: f32,
     pub alert:Option<&'a crate::capsule_alert::Alert>,
     pub alert_rect:Rect,pub alert_radius:f64,pub alert_mix:f64,
     pub glow: crate::island_glow::Frame,

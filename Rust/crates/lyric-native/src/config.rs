@@ -1,6 +1,7 @@
 use serde_json::{json, Value};
 pub fn defaults() -> Value {
     let mut defaults = json!({"AutoCheckUpdatesEnabled":true,"LyricColorFromCover":true,"DeviceRemindersEnabled":true,"DeviceSoundEnabled":true,"DeviceSound":"Connect","DeviceSoundPath":"","DeviceVolume":55.,"HeadphoneConnectionRemindersEnabled":true,"SpeakerConnectionRemindersEnabled":true,"GamepadConnectionRemindersEnabled":true,"MouseConnectionRemindersEnabled":false,"KeyboardConnectionRemindersEnabled":false,"DeviceDisconnectRemindersEnabled":true,"SystemStateHintsEnabled":true,"SystemStateHintPlacement":"Island","CapsLockHintEnabled":true,"NumLockHintEnabled":true,"MicrophoneMuteHintEnabled":true,"TouchpadHintEnabled":true,"SwipeActivities":true,"AutoCompactMaxWidth":420.,"TodoDefaultColor":"#F3D79B","TodoRemindersEnabled":true,"TodoIslandEnabled":true,"AutoCompactWidth":true,"CompactTranslation":true,"ChineseTwoLine":true,"NotificationSoundEnabled":true,"TodoSoundEnabled":true,"NotificationSound":"Soft","TodoSound":"Bell","NotificationSoundPath":"","TodoSoundPath":"","QuickReminderHotkey":"","FocusCountUp":false,"FocusPauseOnLock":false,"AppEntryRemindersEnabled":false,"AppUsageRemindersEnabled":false,"NotificationVolume":35.,"TodoVolume":45.,"CompactWidth":260.,"FontSize":14.,"Floating":false,"Translation":true,"TranslationButton":true,"Animation":true,"HoverExpand":false,"ClickAnywhereExpand":true,"NotificationsEnabled":true,"PauseNotifications":false,"NotificationClickOpenApp":true,"MusicClickOpenApp":false,"MusicExpandedLayout":"SideBySide","NotificationWhitelistEnabled":false,"NotificationBlacklistEnabled":false,"NotificationBlockedApps":[],"NotificationAllowedApps":["QQNT","QQ"],"NotificationHistoryEnabled":true,"NotificationHistoryDays":7,"WordHighlight":true,"AlwaysOnTop":true,"AutoStart":true,"OnlineSongInfo":true,"CoverBackground":false,"IslandMonetPreferenceVersion":1,"HideWhenPaused":true,"IgnoredSources":["Browser"],"PlayerFilterVersion":2,"DefaultsOnboardingVersion":0,"ExpandedTextColor":"#F4F6F8","ExpandedComponentColor":"#B1E8D1","LyricProgressColor":"#A9E6CD","SettingsTheme":"System","ControlCenterStartPage":"overview","WorkflowModules":[{"id":"builtin-thinking","name":"整理思路","minutes":5,"kind":0},{"id":"builtin-focus","name":"专注","minutes":25,"kind":1},{"id":"builtin-rest","name":"休息","minutes":5,"kind":2},{"id":"builtin-review","name":"复盘","minutes":10,"kind":3},{"id":"builtin-move","name":"活动一下","minutes":3,"kind":4},{"id":"builtin-custom","name":"自定义","minutes":10,"kind":5}],"CenterX":0.5,"TopFraction":0.08,"Display":"","OffsetMilliseconds":0,"NeteaseCdpPort":"9223","LocalFolders":[],"Motion":crate::motion::Options::default()});
+    defaults["IslandResidentEnabled"] = json!(false);
     defaults["MusicGlowEnabled"] = json!(false);
     defaults["TimerGlowEnabled"] = json!(false);
     defaults["UpdateGlowEnabled"] = json!(false);
@@ -580,6 +581,7 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         "AutoStart",
         "OnlineSongInfo",
         "HideWhenPaused",
+        "IslandResidentEnabled",
         "NotificationsEnabled",
         "PauseNotifications",
         "NotificationClickOpenApp",
@@ -1155,6 +1157,7 @@ mod expanded_material_tests {
         ));
         let fresh = load(&path);
         assert_eq!(fresh["HideWhenPaused"], true);
+        assert_eq!(fresh["IslandResidentEnabled"], false);
         assert_eq!(fresh["IslandSizeMode"], "Classic");
         assert_eq!(fresh["Motion"]["Radius"], 30.);
         assert_eq!(fresh["CoverBackground"], false);
@@ -1163,6 +1166,7 @@ mod expanded_material_tests {
         std::fs::write(&path, r#"{"HideWhenPaused":false,"IslandSizeMode":"Mini"}"#).unwrap();
         let existing = load(&path);
         assert_eq!(existing["HideWhenPaused"], false);
+        assert_eq!(existing["IslandResidentEnabled"], false);
         assert_eq!(existing["IslandSizeMode"], "Mini");
         let _ = std::fs::remove_file(path);
     }
@@ -1700,5 +1704,23 @@ mod custom_layout_settings_tests {
             validate_setting(json!({"key":"MusicExpandedLayout","value":"Separated","settings":s}))
                 .unwrap();
         assert_eq!(next["MusicCustomLayout"]["enabled"], false);
+    }
+}
+
+#[cfg(test)]
+mod resident_setting_tests {
+    use super::*;
+    #[test]
+    fn resident_is_opt_in_validated_and_persisted() {
+        let path = std::env::temp_dir().join(format!("dotisle-resident-{}.json", std::process::id()));
+        let mut settings = defaults();
+        assert_eq!(settings["IslandResidentEnabled"], false);
+        for invalid in [json!("true"), json!(1), Value::Null] {
+            assert!(validate_setting(json!({"key":"IslandResidentEnabled","value":invalid,"settings":settings})).is_err());
+        }
+        settings = validate_setting(json!({"key":"IslandResidentEnabled","value":true,"settings":settings})).unwrap();
+        std::fs::write(&path, serde_json::to_vec(&settings).unwrap()).unwrap();
+        assert_eq!(load(&path)["IslandResidentEnabled"], true);
+        let _ = std::fs::remove_file(path);
     }
 }

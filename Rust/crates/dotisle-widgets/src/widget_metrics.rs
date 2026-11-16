@@ -5,6 +5,7 @@ use windows::Win32::{Foundation::FILETIME,System::{Threading::GetSystemTimes,Sys
 pub struct Hub{pub value:Metrics,last:Instant,previous:Option<(u64,u64,u64)>,wireless:crate::wireless_battery::Reader}
 impl Default for Hub{fn default()->Self{Self{value:Metrics::default(),last:Instant::now()-Duration::from_secs(2),previous:None,wireless:Default::default()}}}
 impl Hub{
+ pub fn refresh_wireless(&mut self){self.wireless.refresh();}
  pub fn poll(&mut self){
  if let Some(result)=self.wireless.poll(){
   self.value.wireless_updated_at=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();

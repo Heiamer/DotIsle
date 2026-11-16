@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "5.0.2"
+  #define AppVersion "5.0.3"
 #endif
 #ifndef AppId
   #define AppId "DotIsle"
@@ -26,7 +26,7 @@ UninstallDisplayName=点屿 DotIsle
 SetupIconFile=..\Assets\LyricIsland-v3.ico
 OutputDir={#OutputDir}
 OutputBaseFilename={#OutputBase}
-Compression=lzma2/fast
+Compression=lzma2/max
 SolidCompression=yes
 CloseApplications=yes
 CloseApplicationsFilter=LyricIsland.exe,LyricIsland.Center.exe,LyricIsland.Settings.exe,LyricIsland.Updater.exe
@@ -46,7 +46,10 @@ Name: desktopicon; Description: "创建桌面快捷方式"; Flags: unchecked
 ; stops with "uninstall maintenance program missing".
 Source: "{#StageDir}\*"; DestDir: "{app}"; Excludes: "DotIsle.Setup.exe,OtaInstall.json,Portable.json,Installed.json,Data\*,Logs\*,unins000.*"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#StageDir}\Uninstall.exe"; DestDir: "{tmp}"; DestName: "DotIsle.Maintenance.exe"; Flags: dontcopy
+; The QA engine embeds a second complete payload. Keep it out of public installers.
+#ifdef IncludeVerifyEngine
 Source: "{#EngineFile}"; DestDir: "{tmp}"; DestName: "DotIsle.Verify.exe"; Flags: dontcopy
+#endif
 
 [Icons]
 Name: "{group}\点屿"; Filename: "{app}\LyricIsland.exe"
@@ -89,8 +92,10 @@ begin
   Result := True;
   VerifyDir := ExpandConstant('{param:VERIFYDIR|}');
   if VerifyDir <> '' then begin
+#ifdef IncludeVerifyEngine
     ExtractTemporaryFile('DotIsle.Verify.exe');
     Exec(ExpandConstant('{tmp}\DotIsle.Verify.exe'), '--verify-package ' + Quoted(VerifyDir), '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+#endif
     Result := False;
   end;
 end;

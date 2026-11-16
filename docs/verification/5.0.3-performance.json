@@ -1,0 +1,108 @@
+{
+  "success": true,
+  "version": "5.0.3",
+  "synthetic": true,
+  "scroll": {
+    "renderer": "production MyGo D3D11 App.View",
+    "pages": 5,
+    "frames": 3600,
+    "baseline": {
+      "frame": 3600,
+      "phase": "scroll-end",
+      "seconds": 45.5418071,
+      "Heap": 13648928,
+      "HeapInuse": 16482304,
+      "HeapSys": 23265280,
+      "Released": 3719168,
+      "TotalAlloc": 438117752,
+      "Private": 493174784,
+      "Working": 456126464,
+      "Collections": 102,
+      "PauseNs": 10024300
+    },
+    "optimized": {
+      "frame": 3600,
+      "phase": "scroll-end",
+      "seconds": 55.8011653,
+      "Heap": 16810728,
+      "HeapInuse": 18710528,
+      "HeapSys": 27361280,
+      "Released": 6168576,
+      "TotalAlloc": 384477560,
+      "Private": 300093440,
+      "Working": 265420800,
+      "Collections": 79,
+      "PauseNs": 13770900
+    },
+    "privateReductionPercent": 39.15
+  },
+  "soak": {
+    "frames": 36000,
+    "seconds": 384.8669645,
+    "steadyPrivateMinBytes": 304689152,
+    "steadyPrivateMaxBytes": 306343936,
+    "scrollEnd": {
+      "frame": 36000,
+      "phase": "scroll-end",
+      "seconds": 378.7744009,
+      "Heap": 14990376,
+      "HeapInuse": 17350656,
+      "HeapSys": 26771456,
+      "Released": 4497408,
+      "TotalAlloc": 3693686376,
+      "Private": 305819648,
+      "Working": 270209024,
+      "Collections": 707,
+      "PauseNs": 89950300
+    },
+    "limitation": "Synthetic 6.4-minute run; does not establish multi-hour behavior. Forced GC is diagnostic only."
+  },
+  "startup": {
+    "runsPerVariant": 6,
+    "signatureEnabled": false,
+    "summary": {
+      "baseline": {
+        "launchToObservedFirstFrameMedianMs": 433.4034999992582,
+        "firstStateMedianMs": 434.546,
+        "firstFrameMedianMs": 393.23350000000005,
+        "fontsMedianMs": 15.409500000000001
+      },
+      "optimized": {
+        "launchToObservedFirstFrameMedianMs": 466.3987499989162,
+        "firstStateMedianMs": 98.5635,
+        "firstFrameMedianMs": 392.916,
+        "fontsMedianMs": 18.8315
+      }
+    },
+    "limitation": "Initial data is ready earlier. Cold first-frame latency did not improve materially; no overall launch-speed claim."
+  },
+  "sizes": {
+    "DotIsle-5.0.3-Portable.zip": {
+      "beforeBytes": 103590665,
+      "afterBytes": 82925345,
+      "reductionPercent": 19.95
+    },
+    "DotIsle-5.0.3-Setup.exe": {
+      "beforeBytes": 200036079,
+      "afterBytes": 61679341,
+      "reductionPercent": 69.17
+    },
+    "DotIsle-5.0.3/LyricIsland.Center.exe": {
+      "beforeBytes": 39599616,
+      "afterBytes": 15002112,
+      "reductionPercent": 62.12
+    }
+  },
+  "tests": {
+    "rustPassed": 560,
+    "rustFailed": 0,
+    "rustIgnored": 4,
+    "netEaseTimelinePassed": 9,
+    "pythonPassed": 13
+  },
+  "notes": [
+    "Go heap is a subset of process memory; D3D11 and DirectWrite allocations require native lifecycle fixes.",
+    "GOGC 50 and the 192 MiB Go soft limit are retained; no per-scroll forced collection.",
+    "Benchmark uses synthetic notifications and todos; no private message contents."
+  ]
+}

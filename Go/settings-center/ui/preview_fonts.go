@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"github.com/egoist/mygo/ui"
-	"os"
 	"path/filepath"
 )
 
@@ -23,8 +21,6 @@ func ensurePreviewFont(family string) {
 		"Space Grotesk": "SpaceGrotesk.ttf", "Doto": "Doto.ttf", "Fusion Pixel": "FusionPixel12.ttf",
 	}
 	if name := files[family]; name != "" {
-		if raw, err := os.ReadFile(filepath.Join(assetsRoot(), "Fonts", name)); err == nil {
-			_ = ui.RegisterFont(raw, "")
-		}
+		_ = registerFontFile(filepath.Join(assetsRoot(), "Fonts", name), "")
 	}
 }

@@ -7,7 +7,7 @@ def sha(path):
     with path.open('rb') as f: return hashlib.file_digest(f,'sha256').hexdigest()
 
 def archive(directory,path,prefix,excluded=()):
-    with zipfile.ZipFile(path,'w',zipfile.ZIP_DEFLATED,compresslevel=6) as z:
+    with zipfile.ZipFile(path,'w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:
         for p in sorted(directory.rglob('*')):
             if p.is_file() and not set(p.relative_to(directory).parts).intersection(excluded):
                 z.write(p,Path(prefix)/p.relative_to(directory))
@@ -82,7 +82,7 @@ def main():
             subprocess.run(command,stdout=log,stderr=subprocess.STDOUT,check=True)
     compile_setup(out,[])
     if args.qa_setup:
-        compile_setup(scratch/'qa-setup',['/DAppId=DotIsle.QA.Release318','/DOutputBase='+name+'-QA-Setup'])
+        compile_setup(scratch/'qa-setup',['/DAppId=DotIsle.QA.Release318','/DOutputBase='+name+'-QA-Setup','/DIncludeVerifyEngine=1'])
     (runtime/'Portable.json').write_text(json.dumps({'portable':True,'version':args.version})+'\n',encoding='utf8')
     archive(runtime,out/(name+'-Portable.zip'),name)
     legacy='LyricIsland-'+args.version
