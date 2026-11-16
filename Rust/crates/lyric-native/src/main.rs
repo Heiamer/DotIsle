@@ -1725,6 +1725,7 @@ impl App {
         notice: &notifications::Notice,
         todo_id: Option<String>,
     ) {
+        if notice.app_id=="WeChat"{return}
         if self.flag("NotificationHistoryEnabled", true) {
             self.history.record(
                 kind,
@@ -3875,6 +3876,7 @@ impl App {
                 let t = &self.snapshot["track"];
                 let mut module_versions=dotisle_module_api::versions();module_versions["core"]=json!(DISPLAY_VERSION);
                 let mut state = json!({"success":true,"version":DISPLAY_VERSION,"bundleVersion":lyric_backend::updates::installed_version(),"settings":self.settings,"moduleManagement":self.module_updates.state,"moduleVersions":module_versions,"moduleErrors":dotisle_module_api::initialization_errors(),"moduleReady":dotisle_module_api::initialization_errors().as_object().is_some_and(|m|m.is_empty()),"softwareUpdate":self.updates.state,"updateChannel":self.updates.channel(),"settingsDark":match self.settings["SettingsTheme"].as_str().unwrap_or("System"){"Dark"=>true,"Light"=>false,_=>theme_accent::system_dark()},"dataDirectory":self.data.to_string_lossy(),"musicPreview":self.music_preview(),"activeSource":self.snapshot["activeSource"],"nativeStatus":self.snapshot["nativeStatus"],"title":t["title"],"artist":t["artist"],"songId":t["songId"],"player":t["sourceApp"],"position":self.snapshot["positionSeconds"],"duration":t["durationSeconds"],"timeline":self.snapshot["clockStatus"],"lyricSource":self.snapshot["lyricSource"],"isPlaying":self.snapshot["isPlaying"],"canSeek":self.snapshot["canSeek"],"seekStatus":self.snapshot["seekStatus"],"neteaseAttention":lyric_backend::netease_control::attention_diagnostics(),"mediaCommand":self.snapshot["mediaCommand"],"expanded":self.expanded,"islandEnabled":!self.user_hidden,"islandVisible":self.opacity>0.001,"processId":std::process::id(),"windowLevel":unsafe{window_level::snapshot(self.visual_hwnd,self.hwnd)},"glassCaptures":self.renderer.as_ref().map_or(0,Renderer::glass_captures),"rendererGeneration":self.renderer_generation,"renderFrames":self.render_frames,"renderer":"Vello Hybrid 0.2 / wgpu 29","lastError":self.error,"notificationState":self.notification_state,"notificationVisible":self.banner.visible(),"notificationGeometry":self.notification_geometry(),"osdVisible":self.osd_banner.visible()||self.bottom_osd.visible(),"bottomOsdVisible":self.bottom_osd.visible(),"systemState":self.osd.status(),"todos":self.todos.list(&self.todo_now),"todoError":self.todos.error,"today":self.todo_now.date,"now":self.todo_now.time,"pendingPage":self.pending_page,"pendingRequestId":self.pending_request,"pendingCenterAction":self.pending_center_action,"centerFrontend":if self.base.join("LyricIsland.Center.exe").is_file(){"go"}else{"missing"},"islandGeometry":{"mini":self.mini(),"capsule":self.layout.capsule,"card":self.layout.card,"satellite":!self.mini()&&self.components.len()>1,"horizontalGestures":self.flag("SwipeActivities",true)},"miniContrast":{"enabled":self.mini()&&self.flag("MiniAutoContrast",true)&&self.settings["MiniMaterial"]=="Glass","sampledLuminance":self.mini_contrast.sampled,"darkText":self.mini_contrast.dark,"foreground":format!("#{:06X}",self.mini_contrast.ink()&0xffffff)},"compactTargetWidth":self.compact_size.width_target,"compactWidth":self.compact_size.width,"compactHeight":self.compact_size.height,"compactSecondary":self.compact_secondary,"timers":self.timers.list(),"timerError":self.timers.error,"screenTime":self.screen_time.snapshot(),"weather":self.widget_data.value["island-weather"],"capsuleAlertVisible":self.alerts.visible(),"widgetData":self.widget_data.value,"desktopWidgets":self.desktop_widgets.list(),"overviewWidgets":self.overview_widgets.list(),"desktopWidgetError":self.desktop_widgets.error,"systemMetrics":self.widget_metrics.value,"activeComponent":self.selected,"components":self.components,"notificationHistory":self.history.list(),"historyError":self.history.error,"quickHotkey":self.settings["QuickReminderHotkey"],"pendingAction":self.pending_action,"sessionLocked":self.session_locked,"focusResume":self.focus_resume.as_ref().map(|r|json!({"generation":r.generation,"ids":r.ids,"prompted":r.prompted})),"templates":self.templates.list(),"workflowTemplateError":self.templates.error,"appRules":self.rules.list(&self.todo_now.date),"appRuleError":self.rules.error,"foreground":{"path":self.foreground.path,"name":self.foreground.name,"unreadable":self.foreground.unreadable},"lockWatch":true});
+                state["notificationContent"]=self.banner.notice.as_ref().map(|n|json!({"appId":n.app_id,"titleCharacters":n.title.chars().count(),"bodyCharacters":n.body.chars().count(),"iconBytes":n.icon.as_ref().map_or(0,Vec::len)})).unwrap_or(Value::Null);
                 state["islandWindowPresent"] = json!(self.opacity > 0.001);
                 state["islandVisible"] = json!(self.opacity > 0.001 && !self.resident_idle());
                 state["idleClickThrough"] = json!(self.resident_idle() && self.input_region == Some([0; 10]));
@@ -5541,6 +5543,7 @@ unsafe fn icon_preview(
     }
     Ok(())
 }
+mod consent;
 fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
     unsafe {
         let args = std::env::args().collect::<Vec<_>>();
@@ -5658,6 +5661,7 @@ fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         let preview_mode = args.get(1).is_some_and(|s| {
             s == "--glow-preview"
                 || s == "--liquid-preview"
+                || s == "--resident-preview"
                 || s == "--startup-ui-preview"
                 || s == "--glass-preview"
                 || s == "--motion-capture"
@@ -5726,6 +5730,7 @@ fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         } else {
             base.join("Data")
         };
+        if !demo && !consent::ensure(&data)? {return Ok(())}
         if !demo
             && std::env::var_os("LYRICISLAND_TEST_PIPE").is_none()
             && !base.join("Portable.json").is_file()

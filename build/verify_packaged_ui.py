@@ -27,7 +27,7 @@ def main():
         if report.get('success') is not True: raise RuntimeError(f'UI acceptance failed: {relative}: {report}')
     print('Packaged Go views and Rust desktop renderer passed',flush=True)
     root=Path(__file__).resolve().parents[1]
-    subprocess.run([sys.executable,str(root/'tests/verify_unified_center.py'),'--runtime',str(runtime),'--scratch',str(output/'desktop-runtime'),'--report',str(output/'desktop/report.json')],
+    subprocess.run([sys.executable,str(root/'tests/verify_unified_center.py'),'--runtime',str(runtime),'--scratch',str(output/('desktop-runtime-'+uuid.uuid4().hex)),'--report',str(output/'desktop/report.json')],
         env=environment,timeout=180,check=True,creationflags=subprocess.CREATE_NO_WINDOW)
 
 if __name__=='__main__': main()

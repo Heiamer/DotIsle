@@ -1,7 +1,7 @@
 [package]
 autobins = false
 name = "lyric-native"
-version = "5.0.5"
+version = "5.0.6"
 edition.workspace = true
 license.workspace = true
 
@@ -20,6 +20,7 @@ lyric-backend = { path = "../lyric-backend" }
 lyric-core = { path = "../lyric-core" }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 base64.workspace = true
 roxmltree = "=0.20.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

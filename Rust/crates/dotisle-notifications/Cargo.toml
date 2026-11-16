@@ -15,3 +15,9 @@ windows={version="0.62",features=["Win32_Storage_Packaging_Appx","ApplicationMod
 windows-core="0.62"
 roxmltree="=0.20.0"
 image={version="0.25",default-features=false,features=["png"]}
+aes="0.8"
+sha2.workspace=true
+md5={package="md-5",version="0.10"}
+memchr="2"
+libloading="0.8"
+ruzstd="0.8"

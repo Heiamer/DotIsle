@@ -605,9 +605,9 @@ func (a *App) notificationPrefsBody(c *ui.Context, p *Palette, x, y, w float32) 
 	})
 	y = leafHeading(c, p, "消息灵动岛", x, y, w)
 	y = a.leafToggles(c, p, x, y, w, []leafToggleRow{
-		{"微信", "仅提醒有新消息，不读取聊天内容。", "WeChatMessageHintsEnabled", true},
-		{"飞书", "仅提醒有新消息，不读取聊天内容。", "FeishuMessageHintsEnabled", true},
-		{"钉钉", "仅提醒有新消息，不读取聊天内容。", "DingTalkMessageHintsEnabled", true},
+		{"微信", "显示新收到的文字正文；只读本机，不保存聊天记录。", "WeChatMessageHintsEnabled", true},
+		{"飞书", "有通知正文时直接显示内容，不重复提醒有新消息。", "FeishuMessageHintsEnabled", true},
+		{"钉钉", "有通知正文时直接显示内容，不重复提醒有新消息。", "DingTalkMessageHintsEnabled", true},
 		{"企业微信", "仅提醒有新消息，不读取聊天内容。", "WeComMessageHintsEnabled", true},
 	})
 	y = leafHeading(c, p, "通知记录", x, y, w)

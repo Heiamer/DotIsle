@@ -527,7 +527,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-desktop"
-version = "5.0.5"
+version = "5.0.6"
 dependencies = [
  "base64",
  "dotisle-domain",
@@ -561,7 +561,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-domain"
-version = "5.0.5"
+version = "5.0.6"
 dependencies = [
  "dotisle-module-api",
  "lyric-backend",
@@ -664,12 +664,18 @@ dependencies = [
 name = "dotisle-notifications"
 version = "1.0.0"
 dependencies = [
+ "aes",
  "dotisle-module-api",
  "dotisle-module-storage",
  "image",
+ "libloading",
+ "md-5",
+ "memchr",
  "roxmltree",
+ "ruzstd",
  "serde",
  "serde_json",
+ "sha2",
  "windows 0.62.2",
  "windows-core 0.62.2",
 ]
@@ -688,7 +694,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-render"
-version = "5.0.5"
+version = "5.0.6"
 dependencies = [
  "dotisle-scene",
  "fontique",
@@ -701,7 +707,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-scene"
-version = "5.0.5"
+version = "5.0.6"
 dependencies = [
  "glifo",
  "vello_common",
@@ -1520,7 +1526,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-archive"
-version = "5.0.5"
+version = "5.0.6"
 dependencies = [
  "flate2",
  "sha2",
@@ -1528,7 +1534,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-backend"
-version = "5.0.5"
+version = "5.0.6"
 dependencies = [
  "aes",
  "base64",
@@ -1547,7 +1553,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-bootstrap"
-version = "5.0.5"
+version = "5.0.6"
 dependencies = [
  "dotisle-module-api",
  "dotisle-render",
@@ -1563,7 +1569,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-core"
-version = "5.0.5"
+version = "5.0.6"
 dependencies = [
  "regex",
  "serde",
@@ -1574,7 +1580,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-native"
-version = "5.0.5"
+version = "5.0.6"
 dependencies = [
  "base64",
  "dotisle-domain",
@@ -1588,6 +1594,7 @@ dependencies = [
  "roxmltree",
  "serde",
  "serde_json",
+ "sha2",
  "windows 0.62.2",
  "windows-core 0.62.2",
 ]
@@ -2432,6 +2439,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
+name = "ruzstd"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7c1c839d570d835527c9a5e4db7cb2198683a988cb9d7293fc8674e6bd58fc8"
+dependencies = [
+ "twox-hash",
+]
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2844,6 +2860,12 @@ name = "ttf-parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
+
+[[package]]
+name = "twox-hash"
+version = "2.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86a801b3cea342a06d468c8710662aa29e5e05e4f5c0d62f00bbb7f2ad7941c2"
 
 [[package]]
 name = "typenum"

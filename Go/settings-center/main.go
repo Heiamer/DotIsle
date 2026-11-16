@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"dotisle/settings/consent"
 	"dotisle/settings/desktop"
 	"dotisle/settings/island"
 	"dotisle/settings/prefs"
@@ -77,6 +78,9 @@ func main() {
 		signalCenterShow(data)
 		return
 	}
+	if !consent.Ensure(data) {
+		return
+	}
 	prefsPath, _, _ := prefs.Paths(data)
 	p, err := prefs.Load(prefsPath)
 	if err != nil {
@@ -135,8 +139,10 @@ func main() {
 		case initial = <-snapshots:
 			if initial != nil {
 				if initial.Exited {
-					mygo.App.Quit()
-					return
+					// No matching native process owns this center. Quit may arrive
+					// before the native event loop starts, so end this stray host now.
+					host.Stop()
+					os.Exit(0)
 				}
 				if initial.Err == "" {
 					app.ApplyPacket(initial.Raw, true, "")

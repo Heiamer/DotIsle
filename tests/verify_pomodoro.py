@@ -1,4 +1,5 @@
 """Exercise the packaged native timer over its real, isolated settings pipe."""
+import hashlib
 import argparse
 import ctypes
 from ctypes import wintypes
@@ -37,6 +38,9 @@ class Runtime:
         return self.launch()
 
     def write_settings(self):
+        # Isolated test data only; production consent is exercised separately.
+        text = (Path(__file__).resolve().parents[1] / 'Go/settings-center/consent/disclaimer.zh-CN.txt').read_text(encoding='utf-8')
+        (self.data / 'consent.json').write_text(json.dumps({'appVersion':json.loads((self.runtime/'Assets/RuntimeFiles.json').read_text(encoding='utf-8'))['version'],'revision':'2026-11-17.1','sha256':hashlib.sha256(text.encode()).hexdigest(),'accepted':True,'acceptedAtUnix':int(time.time())}), encoding='utf-8')
         (self.data / 'settings.json').write_text(json.dumps({
             'AutoStart': False, 'AutoCheckUpdatesEnabled': False,
             'DeviceRemindersEnabled': False, 'SystemStateHintsEnabled': False,

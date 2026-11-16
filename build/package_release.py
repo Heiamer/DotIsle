@@ -65,6 +65,7 @@ def main():
     shutil.copytree(root/'docs/brand',runtime/'docs/brand')
     shutil.copy2(root/'docs/PLUGIN-DEVELOPMENT.md',runtime/'docs/PLUGIN-DEVELOPMENT.md')
     shutil.copy2(root/'docs/UNIFIED-CONTROL-CENTER.md',runtime/'docs/UNIFIED-CONTROL-CENTER.md')
+    shutil.copy2(root/'docs/DISCLAIMER.md',runtime/'docs/DISCLAIMER.md')
     shutil.copytree(root/'examples/plugins',runtime/'examples/plugins')
     shutil.copy2(out/(name+'-Notes.md'),runtime/'发布说明.md')
     # Ownership and original hashes let a later successful update retire only

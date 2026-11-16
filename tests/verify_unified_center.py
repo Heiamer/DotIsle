@@ -5,6 +5,7 @@ from ctypes import wintypes as w
 import json
 import os
 import subprocess
+import shutil
 import time
 from pathlib import Path
 from verify_pomodoro import Runtime
@@ -145,8 +146,11 @@ def run(args):
         report['checks'].append('unexpected native exit releases widget windows and center; restart restores saved widgets')
         # A center from another portable runtime shares the default pipe; it must
         # stop instead of following this instance and opening a second window.
-        other=args.scratch/'other-data'
+        other=(args.scratch/'other-data').resolve()
         other.mkdir(parents=True,exist_ok=True)
+        # This fixture tests data-directory isolation after an explicit synthetic
+        # agreement; first-use consent is exercised by its own acceptance run.
+        shutil.copy2(app.data/'consent.json',other/'consent.json')
         environment=dict(os.environ,LYRICISLAND_TEST_PIPE=app.pipe.split('\\')[-1])
         stray=subprocess.Popen([str(app.runtime/'LyricIsland.Center.exe'),'--data-dir',str(other)],cwd=app.runtime,env=environment,
             stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=subprocess.CREATE_NO_WINDOW)
@@ -158,7 +162,11 @@ def run(args):
         report['error']=str(error)
         raise
     finally:
-        try: stop(app)
+        try:
+            if 'stray' in locals() and stray.poll() is None:
+                stray.terminate()
+                stray.wait(timeout=10)
+            stop(app)
         finally:
             args.report.parent.mkdir(parents=True,exist_ok=True)
             args.report.write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')

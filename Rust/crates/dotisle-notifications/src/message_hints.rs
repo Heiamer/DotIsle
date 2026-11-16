@@ -1,5 +1,5 @@
-//! Content-free messaging signals. Never inspect window titles, accessibility
-//! text, client databases, process memory, input or notification payloads.
+//! Taskbar signals for metadata-only apps. WeChat content uses the separate
+//! read-only WCDB reader and never falls back to a content-free hint.
 use std::{collections::HashMap,time::{Duration,Instant}};
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Hash)]
@@ -8,7 +8,8 @@ impl App {
     pub fn id(self)->&'static str { match self { Self::WeChat=>"WeChat",Self::Feishu=>"Feishu",Self::DingTalk=>"DingTalk",Self::WeCom=>"WXWork" } }
     pub fn name(self)->&'static str { match self { Self::WeChat=>"微信",Self::Feishu=>"飞书",Self::DingTalk=>"钉钉",Self::WeCom=>"企业微信" } }
     pub fn setting(self)->&'static str { match self { Self::WeChat=>"WeChatMessageHintsEnabled",Self::Feishu=>"FeishuMessageHintsEnabled",Self::DingTalk=>"DingTalkMessageHintsEnabled",Self::WeCom=>"WeComMessageHintsEnabled" } }
-    pub fn notice(self)->crate::notifications::Notice { crate::notifications::Notice { app_id:self.id().into(),app_name:self.name().into(),title:"有新消息".into(),..Default::default() } }
+    pub fn content_only(self)->bool { matches!(self,Self::WeChat|Self::Feishu|Self::DingTalk) }
+    pub fn notice(self)->crate::notifications::Notice { crate::notifications::Notice { app_id:self.id().into(),app_name:self.name().into(),title:if self.content_only(){String::new()}else{"有新消息".into()},..Default::default() } }
 }
 
 pub fn from_executable(path:&str)->Option<App> {

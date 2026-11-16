@@ -37,7 +37,7 @@ MODULE_DLLS = (
     'dotisle_glow.dll',
 )
 RUNTIME_DOCS = ('README.md', 'GESTURE-TUTORIAL.md', 'NETEASE-SEEKFIX.md', 'CHANGELOG.md',
-                'LICENSE', 'FONT-NOTICE.md', 'THIRD-PARTY-NOTICES.md', 'REWRITE.md', 'docs/UNIFIED-CONTROL-CENTER.md')
+                'LICENSE', 'FONT-NOTICE.md', 'THIRD-PARTY-NOTICES.md', 'REWRITE.md', 'docs/UNIFIED-CONTROL-CENTER.md', 'docs/DISCLAIMER.md')
 
 HINT_BINARIES = '在仓库根跑 tools/li-cargo.ps1 build --release --workspace --bins --lib --locked 重新产出 Rust 运行时'
 HINT_CENTER = '先在 Go/settings-center 里构建控制中心：go build -trimpath -ldflags "-s -w -H=windowsgui" -o <仓库根>/target/release/LyricIsland.Center.exe .'

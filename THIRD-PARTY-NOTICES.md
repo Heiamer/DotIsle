@@ -110,3 +110,9 @@ lazy_static 1.5.1，https://github.com/rust-lang-nursery/lazy-static.rs ，MIT O
 ## 5.0 Go 原生控制中心
 
 使用 MyGo v0.9.0、purego、go-text/typesetting 与 golang.org/x 库，锁定版本见 Go/settings-center/go.mod；许可全文保存在 licenses/Go。HarmonyOS Sans 许可见 licenses/HarmonyOS-Sans-LICENSE.txt。
+
+## 微信正文只读读取参考
+
+Config.Cipher 配置对象探测与 SQLCipher 4 消息格式参考 fanyuantaier/wechatauto-replica，固定提交 1de41d482712dee7381fbe0f90599a226937e24d，Apache-2.0。DotIsle 以 Rust 改写为单工作线程、按页解密只读 VFS；未捆绑该项目的 Python 自动化、消息发送、OCR 或注入功能。原始许可见 licenses/wechatauto-replica-Apache-2.0.txt。
+
+微信正文解压使用 ruzstd 0.8.3 与 twox-hash 2.1.5（MIT）；许可副本见 `licenses/ruzstd-MIT.txt` 和 `licenses/twox-hash-MIT.txt`。
