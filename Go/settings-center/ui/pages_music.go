@@ -2,12 +2,20 @@
 package ui
 
 import (
+	"bytes"
 	"dotisle/settings/island"
+	"image"
 	"os"
 	"time"
 
 	"github.com/egoist/mygo/ui"
 )
+
+// coverCacheMax is the longest side a cover is kept at. The largest place the
+// control center shows it is a 300 DIP card, 600 pixels on a 200% display, so
+// 1024 stays sharp there while a 3000×3000 cover no longer costs ~48 MB of
+// pixels and halved levels.
+const coverCacheMax = 1024
 
 var coverCache = struct {
 	path  string
@@ -17,6 +25,13 @@ var coverCache = struct {
 	at    time.Time
 }{}
 
+// clearCoverCache drops the decoded cover and its frost, for when no cover
+// should show: the island reports no track, or the file cannot be read.
+func clearCoverCache() {
+	coverCache.path, coverCache.bmp, coverCache.frost = "", nil, nil
+	coverCache.seed = 0
+}
+
 // coverBitmap loads the island's cover preview, refreshed when the path changes.
 func (a *App) coverBitmap() *ui.Bitmap {
 	if a.State == nil {
@@ -24,10 +39,12 @@ func (a *App) coverBitmap() *ui.Bitmap {
 	}
 	preview, _ := a.State["musicPreview"].(map[string]any)
 	if preview == nil {
+		clearCoverCache()
 		return nil
 	}
 	path, _ := preview["coverPath"].(string)
 	if path == "" {
+		clearCoverCache()
 		return nil
 	}
 	if coverCache.path == path && coverCache.bmp != nil {
@@ -35,15 +52,22 @@ func (a *App) coverBitmap() *ui.Bitmap {
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
+		clearCoverCache()
 		return nil
 	}
-	bmp, err := ui.DecodeBitmap(raw)
+	src, _, err := image.Decode(bytes.NewReader(raw))
 	if err != nil {
+		clearCoverCache()
 		return nil
 	}
-	coverCache.path, coverCache.bmp, coverCache.at = path, bmp, time.Now()
-	coverCache.frost, coverCache.seed = frostAlbum(raw)
-	return bmp
+	pixels := toNRGBA(src)
+	if w, h := fitWithin(pixels.Rect.Dx(), pixels.Rect.Dy(), coverCacheMax, coverCacheMax); w != pixels.Rect.Dx() || h != pixels.Rect.Dy() {
+		pixels = scaleNRGBA(pixels, w, h)
+	}
+	coverCache.path, coverCache.bmp, coverCache.at = path, ui.NewBitmap(pixels), time.Now()
+	coverCache.frost, coverCache.seed = frostPixels(pixels)
+	trimDecodedImageMemory()
+	return coverCache.bmp
 }
 
 func (a *App) str(stateKey ...string) string {

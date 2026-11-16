@@ -20,7 +20,7 @@ func verifyDesign(output, data, cover string, coverage *[]map[string]any) error 
 			theme = "Dark"
 		}
 		return &App{Prefs: prefs.Default(), Data: data, State: map[string]any{
-			"pendingPage": "", "version": "5.0.1", "title": "此刻，正在聆听", "artist": "验收示例",
+			"pendingPage": "", "version": "5.0.2", "title": "此刻，正在聆听", "artist": "验收示例",
 			"settings":     map[string]any{"SettingsTheme": theme, "Animation": true},
 			"musicPreview": map[string]any{"coverPath": cover, "lyricFrame": map[string]any{"currentLine": "把这一刻留给自己"}},
 		}}

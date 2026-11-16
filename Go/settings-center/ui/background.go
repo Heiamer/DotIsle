@@ -53,25 +53,46 @@ func (a *App) backgroundSlot() prefs.Background {
 }
 
 // wallpaper returns the bitmap for the active slot plus the last decode error, both
-// cached per (path, blur) pair. The error surfaces in the settings panel status line
-// exactly where background.rs shows Cache::error.
+// cached per (path, blur, display size) pair. The error surfaces in the settings
+// panel status line exactly where background.rs shows Cache::error.
 func (a *App) wallpaper() (*ui.Bitmap, string) {
 	bg := a.backgroundSlot()
 	if !bg.Enabled || bg.Path == "" {
+		wallpaperCache.key, wallpaperCache.bmp, wallpaperCache.err = "", nil, ""
 		return nil, ""
 	}
-	key := bg.Path + "|" + strconv.FormatFloat(bg.Blur, 'f', 2, 64)
+	maxW, maxH := a.wallpaperPixelCap()
+	key := bg.Path + "|" + strconv.FormatFloat(bg.Blur, 'f', 2, 64) +
+		"|" + strconv.Itoa(maxW) + "x" + strconv.Itoa(maxH)
 	if wallpaperCache.key == key {
 		return wallpaperCache.bmp, wallpaperCache.err
 	}
-	bmp, err := loadWallpaper(bg.Path, bg.Blur)
+	bmp, err := loadWallpaper(bg.Path, bg.Blur, maxW, maxH)
 	msg := ""
 	if err != nil {
 		msg = err.Error()
 	}
 	wallpaperCache.key, wallpaperCache.bmp, wallpaperCache.err = key, bmp, msg
 	wallpaperCache.when = time.Now()
+	if bmp != nil {
+		trimDecodedImageMemory()
+	}
 	return bmp, msg
+}
+
+// wallpaperPixelCap bounds the decoded picture to the physical pixels of the
+// content area: the window is fixed at 1200×800 DIPs, so a 2560×1600 decode
+// spent memory on pixels no display ever showed and on halved levels.
+func (a *App) wallpaperPixelCap() (int, int) {
+	scale := 1.0
+	if a.Win != nil {
+		if dpi := displayDPI(a.Win.NativeHandle()); dpi >= 96 {
+			scale = float64(dpi) / 96
+		}
+	}
+	w := int(math.Ceil(float64(WindowW) * scale))
+	h := int(math.Ceil(float64(WindowH-TitlebarH) * scale))
+	return min(w, wallpaperMaxW), min(h, wallpaperMaxH)
 }
 
 // paintBackground fills the surface below the titlebar with the wallpaper
@@ -129,10 +150,10 @@ func fitOf(mode string) ui.Fit {
 	return ui.Cover
 }
 
-// loadWallpaper decodes the slot image, caps it and frosts it, then uploads it once:
-// background.rs decode + frosted + refresh_background.
-func loadWallpaper(path string, blur float64) (*ui.Bitmap, error) {
-	src, err := decodeWallpaper(path)
+// loadWallpaper decodes the slot image, caps it to the display's pixels and frosts
+// it, then uploads it once: background.rs decode + frosted + refresh_background.
+func loadWallpaper(path string, blur float64, maxW, maxH int) (*ui.Bitmap, error) {
+	src, err := decodeWallpaper(path, maxW, maxH, true)
 	if err != nil {
 		return nil, err
 	}
@@ -151,9 +172,11 @@ func loadWallpaper(path string, blur float64) (*ui.Bitmap, error) {
 	return ui.NewBitmap(src), nil
 }
 
-// decodeWallpaper validates and reads one source image with the background.rs caps,
-// returning the capped copy (at most 2560x1600) as straight-alpha NRGBA.
-func decodeWallpaper(path string) (*image.NRGBA, error) {
+// decodeWallpaper validates and reads one source image with the given caps,
+// returning the capped copy as straight-alpha NRGBA. cover keeps the whole
+// content area filled: a square picture capped fit-within would be upscaled
+// horizontally by Cover and look soft on a high-DPI screen.
+func decodeWallpaper(path string, maxW, maxH int, cover bool) (*image.NRGBA, error) {
 	info, err := os.Stat(path)
 	if err != nil || info.IsDir() {
 		return nil, errors.New("找不到图片，请重新选择")
@@ -176,8 +199,11 @@ func decodeWallpaper(path string) (*image.NRGBA, error) {
 		return nil, errors.New("图片尺寸无效")
 	}
 	src := toNRGBA(img)
-	if b.Dx() > wallpaperMaxW || b.Dy() > wallpaperMaxH {
-		w, h := fitWithin(b.Dx(), b.Dy(), wallpaperMaxW, wallpaperMaxH)
+	if b.Dx() > maxW || b.Dy() > maxH {
+		w, h := fitWithin(b.Dx(), b.Dy(), maxW, maxH)
+		if cover {
+			w, h = coverWithin(b.Dx(), b.Dy(), maxW, maxH)
+		}
 		src = scaleNRGBA(src, w, h)
 	}
 	return src, nil
@@ -288,6 +314,27 @@ func fitWithin(w, h, mw, mh int) (int, int) {
 	return nw, nh
 }
 
+// coverWithin scales w,h down until both sides cover mw,mh, keeping the aspect
+// ratio (image::thumbnail is the fit counterpart): a square wallpaper becomes
+// 1800×1800 for a 1800×1122 area instead of 1122×1122 that Cover would stretch.
+func coverWithin(w, h, mw, mh int) (int, int) {
+	if w <= 0 || h <= 0 {
+		return w, h
+	}
+	sw := float64(mw) / float64(w)
+	sh := float64(mh) / float64(h)
+	s := sw
+	if sh > s {
+		s = sh
+	}
+	if s >= 1 {
+		return w, h
+	}
+	nw := max(1, int(math.Round(float64(w)*s)))
+	nh := max(1, int(math.Round(float64(h)*s)))
+	return nw, nh
+}
+
 // toNRGBA converts any decoded image into straight-alpha NRGBA, with fast paths for
 // the two types the standard decoders return.
 func toNRGBA(img image.Image) *image.NRGBA {
@@ -363,7 +410,9 @@ func scaleNRGBA(src *image.NRGBA, w, h int) *image.NRGBA {
 // decoding it with the same caps, store the capped copy as PNG inside
 // Data/Backgrounds, point slot 0 at it and persist with a rollback.
 func (a *App) importBackground(src string) error {
-	img, err := decodeWallpaper(src)
+	// Store at the background.rs cap, not the current display's: the stored copy
+	// must still fill the window after a move to a higher-DPI screen.
+	img, err := decodeWallpaper(src, wallpaperMaxW, wallpaperMaxH, false)
 	if err != nil {
 		return err
 	}
@@ -394,6 +443,7 @@ func (a *App) importBackground(src string) error {
 		return err
 	}
 	a.Refresh()
+	trimDecodedImageMemory()
 	return nil
 }
 

@@ -1,20 +1,16 @@
 package ui
 
 import (
-	"bytes"
 	"github.com/egoist/mygo/ui"
 	"image"
 )
 
 // Keep the 3.5.1 album material: frosted artwork, diagonal charcoal veil,
-// and a second lower veil behind transport. Frost is prepared once per cover.
-func frostAlbum(raw []byte) (*ui.Bitmap, uint32) {
-	src, _, err := image.Decode(bytes.NewReader(raw))
-	if err != nil {
-		return nil, 0
-	}
-	w, h := fitWithin(src.Bounds().Dx(), src.Bounds().Dy(), 512, 512)
-	pixels := scaleNRGBA(toNRGBA(src), w, h)
+// and a second lower veil behind transport. Frost is prepared once per cover,
+// from the already decoded and capped pixels the cover bitmap uses.
+func frostPixels(src *image.NRGBA) (*ui.Bitmap, uint32) {
+	w, h := fitWithin(src.Rect.Dx(), src.Rect.Dy(), 512, 512)
+	pixels := scaleNRGBA(src, w, h)
 	seed := albumSeed(pixels)
 	return ui.NewBitmap(frosted(pixels, 10, 1)), seed
 }

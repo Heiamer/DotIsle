@@ -11,7 +11,7 @@
 
 Windows 10 / 11 · x64 · 原生桌面应用
 
-[下载正式版](https://github.com/Heiamer/DotIsle/releases/latest) · [V5.0.1 正式版](https://github.com/Heiamer/DotIsle/releases/tag/v5.0.1) · [更新日志](CHANGELOG.md) · [反馈问题](https://github.com/Heiamer/DotIsle/issues)
+[下载正式版](https://github.com/Heiamer/DotIsle/releases/latest) · [V5.0.2 正式版](https://github.com/Heiamer/DotIsle/releases/tag/v5.0.2) · [更新日志](CHANGELOG.md) · [反馈问题](https://github.com/Heiamer/DotIsle/issues)
 
 </div>
 
@@ -21,7 +21,7 @@ Windows 10 / 11 · x64 · 原生桌面应用
 
 控制中心采用固定窗口、HarmonyOS Sans、柔和的连续曲线边角与分层阴影。导航平时收起，点击左上按钮展开左侧白色毛玻璃栏，选好页面后自动隐藏。明暗外观、背景和动效有各自的设置；动态取色 **Beta** 默认关闭，开启后使用低饱和的浅彩色。
 
-**V5.0 已正式发布。** 5.0 统一了控制中心与桌面组件，并让概览、滚动视图和信息组件可以直接设置。更新内容与已知限制见 [发行说明](release-notes/DotIsle-5.0.1-Notes.md)。
+**V5.0 已正式发布。** 5.0 统一了控制中心与桌面组件，并让概览、滚动视图和信息组件可以直接设置。更新内容与已知限制见 [发行说明](release-notes/DotIsle-5.0.2-Notes.md)。
 
 ## 岛上与桌面上
 
@@ -38,7 +38,7 @@ Windows 10 / 11 · x64 · 原生桌面应用
 
 ## 下载与开始使用
 
-从 [Releases](https://github.com/Heiamer/DotIsle/releases) 选择版本。5.0.1 正式包位于 [V5.0.1 发行页](https://github.com/Heiamer/DotIsle/releases/tag/v5.0.1)，发布前先本地构建和验收，再由 [发布工作流](.github/workflows/publish-verified-windows.yml) 核验并发布。
+从 [Releases](https://github.com/Heiamer/DotIsle/releases) 选择版本。5.0.2 正式包位于 [V5.0.2 发行页](https://github.com/Heiamer/DotIsle/releases/tag/v5.0.2)，发布前先本地构建和验收，再由 [发布工作流](.github/workflows/publish-verified-windows.yml) 核验并发布。
 
 | 文件 | 用途 |
 | --- | --- |

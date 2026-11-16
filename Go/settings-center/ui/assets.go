@@ -32,8 +32,41 @@ func assetsRoot() string {
 //go:embed assets/icons/*.svg
 var controlIcons embed.FS
 
-//go:embed assets/fonts/HarmonyOS_*.ttf
-var controlFonts embed.FS
+// The faces are embedded as byte slices, not read from controlFonts: the slice
+// points into the executable's read-only data, while ReadFile copied every face
+// (24 MB with the SC weights) onto the Go heap at startup. RegisterFont's DWrite
+// loader copies the data itself, so nothing here needs a heap copy.
+//
+//go:embed assets/fonts/HarmonyOS_Sans_Regular.ttf
+var uiSansRegular []byte
+
+//go:embed assets/fonts/HarmonyOS_Sans_Medium.ttf
+var uiSansMedium []byte
+
+//go:embed assets/fonts/HarmonyOS_Sans_Bold.ttf
+var uiSansBold []byte
+
+//go:embed assets/fonts/HarmonyOS_Sans_SC_Regular.ttf
+var uiSansSCRegular []byte
+
+//go:embed assets/fonts/HarmonyOS_Sans_SC_Medium.ttf
+var uiSansSCMedium []byte
+
+//go:embed assets/fonts/HarmonyOS_Sans_SC_Bold.ttf
+var uiSansSCBold []byte
+
+var uiFontFaces = []struct {
+	name string
+	face string
+	data []byte
+}{
+	{"HarmonyOS_Sans_Regular.ttf", "HarmonyOS Sans", uiSansRegular},
+	{"HarmonyOS_Sans_Medium.ttf", "HarmonyOS Sans", uiSansMedium},
+	{"HarmonyOS_Sans_Bold.ttf", "HarmonyOS Sans", uiSansBold},
+	{"HarmonyOS_Sans_SC_Regular.ttf", "HarmonyOS Sans SC", uiSansSCRegular},
+	{"HarmonyOS_Sans_SC_Medium.ttf", "HarmonyOS Sans SC", uiSansSCMedium},
+	{"HarmonyOS_Sans_SC_Bold.ttf", "HarmonyOS Sans SC", uiSansSCBold},
+}
 
 var fontsRegistered bool
 
@@ -44,24 +77,11 @@ func RegisterFonts() {
 		return
 	}
 	fontsRegistered = true
-	for _, family := range []string{"HarmonyOS_Sans", "HarmonyOS_Sans_SC"} {
-		alias := "HarmonyOS Sans"
-		if family == "HarmonyOS_Sans_SC" {
-			alias = "HarmonyOS Sans SC"
-		}
-		for _, weight := range []string{"Regular", "Medium", "Bold"} {
-			name := family + "_" + weight + ".ttf"
-			raw, err := controlFonts.ReadFile("assets/fonts/" + name)
-			if err != nil {
-				log.Printf("read UI font %s: %v", name, err)
-				continue
-			}
-			if err = ui.RegisterFont(raw, alias); err != nil {
-				log.Printf("register %s: %v", name, err)
-			}
+	for _, f := range uiFontFaces {
+		if err := ui.RegisterFont(f.data, f.face); err != nil {
+			log.Printf("register %s: %v", f.name, err)
 		}
 	}
-
 }
 
 var svgCache = map[string]*ui.SVG{}

@@ -307,6 +307,9 @@ struct App {
     leave_at: Option<Instant>,
     last_left: bool,
     user_hidden: bool,
+    // A verification code surfaced while the island was manually hidden; the
+    // hidden state returns once its alert is gone.
+    restore_hidden: bool,
     display_wanted: bool,
     missing_since: Option<Instant>,
     manual_until: Option<Instant>,
@@ -577,6 +580,7 @@ impl App {
             leave_at: None,
             last_left: false,
             user_hidden: false,
+            restore_hidden: false,
             display_wanted: demo,
             missing_since: None,
             manual_until: None,
@@ -1954,6 +1958,10 @@ impl App {
             self.hide_at = None;
             self.fade(0.);
             self.opacity = 0.;
+            if self.restore_hidden {
+                self.restore_hidden = false;
+                self.user_hidden = true;
+            }
             self.dirty = true;
         }
     }
@@ -3288,8 +3296,22 @@ impl App {
                     if policy.should_show() && policy.permits(&notice.app_id, &notice.app_name) {
                         let code=if self.flag("VerificationCodeEnabled",true){verification_code::extract(&notice.title,&notice.body)}else{None};
                         if let Some(code)=code{
-                            if !self.user_hidden&&!self.session_locked{
-                                self.alerts.enqueue(capsule_alert::Alert::verification(&notice.app_id,&notice.app_name,code));
+                            if !self.session_locked{
+                                // A code is actionable for a few minutes: surface it even
+                                // after a swipe-up hide, then restore that hide when the
+                                // alert ends.
+                                if self.user_hidden&&!self.flag("PauseNotifications",false){
+                                    self.restore_hidden=true;
+                                    self.user_hidden=false;
+                                    self.dismiss_offset.set(0.);
+                                    self.display_wanted=true;
+                                    let _=self.position();
+                                    self.retarget(true);
+                                    self.fade(1.);
+                                }
+                                if !self.user_hidden{
+                                    self.alerts.enqueue(capsule_alert::Alert::verification(&notice.app_id,&notice.app_name,code));
+                                }
                             }
                         }else{
                             if !self.user_hidden{self.enqueue(Queued{notice:notice.clone(),todo:None,chime:true});}
@@ -4333,6 +4355,7 @@ impl App {
             "toggleVisibility" => {
                 self.dismiss_offset.set(0.);
                 let _ = self.position();
+                self.restore_hidden = false;
                 self.user_hidden = !self.user_hidden;
                 if !self.user_hidden {
                     self.manual_until = Some(Instant::now() + Duration::from_secs(6));

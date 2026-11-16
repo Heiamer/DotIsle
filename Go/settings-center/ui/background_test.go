@@ -80,13 +80,13 @@ func TestDecodeWallpaperGuards(t *testing.T) {
 	good := writeImage(t, dir, "good.png", checker(64, 48, 8),
 		func(f *os.File) error { return png.Encode(f, checker(64, 48, 8)) })
 
-	if _, err := decodeWallpaper(filepath.Join(dir, "absent.png")); err == nil ||
+	if _, err := decodeWallpaper(filepath.Join(dir, "absent.png"), wallpaperMaxW, wallpaperMaxH, false); err == nil ||
 		err.Error() != "找不到图片，请重新选择" {
 		t.Fatalf("missing file error = %v", err)
 	}
 
 	// A directory is not a picture either, and must not panic.
-	if _, err := decodeWallpaper(dir); err == nil {
+	if _, err := decodeWallpaper(dir, wallpaperMaxW, wallpaperMaxH, false); err == nil {
 		t.Fatal("a directory decoded as a picture")
 	}
 
@@ -99,7 +99,7 @@ func TestDecodeWallpaperGuards(t *testing.T) {
 	if err := os.WriteFile(broken, raw[:len(raw)/3], 0o644); err != nil {
 		t.Fatalf("write broken jpeg: %v", err)
 	}
-	if _, err := decodeWallpaper(broken); err == nil ||
+	if _, err := decodeWallpaper(broken, wallpaperMaxW, wallpaperMaxH, false); err == nil ||
 		!strings.Contains(err.Error(), "图片损坏或格式不支持") {
 		t.Fatalf("truncated jpeg error = %v", err)
 	}
@@ -115,12 +115,12 @@ func TestDecodeWallpaperGuards(t *testing.T) {
 		t.Fatalf("truncate fat: %v", err)
 	}
 	f.Close()
-	if _, err := decodeWallpaper(fat); err == nil ||
+	if _, err := decodeWallpaper(fat, wallpaperMaxW, wallpaperMaxH, false); err == nil ||
 		err.Error() != "图片超过 64 MB，请选择较小的图" {
 		t.Fatalf("oversized file error = %v", err)
 	}
 
-	img, err := decodeWallpaper(good)
+	img, err := decodeWallpaper(good, wallpaperMaxW, wallpaperMaxH, false)
 	if err != nil {
 		t.Fatalf("decode good: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestDecodeWallpaperCapsSize(t *testing.T) {
 	// binds first, so the result is 2400x1600.
 	big := checker(3000, 2000, 64)
 	path := writeImage(t, dir, "big.png", big, func(f *os.File) error { return png.Encode(f, big) })
-	img, err := decodeWallpaper(path)
+	img, err := decodeWallpaper(path, wallpaperMaxW, wallpaperMaxH, false)
 	if err != nil {
 		t.Fatalf("decode big: %v", err)
 	}
@@ -146,12 +146,27 @@ func TestDecodeWallpaperCapsSize(t *testing.T) {
 
 	exact := checker(wallpaperMaxW, wallpaperMaxH, 64)
 	path = writeImage(t, dir, "exact.png", exact, func(f *os.File) error { return png.Encode(f, exact) })
-	img, err = decodeWallpaper(path)
+	img, err = decodeWallpaper(path, wallpaperMaxW, wallpaperMaxH, false)
 	if err != nil {
 		t.Fatalf("decode exact: %v", err)
 	}
 	if img.Rect.Dx() != wallpaperMaxW || img.Rect.Dy() != wallpaperMaxH {
 		t.Fatalf("exact size = %v", img.Rect)
+	}
+}
+
+func TestDecodeWallpaperCoverModeKeepsSquareSharp(t *testing.T) {
+	dir := t.TempDir()
+	// A square wallpaper must arrive at 1800×1800 for a 1800×1122 content area:
+	// capping it fit-within would leave Cover to stretch 1122 to 1800.
+	square := checker(2000, 2000, 64)
+	path := writeImage(t, dir, "square.png", square, func(f *os.File) error { return png.Encode(f, square) })
+	img, err := decodeWallpaper(path, 1800, 1122, true)
+	if err != nil {
+		t.Fatalf("decode square: %v", err)
+	}
+	if w, h := img.Rect.Dx(), img.Rect.Dy(); w != 1800 || h != 1800 {
+		t.Fatalf("cover-capped square = %dx%d, want 1800x1800", w, h)
 	}
 }
 

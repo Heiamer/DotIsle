@@ -10,6 +10,18 @@ import (
 
 var setBackdropAttribute = windows.NewLazySystemDLL("dwmapi.dll").NewProc("DwmSetWindowAttribute")
 var getBackdropAttribute = windows.NewLazySystemDLL("dwmapi.dll").NewProc("DwmGetWindowAttribute")
+var getDpiForWindow = windows.NewLazySystemDLL("user32.dll").NewProc("GetDpiForWindow")
+
+// displayDPI returns the window's DPI, 96 on systems without GetDpiForWindow
+// (Windows 10 before 1607). It sizes the wallpaper cache to real pixels.
+func displayDPI(hwnd uintptr) int {
+	if hwnd != 0 && getDpiForWindow.Find() == nil {
+		if dpi, _, _ := getDpiForWindow.Call(hwnd); dpi >= 96 && dpi <= 768 {
+			return int(dpi)
+		}
+	}
+	return 96
+}
 
 // Mica's color mode belongs to DWM, independently of the custom UI palette.
 func (a *App) syncBackdropTheme() {

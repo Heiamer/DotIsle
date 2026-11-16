@@ -7,6 +7,9 @@ import (
 	"flag"
 	"log"
 	"os"
+	"runtime/debug"
+	"sync/atomic"
+	"time"
 
 	"dotisle/settings/desktop"
 	"dotisle/settings/island"
@@ -16,7 +19,38 @@ import (
 	mygoui "github.com/egoist/mygo/ui"
 )
 
+// centerHidden tells that the window was closed to the tray, where the process
+// stays resident for the island pump and the desktop widgets.
+var centerHidden atomic.Bool
+
+// tuneGC keeps the resident process small: its live heap is a few megabytes, but
+// the default GOGC=100 keeps a target of twice that plus the churn of a frame
+// build every 90 ms while music plays. A lower percentage pulls the target close
+// to live data, and the soft limit only bites on a pathological page; the runtime
+// still exceeds it rather than fail an allocation.
+func tuneGC() {
+	debug.SetGCPercent(50)
+	debug.SetMemoryLimit(192 << 20)
+}
+
+// trimWhenHidden returns heap pages to the OS once the window has stayed hidden,
+// instead of waiting for the runtime's five-minute scavenger. Showing the window
+// in the meantime cancels it, so a user reopening never pays for the trim.
+func trimWhenHidden(win *mygo.Window) {
+	win.OnShow(func() { centerHidden.Store(false) })
+	win.OnHide(func() {
+		centerHidden.Store(true)
+		go func() {
+			time.Sleep(3 * time.Second)
+			if centerHidden.Load() {
+				debug.FreeOSMemory()
+			}
+		}()
+	})
+}
+
 func main() {
+	tuneGC()
 	dataFlag := flag.String("data-dir", "", "island data directory")
 	warm := flag.Bool("warm", false, "start desktop widgets without showing the center")
 	verify := flag.String("verify", "", "capture the packaged control center and desktop renderer")
@@ -75,6 +109,7 @@ func main() {
 			log.Printf("window icon: %v", err)
 		}
 		app.Win = win
+		trimWhenHidden(win)
 		if !*warm {
 			app.StartSignature()
 		}

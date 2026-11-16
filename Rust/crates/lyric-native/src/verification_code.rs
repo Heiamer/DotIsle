@@ -22,7 +22,7 @@ pub fn extract(title:&str,body:&str)->Option<String>{
         if ('０'..='９').contains(&c){char::from_u32(c as u32-'０' as u32+'0' as u32).unwrap()}else{c}
     }).collect::<Vec<_>>();
     let mut markers=Vec::new();
-    for word in ["验证码","校验码","动态码","短信码","一次性密码","verification code","security code","one-time code","one time code","otp"]{
+    for word in ["验证码","校验码","动态码","动态密码","短信码","确认码","一次性密码","verification code","security code","one-time code","one time code","otp"]{
         let key=word.chars().collect::<Vec<_>>();
         for i in 0..text.len().saturating_sub(key.len()-1){
             if text.get(i..i+key.len())==Some(key.as_slice()){
@@ -79,6 +79,8 @@ pub fn copy(code:&str,hwnd:windows::Win32::Foundation::HWND)->Result<(),String>{
         assert_eq!(extract("登录提醒","验证码：１２３４５６，5 分钟内有效"),Some("123456".into()));
         assert_eq!(extract("Your OTP","Your verification code is 472913"),Some("472913".into()));
         assert_eq!(extract("8421 是您的动态码","请勿告诉他人"),Some("8421".into()));
+        assert_eq!(extract("","您的动态密码：739251，请勿泄露"),Some("739251".into()));
+        assert_eq!(extract("","确认码 4821"),Some("4821".into()));
     }
     #[test]fn rejects_order_phone_expiry_and_unrelated_numbers(){
         for body in ["订单 123456 已发货","验证码有效期为 2026 年，订单号 12345678","验证码为 12345678901","电话 13800138000","photoOTP 123456"]{
