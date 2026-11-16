@@ -81,6 +81,12 @@ fn wide(value: &str) -> Vec<u16> {
 pub fn get_json(url: &str) -> Result<serde_json::Value, String> {
     if !(url.starts_with("https://api.open-meteo.com/")
         || url.starts_with("https://geocoding-api.open-meteo.com/")
+        || url.starts_with("https://api.met.no/weatherapi/locationforecast/2.0/")
+        || url.starts_with("https://api.brightsky.dev/weather?")
+        || url.starts_with("https://wis.qq.com/weather/")
+        || url.starts_with("https://wis.qq.com/city/")
+        || url.starts_with("https://www.toutiao.com/stream/widget/local_weather/data/?city=")
+        || url.starts_with("https://www.7timer.info/bin/")
         || url.starts_with("https://wttr.in/"))
     {
         return Err("weather endpoint is not allowed".into());
@@ -88,10 +94,10 @@ pub fn get_json(url: &str) -> Result<serde_json::Value, String> {
     let api = Api::get()?;
     unsafe {
         let session = Owned::new(
-            (api.open)(wide("DotIsle Weather/3.5").as_ptr(), 0, null(), null(), 0),
+            (api.open)(wide("DotIsle/5.0.5 (https://github.com/Heiamer/DotIsle)").as_ptr(), 0, null(), null(), 0),
             api,
         )?;
-        let timeout = 8000u32;
+        let timeout = 4000u32;
         for option in [2, 5, 6] {
             (api.set_option)(session.handle, option, &timeout as *const _ as _, 4);
         }

@@ -377,6 +377,7 @@ pub fn run(args: Vec<String>) -> i32 {
             extract(&work.join("update.zip"), &stage, &version)?;
         }
         crate::local_modules::validate_overlay(&target_path,&stage,&work)?;
+        let retired=crate::update_cleanup::plan(&stage,&target_path)?;
         merge_marker(&stage, &target_path, &version)?;
 
         if authenticated {
@@ -410,7 +411,10 @@ pub fn run(args: Vec<String>) -> i32 {
         reporter.set_message("completed", "新版已启动，设置已保留。");
         std::thread::sleep(Duration::from_millis(1200));
         if let Some(mut overlay) = overlaid.take() { overlay.close(); }
-        std::fs::write(work.join("success.txt"), &version)?;
+        let _=std::fs::write(work.join("success.txt"), &version);
+        let mut cleanup=crate::update_cleanup::finish(&work,&target_path,&data_path,&retired,&version);
+        cleanup["helperCleanupScheduled"]=json!(crate::update_cleanup::schedule_helper_cleanup());
+        let _=paths::write_json(&data_path.join("update-cleanup.json"),&cleanup);
         Ok(())
     })();
     match result {

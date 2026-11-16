@@ -74,6 +74,10 @@ type App struct {
 	showRuleDialog    bool
 	ruleEditID        string
 	fontPicker        *fontPickerState
+	EnableCityPrompt  bool
+	centerVisible     bool
+	cityPromptAsked   bool
+	cityPrompt        *cityPromptState
 
 	// Command palette (Ctrl+K).
 	paletteOpen     bool

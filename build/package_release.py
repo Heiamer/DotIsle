@@ -67,6 +67,10 @@ def main():
     shutil.copy2(root/'docs/UNIFIED-CONTROL-CENTER.md',runtime/'docs/UNIFIED-CONTROL-CENTER.md')
     shutil.copytree(root/'examples/plugins',runtime/'examples/plugins')
     shutil.copy2(out/(name+'-Notes.md'),runtime/'发布说明.md')
+    # Ownership and original hashes let a later successful update retire only
+    # obsolete distribution files; user-added or modified files remain intact.
+    inventory={p.relative_to(runtime).as_posix():sha(p) for p in sorted(runtime.rglob('*')) if p.is_file()}
+    (runtime/'Assets/RuntimeFiles.json').write_text(json.dumps({'schemaVersion':1,'product':'DotIsle','version':args.version,'files':inventory},ensure_ascii=False)+'\n',encoding='utf8')
     installer_stage=scratch/'installer-stage'
     shutil.copytree(runtime,installer_stage)
     payload=scratch/'InstallPayload.zip'

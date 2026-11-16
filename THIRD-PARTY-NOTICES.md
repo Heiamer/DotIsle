@@ -96,7 +96,16 @@ lazy_static 1.5.1，https://github.com/rust-lang-nursery/lazy-static.rs ，MIT O
 
 ## 天气数据
 
-天气组件使用 [Open-Meteo](https://open-meteo.com/) 天气与地理编码接口，在用户配置城市后请求数据。
+天气组件在用户配置城市后请求公开天气数据，并缓存结果；以下为实际数据提供方署名，服务条款与代码许可分别适用。
+
+- [Open-Meteo](https://open-meteo.com/)：天气与地理编码；天气数据 CC BY 4.0。免费接口用于非商业用途并受其调用限额约束。数据经过时段归一化，不表示分钟级雷达临近预报。
+- [MET Norway](https://api.met.no/)：Locationforecast，Norwegian Meteorological Institute；CC BY 4.0。使用项目 User-Agent、四位小数坐标及缓存。降水量按 next_1_hours 时段归一化。
+- [DWD / Bright Sky](https://brightsky.dev/)：Deutscher Wetterdienst (DWD) open data，经 Bright Sky 提供；DWD 数据 CC BY 4.0，Bright Sky 程序 MIT。选择距请求位置不超过 50 km 的站点，小时累积量归一化处理。
+- [wttr.in](https://github.com/chubin/wttr.in)：公共天气服务，程序 Apache-2.0，数据按该服务和上游数据条款使用；三小时预报保持近似标记。
+- [7Timer!](https://www.7timer.info/doc.php?lang=en)：全球三小时模型样本；官方允许非商业用途免费使用与再分发，开发者接入通知要求以官方说明为准。仅作为低优先级粗粒度后备。
+- [QQ 天气](https://tianqi.qq.com/) 与 [今日头条天气](https://www.toutiao.com/)：公开网页使用的天气接口。保留来源名称，未将其声明为开源数据或无限制商业 API；程序不使用第三方应用私钥或示例密钥。类别预报缺少的雨量和概率保持未知。
+
+部分适配器共享上游气象模型；不同接口数量不代表独立气象观测数量。
 
 ## 5.0 Go 原生控制中心
 

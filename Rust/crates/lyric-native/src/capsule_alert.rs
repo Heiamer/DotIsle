@@ -124,9 +124,11 @@ impl WeatherWatch{
             self.announced.insert(key.clone(),Instant::now());
             let name=match kind{"snow"=>"降雪","mixed"=>"雨夹雪",_=>"降雨"};
             let title=if ongoing{format!("{city} · {name}时段")}else{format!("{city} · 即将{name}")};
-            let begin=if ongoing{"正在降水".to_owned()}else{format!("预计 {} 开始",w["startLabel"].as_str().unwrap_or("稍后"))};
+            let begin=if ongoing{"预计处于降水时段".to_owned()}else{format!("预计 {} 开始",w["startLabel"].as_str().unwrap_or("稍后"))};
             let finish=w["endLabel"].as_str().map(|v|format!("预计 {v} 结束")).unwrap_or("结束时间暂不确定".into());
-            let mut a=Alert::new(key,if kind=="snow"{"Snow"}else{"Rain"},title,format!("{begin} · {finish}"));
+            let resolution=w["resolutionMinutes"].as_u64().or_else(||weather["forecastResolutionMinutes"].as_u64()).unwrap_or(60);
+            let precision=if resolution>=180{"约三小时预报"}else{"小时预报"};
+            let mut a=Alert::new(key,if kind=="snow"{"Snow"}else{"Rain"},title,format!("{begin} · {finish} · {precision}"));
             a.width=452.;a.height=72.;a.hold=8.;alerts.push(a);break
         }
         alerts

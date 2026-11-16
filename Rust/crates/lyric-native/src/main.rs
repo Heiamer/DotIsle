@@ -1986,7 +1986,7 @@ impl App {
     }
     fn weather_city(&self)->String {
         let city=self.settings["WeatherCity"].as_str().unwrap_or("").trim();
-        if !city.is_empty(){city.into()}else{self.desktop_widgets.items.iter()
+        if !city.is_empty(){city.into()}else{self.overview_widgets.items.iter().chain(self.desktop_widgets.items.iter())
             .find(|p|p.kind==dotisle_domain::desktop_widgets::Kind::Weather&&!p.config.city.trim().is_empty())
             .map(|p|p.config.city.trim().to_owned()).unwrap_or_default()}
     }

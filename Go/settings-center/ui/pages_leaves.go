@@ -684,7 +684,7 @@ func (a *App) windowBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	y = leafHeading(c, p, "天气与日常", x, y, w)
 	y = a.leafEditRow(c, p, x, y, w, "WeatherCity", "所在城市", "用于今日天气和降水提醒，也可沿用天气组件的城市。", "设置城市", "城市 · 如 上海 / Beijing")
 	y = a.leafToggles(c, p, x, y, w, []leafToggleRow{
-		{"降水与降雪提醒", "降水前约两小时提醒预计开始、结束时间（逐小时预报）。", "WeatherAlertsEnabled", true},
+		{"降水与降雪提醒", "提前约两小时提醒预计降水时段，精度随小时或三小时来源而定。", "WeatherAlertsEnabled", true},
 	})
 	y = leafAction(c, p, x, y, w, "用机时长", "本机记录；锁屏、休眠和连续 5 分钟无操作时不计时，从启用点屿时开始累计。", "查看概览", func() { a.navigate(PageHome) })
 	y = leafChoices(c, p, x, y, w, "控制中心打开页面", [][2]string{

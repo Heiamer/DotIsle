@@ -220,7 +220,11 @@ func (a *App) overviewWidget(c *ui.Context, r overviewRect) {
 			high, hok := stateFloat(data, "high")
 			low, lok := stateFloat(data, "low")
 			if hok && lok {
-				Label(c, fmt.Sprintf("最高 %.0f° · 最低 %.0f°", high, low), x, y+115, 11, s.OnSurfaceVariant, false, w)
+				label := fmt.Sprintf("最高 %.0f° · 最低 %.0f°", high, low)
+				if stateString(data, "", "dailyRangeKind") == "available-hourly-samples" {
+					label = fmt.Sprintf("预报范围 %.0f°–%.0f°", low, high)
+				}
+				Label(c, label, x, y+115, 11, s.OnSurfaceVariant, false, w)
 			}
 		} else if msg := stateString(data, "", "error"); msg != "" {
 			empty("天气暂不可用", msg, "修改城市")

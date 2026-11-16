@@ -105,8 +105,13 @@ def run(args):
             report['checks']['weather'] = weather
             for city, data in weather.items():
                 assert isinstance(data.get('temperature'), (int, float)), (city, data)
-                assert data['source'] in ('Open-Meteo', 'wttr.in') and isinstance(data['time'], int)
+                assert data['source'] in ('QQ 天气', '今日头条天气', 'Open-Meteo', 'MET Norway',
+                                          'DWD / Bright Sky', 'wttr.in', '7Timer'), (city, data)
+                assert isinstance(data['time'], int)
                 assert not data['stale'] and isinstance(data['precipitation'], list)
+                assert data['precipitationForecastAvailable'] is True, (city, data)
+                assert data['forecastThrough'] >= data['time'] + 3 * 3600, (city, data)
+                assert data['forecastResolutionMinutes'] in (60, 180), (city, data)
         widgets.call('data.drop', handle=handle)
 
         osd = modules['osd']

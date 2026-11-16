@@ -36,10 +36,11 @@ func tuneGC() {
 // trimWhenHidden returns heap pages to the OS once the window has stayed hidden,
 // instead of waiting for the runtime's five-minute scavenger. Showing the window
 // in the meantime cancels it, so a user reopening never pays for the trim.
-func trimWhenHidden(win *mygo.Window) {
-	win.OnShow(func() { centerHidden.Store(false) })
+func trimWhenHidden(win *mygo.Window, app *ui.App) {
+	win.OnShow(func() { centerHidden.Store(false); app.BeginCenterVisit() })
 	win.OnHide(func() {
 		centerHidden.Store(true)
+		app.EndCenterVisit()
 		go func() {
 			time.Sleep(3 * time.Second)
 			if centerHidden.Load() {
@@ -83,7 +84,10 @@ func main() {
 		p = prefs.Default()
 	}
 
-	app := &ui.App{Prefs: p, Data: data, SettingsTab: ui.TabRoot}
+	app := &ui.App{Prefs: p, Data: data, SettingsTab: ui.TabRoot, EnableCityPrompt: true}
+	if !*warm {
+		app.BeginCenterVisit()
+	}
 	app.LoadStartupSettings()
 	host := desktop.New(data)
 	defer host.Stop()
@@ -143,7 +147,7 @@ func main() {
 			}
 		default:
 		}
-		trimWhenHidden(win)
+		trimWhenHidden(win, app)
 		watchCenterShow(data, func() {
 			win.Update(func() {
 				if win.IsMinimized() {

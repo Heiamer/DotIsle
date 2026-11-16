@@ -73,6 +73,11 @@ func (a *App) pickModuleDLL(id string) {
 // dialogViews renders whichever modal the page layer requested. Call from the root
 // after the page content so dialogs paint on top.
 func (a *App) dialogViews(c *ui.Context, w, h float32) {
+	a.maybePromptCity()
+	if a.cityPrompt != nil {
+		a.cityPromptView(c)
+		return
+	}
 	if a.picker != nil {
 		a.colorPickerView(c, w, h)
 	}

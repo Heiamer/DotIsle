@@ -1,12 +1,12 @@
 //! Hourly precipitation windows. Missing samples never become a fabricated end.
 use serde_json::{json, Value};
+#[path="weather_pool.rs"] mod pool;
+#[path="weather_providers.rs"] mod providers;
 
 pub fn fetch(city: &str) -> Result<Value, String> {
-    fetch_sources(city, || fetch_open_meteo(city), || {
-        let data=crate::weather_http::get_json(&format!("https://wttr.in/{}?format=j1",dotisle_module_storage::http::encode(city.trim())))?;
-        parse_wttr(city,&data)
-    })
+    pool::fetch(city)
 }
+#[cfg(test)]
 fn fetch_sources(city:&str,primary:impl FnOnce()->Result<Value,String>,fallback:impl FnOnce()->Result<Value,String>)->Result<Value,String>{
     if city.trim().is_empty(){return Err("请先设置城市".into())}
     match primary(){Ok(data)=>Ok(data),Err(first)=>match fallback(){
@@ -14,21 +14,6 @@ fn fetch_sources(city:&str,primary:impl FnOnce()->Result<Value,String>,fallback:
         Err(_)=>Err("天气服务暂不可用，两个来源均未返回有效数据，请稍后重试".into())
     }}
 }
-fn fetch_open_meteo(city: &str) -> Result<Value, String> {
-    let get = |url: &str| crate::weather_http::get_json(url)
-        .map_err(|_| "天气服务暂不可用，请稍后重试".to_owned());
-    let location = get(&format!(
-        "https://geocoding-api.open-meteo.com/v1/search?name={}&count=1&language=zh&format=json",
-        dotisle_module_storage::http::encode(city.trim())
-    ))?;
-    let place = location["results"].as_array().and_then(|v| v.first())
-        .ok_or("未找到城市，请补充省份或国家")?;
-    let lat = place["latitude"].as_f64().ok_or("城市坐标缺失")?;
-    let lon = place["longitude"].as_f64().ok_or("城市坐标缺失")?;
-    let response = get(&format!("https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code,is_day&hourly=precipitation,rain,showers,snowfall,precipitation_probability&daily=temperature_2m_max,temperature_2m_min&forecast_days=2&timezone=auto&timeformat=unixtime"))?;
-    parse(place, &response)
-}
-
 fn number(v: &Value) -> Option<f64> { v.as_f64().filter(|v| v.is_finite()) }
 fn wttr_number(v:&Value)->Option<f64>{v.as_f64().or_else(||v.as_str()?.parse().ok()).filter(|v|v.is_finite())}
 fn parse_wttr(city:&str,data:&Value)->Result<Value,String>{
@@ -42,13 +27,15 @@ fn parse_wttr(city:&str,data:&Value)->Result<Value,String>{
         230|329|332|335|338|371=>75,200|386|389|392|395=>95,_=>255,
     };
     let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-    // This endpoint does not always include a timezone or observation date.
-    // Label the timestamp as retrieval time and do not invent hourly rain windows.
+    let (rain,through)=providers::wttr_forecast(data,now as i64).unwrap_or((json!([]),now as i64));
+    // Three-hour samples remain explicitly approximate. Missing timezone or
+    // hourly data keeps temperature usable while the pool tries another source.
     Ok(json!({"city":city.trim(),"region":data["nearest_area"][0]["region"][0]["value"],
         "temperature":temperature,"code":code,"time":now,"timestampKind":"retrieved",
         "observationTimeLabel":c["observation_time"],
         "high":wttr_number(&data["weather"][0]["maxtempC"]),"low":wttr_number(&data["weather"][0]["mintempC"]),
-        "precipitation":[],"precipitationForecastAvailable":false,"source":"wttr.in","stale":false}))
+        "precipitation":rain,"precipitationForecastAvailable":through>=now as i64+10800,
+        "forecastThrough":through,"forecastResolutionMinutes":180,"source":"wttr.in","stale":false}))
 }
 fn sample(h: &Value, i: usize) -> Option<&'static str> {
     let total = number(&h["precipitation"][i])?;
@@ -62,7 +49,8 @@ fn label(at: i64, now: i64, offset: i64) -> String {
     let local = at + offset;
     let day = local.div_euclid(86400) - (now + offset).div_euclid(86400);
     let clock = local.rem_euclid(86400);
-    format!("{}{:02}:{:02}", match day { 0 => "今天", 1 => "明天", _ => "后天" }, clock / 3600, clock / 60 % 60)
+    let date=match day {-1=>"昨天".into(),0=>"今天".into(),1=>"明天".into(),2=>"后天".into(),d if d<0=>format!("{}天前",-d),d=>format!("{d}天后")};
+    format!("{date}{:02}:{:02}", clock / 3600, clock / 60 % 60)
 }
 pub fn parse(place: &Value, response: &Value) -> Result<Value, String> {
     let c = &response["current"];
@@ -71,28 +59,18 @@ pub fn parse(place: &Value, response: &Value) -> Result<Value, String> {
     let offset = response["utc_offset_seconds"].as_i64().unwrap_or(0);
     let h = &response["hourly"];
     let times = h["time"].as_array().ok_or("降水预报暂不可用")?;
-    let mut windows = Vec::new();
-    let mut i = 0;
-    while i < times.len() {
-        let Some(start) = times[i].as_i64() else { i += 1; continue };
-        if start + 3600 <= now || start > now + 86400 { i += 1; continue }
-        let Some(kind) = sample(h, i).filter(|k| *k != "dry") else { i += 1; continue };
-        let mut j = i + 1;
-        while j < times.len() && times[j].as_i64() == Some(start + (j-i) as i64 * 3600)
-            && sample(h, j) == Some(kind) { j += 1; }
-        // A changed wet type or a dry sample is evidence of an end; a gap is not.
-        let end = if times.get(j).and_then(Value::as_i64) == Some(start + (j-i) as i64 * 3600)
-            && sample(h, j).is_some() { times[j].as_i64() } else { None };
-        windows.push(json!({"kind":kind,"startsAt":start,"endsAt":end,
-            "startLabel":label(start,now,offset),"endLabel":end.map(|v|label(v,now,offset)),
-            "ongoing":start<=now,"probability":h["precipitation_probability"][i],
-            "resolutionMinutes":60,"approximate":true}));
-        i = j;
-    }
+    // Open-Meteo's hourly precipitation is the preceding hour's accumulation;
+    // MET next_1_hours is the following hour. Normalize these before merging.
+    let slots=times.iter().enumerate().filter_map(|(i,time)|Some(providers::Slot{
+        start:time.as_i64()?-3600,minutes:60,kind:sample(h,i),
+        probability:number(&h["precipitation_probability"][i]).filter(|v|(0. ..=100.).contains(v)),
+    })).collect::<Vec<_>>();
+    let (windows,through)=providers::windows(&slots,now,offset,false);
     Ok(json!({"city":place["name"],"region":place["admin1"],"temperature":temperature,
         "code":c["weather_code"],"day":c["is_day"],"time":now,"utcOffsetSeconds":offset,
         "high":response["daily"]["temperature_2m_max"][0],"low":response["daily"]["temperature_2m_min"][0],
-        "precipitation":windows,"precipitationForecastAvailable":true,"source":"Open-Meteo","stale":false}))
+        "precipitation":windows,"precipitationForecastAvailable":through>=now+10800,
+        "forecastThrough":through,"forecastResolutionMinutes":60,"source":"Open-Meteo","stale":false}))
 }
 
 #[cfg(test)] mod tests {
@@ -105,7 +83,7 @@ pub fn parse(place: &Value, response: &Value) -> Result<Value, String> {
             let raw=crate::weather_http::get_json(&format!("https://wttr.in/{city}?format=j1")).unwrap();
             let value=parse_wttr(city,&raw).unwrap();
             assert_eq!(value["source"],"wttr.in");assert!(value["temperature"].as_f64().is_some());
-            assert_eq!(value["precipitationForecastAvailable"],false);
+            assert_eq!(value["forecastResolutionMinutes"],180);
             results.insert(city.into(),value);
         }
         if let Some(path)=std::env::var_os("DOTISLE_WEATHER_REPORT") {
@@ -129,10 +107,10 @@ pub fn parse(place: &Value, response: &Value) -> Result<Value, String> {
     #[test] fn separates_rain_and_snow_and_reports_both_ends() {
         let v=parse(&json!({"name":"测试城市"}),&fixture()).unwrap();
         assert_eq!(v["precipitation"][0]["kind"],"rain");
-        assert_eq!(v["precipitation"][0]["startsAt"],3600);
-        assert_eq!(v["precipitation"][0]["endsAt"],10800);
+        assert_eq!(v["precipitation"][0]["startsAt"],0);
+        assert_eq!(v["precipitation"][0]["endsAt"],7200);
         assert_eq!(v["precipitation"][1]["kind"],"snow");
-        assert_eq!(v["precipitation"][1]["endsAt"],14400);
+        assert_eq!(v["precipitation"][1]["endsAt"],10800);
     }
     #[test] fn missing_data_is_not_an_end_or_dry_weather() {
         let mut f=fixture(); f["hourly"]["precipitation"][2]=Value::Null;
@@ -141,6 +119,8 @@ pub fn parse(place: &Value, response: &Value) -> Result<Value, String> {
     }
     #[test] fn local_labels_cross_midnight_and_temperature_is_required() {
         assert_eq!(label(7200,0,23*3600),"明天01:00");
+        assert_eq!(label(23*3600,24*3600,0),"昨天23:00");
+        assert_eq!(label(4*86400,0,0),"4天后00:00");
         let mut f=fixture(); f["current"]["temperature_2m"]=Value::Null;
         assert!(parse(&json!({}),&f).is_err());
     }

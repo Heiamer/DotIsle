@@ -15,6 +15,7 @@ pub mod setup;
 pub mod ui;
 pub mod vello_overlay;
 pub mod updater;
+mod update_cleanup;
 pub mod module_update;
 pub mod win;
 

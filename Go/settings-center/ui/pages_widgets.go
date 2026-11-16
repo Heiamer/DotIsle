@@ -533,16 +533,15 @@ func (a *App) widgetExtrasBody(c *ui.Context, ws *widgetScheme, kind, size strin
 		wLabel(c, ws, label, x, bottom-38, 12, fg, false, w)
 		if large {
 			high, hok := stateFloat(data, "high")
-			if !hok {
-				high = temperature
-			}
 			low, lok := stateFloat(data, "low")
-			if !lok {
-				low = temperature
+			if hok && lok {
+				prefix := "最高 "
+				if stateString(data, "", "dailyRangeKind") == "available-hourly-samples" {
+					prefix = "预报范围 "
+				}
+				wLabel(c, ws, prefix+itoa(int(math.Round(high)))+"° / "+itoa(int(math.Round(low)))+"°", x, baseline+112, 14, fg, false, w)
 			}
-			wLabel(c, ws, "最高 "+itoa(int(math.Round(high)))+"° / 最低 "+
-				itoa(int(math.Round(low)))+"°", x, baseline+112, 14, fg, false, w)
-			wLabel(c, ws, "Open-Meteo", x, bottom-62, 10, accent, false, w)
+			wLabel(c, ws, stateString(data, "天气来源待更新", "source"), x, bottom-62, 10, accent, false, w)
 		}
 		if !small {
 			name := "light_mode"
