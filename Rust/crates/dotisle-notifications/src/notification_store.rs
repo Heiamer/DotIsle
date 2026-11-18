@@ -41,7 +41,10 @@ impl Store{
             latest=latest.max(key.2);
             if !self.seen.insert(key)||policy.paused{continue}
             if !policy.permits(&id,&app_name(&id)){continue}
-            if notices.len()<8{if let Some(app)=crate::message_hints::identify(&id,&app_name(&id)).filter(|a|!a.content_only()){let mut notice=app.notice();notice.icon=crate::app_icon::shell_icon(&id);notices.push(notice);continue}if let Some(mut notice)=parse(&payload,&id){if !self.icons.contains_key(&id){if self.icons.len()>=64{self.icons.clear();}self.icons.insert(id.clone(),crate::app_icon::shell_icon(&id));}notice.icon=self.icons.get(&id).cloned().flatten();notices.push(notice);}}
+            if notices.len()<8{if let Some(app)=crate::message_hints::identify(&id,&app_name(&id)).filter(|a|!a.content_only()){let mut notice=app.notice();notice.icon=crate::app_icon::shell_icon(&id);notices.push(notice);continue}if let Some(mut notice)=parse(&payload,&id){
+                if notice.icon.is_none(){if !self.icons.contains_key(&id){if self.icons.len()>=64{self.icons.clear();}let icon=crate::app_icon::shell_icon(&id).or_else(||(crate::message_hints::identify(&id,&notice.app_name)==Some(crate::message_hints::App::WeChat)).then(crate::app_icon::wechat_icon));self.icons.insert(id.clone(),icon);}notice.icon=self.icons.get(&id).cloned().flatten();}
+                notices.push(notice);
+            }}
         }
         self.since=latest;self.seen.retain(|k|k.2>=latest);Ok(notices)
     }}
@@ -95,7 +98,8 @@ fn parse(bytes:&[u8],id:&str)->Option<Notice>{
     let text=binding.descendants().filter(|n|n.has_tag_name("text")).filter_map(|n|n.text()).map(str::trim).filter(|s|!s.is_empty()).take(8).map(|s|s.chars().take(1024).collect::<String>()).collect::<Vec<_>>();
     let title=text.first()?.clone();let body=text.into_iter().skip(1).collect::<Vec<_>>().join("\n");let name=app_name(id);
     if crate::message_hints::identify(id,&name).is_some_and(|a|a.content_only())&&(body.trim().is_empty()||["有新消息","你有新消息","您有新消息","收到新消息","你收到一条新消息","您收到一条新消息","你收到了一条新消息","您收到了一条新消息"].contains(&body.trim().trim_end_matches(['。','！','!']))){return None}
-    Some(Notice{app_id:id.into(),app_name:name,title,body,icon:None})
+    let icon = crate::toast_avatar::from_binding(id, binding);
+    Some(Notice{app_id:id.into(),app_name:name,title,body,icon})
 }
 #[cfg(test)]mod tests{use super::*;
     #[test]fn messaging_metadata_works_even_when_payload_column_does_not_exist(){unsafe{

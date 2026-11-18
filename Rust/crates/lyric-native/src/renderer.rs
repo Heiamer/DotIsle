@@ -36,9 +36,6 @@ pub fn color(argb: u32) -> Color {
 
 pub struct PreparedCover {
     image: ImageData,
-    bgra: Vec<u8>,
-    width: u32,
-    height: u32,
     seed: Option<u32>,
 }
 impl PreparedCover {
@@ -46,8 +43,8 @@ impl PreparedCover {
         image::save_buffer(
             path,
             self.image.data.data(),
-            self.width,
-            self.height,
+            self.image.width,
+            self.image.height,
             image::ColorType::Rgba8,
         )
         .map_err(|e| e.to_string())
@@ -74,7 +71,6 @@ pub struct Renderer {
     dynamic_resolved: Option<dotisle_domain::dynamic_color::Resolved>,
     color_motion: dotisle_domain::dynamic_color::RoleMotion,
     m3_cache: Option<(u32, bool, dotisle_domain::monet::Scheme)>,
-    preview_pixels: Option<(Vec<u8>, u32, u32)>,
     cover_changed: Instant,
     flip_from: f64,
     pub body_line_spacing: f64,
@@ -85,7 +81,7 @@ pub struct Renderer {
 }
 impl Renderer {
     pub unsafe fn new(hwnd: HWND, width: u32, height: u32, dpi: f32, font: &Path) -> Result<Self> {
-        let gpu = crate::vello_surface::Surface::new(hwnd, width, height).map_err(err)?;
+        let gpu = crate::vello_surface::Surface::new_island(hwnd, width, height).map_err(err)?;
         let mut text = Text::empty();
         text.register(font).map_err(err)?;
         // Google Sans Flex covers Latin and digits; every weight is bundled.
@@ -117,7 +113,6 @@ impl Renderer {
             paint_palette: Default::default(),
             cover_seed: None,
             dynamic_resolved: None,
-            preview_pixels: None,
             cover_changed: Instant::now() - Duration::from_secs(1),
             flip_from: 0.,
             body_line_spacing: 1.448,
@@ -282,54 +277,43 @@ impl Renderer {
     pub fn compact_height(&self, font: f64, double: bool, scale: f64) -> f64 {
         crate::compact::capsule_height(font, self.body_line_spacing, scale, double)
     }
-    pub(crate) fn decode(
+    fn decode(
         bytes: &[u8],
-    ) -> std::result::Result<(ImageData, Vec<u8>, u32, u32), Box<dyn std::error::Error>> {
+        max_side: u32,
+    ) -> std::result::Result<ImageData, Box<dyn std::error::Error>> {
         let mut reader =
             image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
         reader.limits(image::Limits::default());
-        let image = reader.decode()?.thumbnail(512, 512).to_rgba8();
+        let image = reader.decode()?;
+        let image = if image.width().max(image.height()) > max_side {
+            image.thumbnail(max_side, max_side)
+        } else {
+            image
+        }.into_rgba8();
         let (w, h) = image.dimensions();
-        let rgba = image.into_raw();
-        let mut bgra = rgba.clone();
-        for p in bgra.chunks_exact_mut(4) {
-            let a = p[3] as u32;
-            let red = p[0];
-            p[0] = (p[2] as u32 * a / 255) as u8;
-            p[1] = (p[1] as u32 * a / 255) as u8;
-            p[2] = (red as u32 * a / 255) as u8;
-        }
-        Ok((
-            ImageData {
-                data: Blob::new(Arc::new(rgba)),
-                format: ImageFormat::Rgba8,
-                alpha_type: ImageAlphaType::Alpha,
-                width: w,
-                height: h,
-            },
-            bgra,
-            w,
-            h,
-        ))
+        Ok(ImageData {
+            data: Blob::new(Arc::new(image.into_raw())),
+            format: ImageFormat::Rgba8,
+            alpha_type: ImageAlphaType::Alpha,
+            width: w,
+            height: h,
+        })
     }
     pub fn prepare_cover(
         bytes: Option<&[u8]>,
     ) -> std::result::Result<Option<PreparedCover>, String> {
         let decoded = bytes
-            .map(Self::decode)
+            .map(|bytes| Self::decode(bytes, 512))
             .transpose()
             .map_err(|e| e.to_string())?;
-        Ok(decoded.map(|(image, bgra, width, height)| {
-            let small = image::RgbaImage::from_raw(width, height, image.data.data().to_vec())
+        Ok(decoded.map(|image| {
+            let small = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(image.width, image.height, image.data.data())
                 .map(|rgba| image::imageops::thumbnail(&rgba, 64, 64));
             let seed = small
                 .as_ref()
                 .and_then(|p| dotisle_domain::monet::seed(p.as_raw()));
             PreparedCover {
                 image,
-                bgra,
-                width,
-                height,
                 seed,
             }
         }))
@@ -346,7 +330,6 @@ impl Renderer {
         }
         self.cover = None;
         self.blurred_cover = None;
-        self.preview_pixels = None;
         self.cover_palette = Default::default();
         self.cover_seed = None;
         if let Some(p) = prepared {
@@ -359,7 +342,6 @@ impl Renderer {
                 };
             }
             self.paint_palette = self.cover_palette;
-            self.preview_pixels = Some((p.bgra, p.width, p.height));
             self.cover = Some(p.image);
         }
         self.cover_changed = Instant::now();
@@ -368,7 +350,6 @@ impl Renderer {
         self.cover = None;
         self.previous_cover = None;
         self.blurred_cover = None;
-        self.preview_pixels = None;
         self.cover_seed = None;
         self.cover_palette = Default::default();
         self.paint_palette = Default::default();
@@ -382,11 +363,14 @@ impl Renderer {
         self.apply_cover(prepared);
         Ok(())
     }
+    pub(crate) fn decode_notification_icon(bytes: &[u8]) -> std::result::Result<ImageData, Box<dyn std::error::Error>> {
+        Self::decode(bytes, 128)
+    }
     pub unsafe fn set_notification_icon(
         &mut self,
         bytes: Option<&[u8]>,
     ) -> std::result::Result<(), Box<dyn std::error::Error>> {
-        self.notification_icon = bytes.map(Self::decode).transpose()?.map(|d| d.0);
+        self.notification_icon = bytes.map(Self::decode_notification_icon).transpose()?;
         Ok(())
     }
     pub fn material_theme(&self, material: Material, cover_background: bool) -> MaterialTheme {
@@ -396,7 +380,7 @@ impl Renderer {
             material,
             cover_background,
             palette: self.paint_palette,
-            pixels: self.preview_pixels.clone(),
+            cover: if cover_background { self.cover.clone() } else { None },
         }
     }
     pub unsafe fn set_material_theme(&mut self, theme: &MaterialTheme) -> Result<()> {
@@ -417,35 +401,7 @@ impl Renderer {
         self.cover_palette = theme.palette;
         self.paint_palette = theme.palette;
         self.blurred_cover = None;
-        self.cover = theme.pixels.as_ref().map(|(p, w, h)| {
-            let mut rgba = p.clone();
-            for c in rgba.chunks_exact_mut(4) {
-                let a = c[3] as u32;
-                let blue = c[0];
-                c[0] = if a > 0 {
-                    (c[2] as u32 * 255 / a).min(255) as u8
-                } else {
-                    0
-                };
-                c[1] = if a > 0 {
-                    (c[1] as u32 * 255 / a).min(255) as u8
-                } else {
-                    0
-                };
-                c[2] = if a > 0 {
-                    (blue as u32 * 255 / a).min(255) as u8
-                } else {
-                    0
-                };
-            }
-            ImageData {
-                data: Blob::new(Arc::new(rgba)),
-                format: ImageFormat::Rgba8,
-                alpha_type: ImageAlphaType::Alpha,
-                width: *w,
-                height: *h,
-            }
-        });
+        self.cover = theme.cover.clone();
         Ok(())
     }
     pub fn glass_tick(&mut self) -> bool {
@@ -779,10 +735,34 @@ impl Renderer {
             );
         }
     }
+    fn resident_compact(&mut self, s: &Scene<'_>) {
+        let c = s.layout.capsule;
+        let v = s.resident;
+        let tones = self.m3(s);
+        let ink = if s.mini && s.mini_glass { s.mini_ink } else { 0xff000000 | tones.on_surface };
+        let font = if s.mini { crate::compact::mini_font_size(s.font_size) } else { 14. };
+        let gutter = if s.mini { 10. } else { 16. };
+        if v.page == crate::resident::Page::Time && !s.mini {
+            let size = 18.;
+            self.icon(Icon::Island, Rect::new(c.x + gutter, c.y + (c.h - size) / 2., size, size), 0xff000000 | tones.primary);
+        }
+        if matches!(v.page, crate::resident::Page::Device(_)) {
+            let right = if s.mini { 36. } else { 52. };
+            let name = self.elided_line(&v.label, c.w - gutter * 2. - right, font as f32, 500);
+            self.text_at(&name, Rect::new(c.x + gutter, c.y, c.w - gutter * 2. - right, c.h), font, 500, ink, 0.);
+            self.text_at(&v.battery, Rect::new(c.x + c.w - gutter - right, c.y, right, c.h), font, 600, ink, 1.);
+        } else {
+            self.text_at(&v.label, Rect::new(c.x + gutter, c.y, c.w - 2. * gutter, c.h), font, 600, ink, 0.5);
+        }
+    }
     fn compact_view(&mut self, s: &Scene<'_>) {
         let mut compact = *s;
         compact.expressive_dark = true;
         let s = &compact;
+        if s.panel.is_some_and(|p| p.kind == crate::resident::KIND) {
+            self.resident_compact(s);
+            return;
+        }
         if let Some(panel) = s.panel.filter(|p| p.kind == 1) {
             if let Some(timer) = panel.timer.as_ref().filter(|timer| !timer.indefinite) {
                 let tones = self.m3(s);
@@ -1464,7 +1444,44 @@ impl Renderer {
     fn tool_button(&mut self, id: i32, r: Rect, label: &str, s: &Scene<'_>) {
         self.m3_button(id, r, label, s, id == 30)
     }
+    fn resident_expanded(&mut self, s: &Scene<'_>) {
+        let v = s.resident;
+        let w = s.layout.card.w;
+        let tones = self.m3(s);
+        let ink = 0xff000000 | tones.on_surface;
+        let muted = 0xff000000 | tones.on_surface_variant;
+        self.text_at(&v.clock, Rect::new(20., 13., w - 88., 34.), 24., 600, ink, 0.);
+        self.activity_close_button(s, crate::resident::COLLAPSE, crate::layout::activity_close(w));
+        for (i, (label, value)) in [("CPU", &v.cpu), ("内存", &v.memory)].into_iter().enumerate() {
+            let width = (w - 50.) / 2.;
+            let x = 20. + i as f64 * (width + 10.);
+            self.fill(Rect::new(x, 53., width, 35.), 12., 0x16777777);
+            self.text_at(label, Rect::new(x + 12., 53., width - 24., 35.), 12., 500, muted, 0.);
+            self.text_at(value, Rect::new(x + 12., 53., width - 24., 35.), 13., 600, ink, 1.);
+        }
+        for (id, rect, label) in crate::resident::buttons(w) {
+            self.m3_button(id, rect, label, s, id == crate::resident::FOCUS);
+        }
+        if !v.devices.is_empty() {
+            self.fill(Rect::new(20., 146., w - 40., 1.), 0.5, 0x22777777);
+            self.text_at("已连接设备", Rect::new(20., 152., w - 40., 23.), 11., 500, muted, 0.);
+            for (i, row) in v.devices.iter().enumerate() {
+                let y = 174. + i as f64 * 23.;
+                let name = self.elided_line(&row.name, w - 100., 12., 500);
+                self.text_at(&name, Rect::new(20., y, w - 100., 23.), 12., 500, ink, 0.);
+                self.text_at(&row.battery, Rect::new(w - 70., y, 50., 23.), 12., 500, muted, 1.);
+            }
+            if v.more_devices > 0 {
+                self.text_at(&format!("另有 {} 台已连接设备", v.more_devices),
+                    Rect::new(20., 175. + v.devices.len() as f64 * 23., w - 40., 22.), 11., 400, muted, 0.);
+            }
+        }
+    }
     fn tool_expanded(&mut self, s: &Scene<'_>, p: &crate::activities::Panel) {
+        if p.kind == crate::resident::KIND {
+            self.resident_expanded(s);
+            return;
+        }
         if p.kind==4 {
             let c=self.m3(s);let w=s.layout.card.w;let ink=0xff000000|c.on_surface;let muted=0xff000000|c.on_surface_variant;let accent=0xff000000|c.primary;
             self.activity_close_button(s,crate::layout::ACTIVITY_CLOSE,crate::layout::activity_close(w));
@@ -1642,6 +1659,22 @@ impl Renderer {
                 }
             },
             "Code"=>self.copy_glyph(glyph,blue),
+            "WaterReminder"=>{
+                let x=glyph.x;let y=glyph.y;
+                for (a,b) in [( (12.,2.),(5.,12.)),((5.,12.),(4.,17.)),((4.,17.),(7.,21.)),
+                    ((7.,21.),(12.,23.)),((12.,23.),(17.,21.)),((17.,21.),(20.,17.)),
+                    ((20.,17.),(19.,12.)),((19.,12.),(12.,2.))]{
+                    self.line((x+a.0,y+a.1),(x+b.0,y+b.1),blue,1.7);
+                }
+            },
+            "StandReminder"=>{
+                let x=glyph.x;let y=glyph.y;
+                self.fill(Rect::new(x+10.,y+1.,5.,5.),2.5,blue);
+                for (a,b) in [((12.5,9.),(12.5,16.)),((12.5,9.),(5.,12.)),((12.5,9.),(20.,12.)),
+                    ((12.5,16.),(7.,23.)),((12.5,16.),(18.,23.))]{
+                    self.line((x+a.0,y+a.1),(x+b.0,y+b.1),blue,1.7);
+                }
+            },
             kind=>self.device_glyph(glyph,kind,blue),
         }}
         let x=r.x+56.;let w=(r.w-76.).max(0.);
@@ -1822,9 +1855,36 @@ impl Renderer {
         );
     }
     pub unsafe fn render(&mut self, s: &Scene<'_>, present: bool) -> Result<()> {
+        self.paint_scene(s, present);
+        if present {
+            crate::frame_stat::tick();
+        }
+        self.gpu.draw(&self.canvas, self.dpi as f64 / 96., present).map_err(err)
+    }
+    pub fn capture_layout_frame(&mut self, scene: &Scene<'_>) -> Result<Vec<u8>> {
+        let (active, live, allowed) = (self.glass_active, self.glass_live, self.glass_allowed);
+        self.paint_scene_inner(scene, false, false);
+        (self.glass_active, self.glass_live, self.glass_allowed) = (active, live, allowed);
+        let mut scale = scene.layout_scale.min(1.5);
+        let mut png = self.gpu.capture_frame(&self.canvas, scale,
+            (scene.layout.host.w * scale).ceil() as u32,
+            (scene.layout.host.h * scale).ceil() as u32).map_err(err)?;
+        if png.len() > 750_000 {
+            // Stay within the settings pipe's 1 MiB JSON limit even with noisy artwork.
+            scale = scale.min((170_000. / (scene.layout.host.w * scene.layout.host.h)).sqrt());
+            png = self.gpu.capture_frame(&self.canvas, scale,
+                (scene.layout.host.w * scale).ceil() as u32,
+                (scene.layout.host.h * scale).ceil() as u32).map_err(err)?;
+        }
+        Ok(png)
+    }
+    fn paint_scene(&mut self, s: &Scene<'_>, present: bool) {
+        self.paint_scene_inner(s, present, true);
+    }
+    fn paint_scene_inner(&mut self, s: &Scene<'_>, present: bool, include_desktop: bool) {
         self.glass_active = false;
         self.glass_live = present && !s.resizing && !s.drag_active;
-        self.glass_allowed = s.glass_refraction && !s.dynamic_high_contrast && s.opacity > 0.;
+        self.glass_allowed = include_desktop && s.glass_refraction && !s.dynamic_high_contrast && s.opacity > 0.;
         self.text.set_family(s.font_family);
         self.prepare_dynamic(s);
         let (mut themed, compact) = cover_scenes(s, Some(self.paint_palette));
@@ -1834,9 +1894,14 @@ impl Renderer {
             }
         }
         let s = &themed;
+        if s.cover_age_ms >= 280. && self.cover_changed.elapsed() >= Duration::from_millis(280) {
+            self.previous_cover = None;
+        }
         self.canvas = VScene::new();
-        if let Some(background) = self.glass.background() {
-            self.image(&background, s.layout.host, 0., 1.);
+        if include_desktop {
+            if let Some(background) = self.glass.background() {
+                self.image(&background, s.layout.host, 0., 1.);
+            }
         }
         let (base, base_radius) =
             s.layout
@@ -2061,15 +2126,6 @@ impl Renderer {
             self.canvas.pop_layer();
         }
         self.canvas.pop_layer();
-        if present {
-            crate::frame_stat::tick();
-        }
-        let result = self
-            .gpu
-            .draw(&self.canvas, self.dpi as f64 / 96., present)
-            .map_err(err);
-
-        result
     }
     pub unsafe fn render_bottom_osd(
         &mut self,
@@ -2223,7 +2279,7 @@ pub struct MaterialTheme {
     pub material: Material,
     pub cover_background: bool,
     pub palette: crate::cover_color::CoverPalette,
-    pub pixels: Option<(Vec<u8>, u32, u32)>,
+    pub cover: Option<ImageData>,
 }
 impl MaterialTheme {
     pub fn new(material: Material, cover_background: bool) -> Self {
@@ -2233,7 +2289,7 @@ impl MaterialTheme {
             material,
             cover_background,
             palette: Default::default(),
-            pixels: None,
+            cover: None,
         }
     }
 }
@@ -2275,6 +2331,7 @@ pub struct Scene<'a> {
     pub switch_direction: f64,
     pub panel: Option<&'a crate::activities::Panel>,
     pub previous_panel: Option<&'a crate::activities::Panel>,
+    pub resident: &'a crate::resident::View,
     pub component_count: usize,
     pub auxiliary_update_progress: f64,
     pub auxiliary_update_completed: bool,

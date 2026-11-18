@@ -42,7 +42,7 @@ pub struct Layout {
  pub controls:Vec<i32>,pub transport_theme:String,pub bar_style:String,pub thumb_style:String,pub thumb_enabled:bool,pub thumb_spin:bool,
 }
 impl Default for Layout {
- fn default()->Self{Self{elements:vec![],version:1,enabled:false,modules:Module::ALL.map(|kind|Slot{kind,visible:true}).to_vec(),alignment:0,gap:8.,cover_size:56.,show_cover:true,controls:vec![2,9,16,3,4,5,6,7],transport_theme:"Reef".into(),bar_style:"Wavy".into(),thumb_style:"Pill".into(),thumb_enabled:false,thumb_spin:false}}
+ fn default()->Self{Self{elements:vec![],version:1,enabled:false,modules:Module::ALL.map(|kind|Slot{kind,visible:true}).to_vec(),alignment:0,gap:8.,cover_size:56.,show_cover:true,controls:vec![2,9,16,3,4,5,6,7],transport_theme:"Reef".into(),bar_style:"Normal".into(),thumb_style:"Pill".into(),thumb_enabled:false,thumb_spin:false}}
 }
 impl Layout {
  pub fn from_value(value:&serde_json::Value)->Result<Self,String>{let layout:Self=serde_json::from_value(value.clone()).map_err(|_|"布局格式无效，请恢复推荐布局".to_string())?;layout.validate()?;Ok(layout)}

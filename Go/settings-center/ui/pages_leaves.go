@@ -628,7 +628,7 @@ func (a *App) notificationPrefsBody(c *ui.Context, p *Palette, x, y, w float32) 
 func leafUpdateAction(phase string) (string, string) {
 	switch phase {
 	case "available":
-		return "下载更新", "updateDownload"
+		return "查看更新", "updateReview"
 	case "ready":
 		return "重启并安装", "updateApply"
 	case "downloading", "switching", "verifying":

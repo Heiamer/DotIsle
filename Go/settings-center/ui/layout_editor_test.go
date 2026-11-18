@@ -147,3 +147,30 @@ func TestMusicLayoutDragHistoryIsBoundedAndBlockedWhileSaving(t *testing.T) {
 		t.Fatal("draft changed while applying")
 	}
 }
+
+func TestLayoutStyleEditEnablesCustomLayoutButExplicitDisableIsKept(t *testing.T) {
+	a := editorFixture(t)
+	ui.NewTester(a.View, 1200, 800).Frame()
+	e := a.musicEditor
+	e.change(func(l *musicLayout) { l.BarStyle = "Thin" })
+	if !e.Draft.Enabled || e.Draft.BarStyle != "Thin" {
+		t.Fatal("style change would not be applied by the island")
+	}
+	e.edit(func(l *musicLayout) { l.Enabled = false }, false)
+	if e.Draft.Enabled {
+		t.Fatal("cannot explicitly turn custom layout off")
+	}
+	e.restoreSaved()
+	if layoutJSON(e.Draft) != e.Baseline {
+		t.Fatal("restore saved re-enabled the draft")
+	}
+}
+
+func TestLayoutInspectorUsesNativeGeometryInDesignCoordinates(t *testing.T) {
+	e := musicEditor{Preview: &layoutPreviewFrame{Width: 500,
+		Elements: []musicElement{{ID: 1, X: 50, Y: 40, W: 250, H: 24}}}}
+	got := e.editorElements()[0]
+	if got.X != 40 || got.Y != 40 || got.W != 200 || e.Preview.Elements[0].X != 50 {
+		t.Fatalf("wrong translation from native to design coordinates: %+v", got)
+	}
+}

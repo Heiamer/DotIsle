@@ -64,8 +64,7 @@ var uiFontFaces = []struct {
 
 var fontsRegistered bool
 
-// RegisterFonts uses the same complete font files as the native island. The
-// Windows loader maps their input instead of allocating a transient Go copy.
+// RegisterFonts uses the same complete font files as the native island.
 func RegisterFonts() {
 	if fontsRegistered {
 		return
@@ -80,6 +79,8 @@ func RegisterFonts() {
 		}
 		if err != nil {
 			log.Printf("register %s: %v", f.name, err)
+		} else if len(f.data) == 0 && f.name == "HarmonyOS_Sans_SC_Regular.ttf" {
+			previewFontsLoaded[f.face] = true
 		}
 	}
 }

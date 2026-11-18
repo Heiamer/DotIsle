@@ -21,7 +21,7 @@ impl Alert{
     pub fn message(id:&str,name:&str,icon:Option<&[u8]>)->Self{
         let epoch=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
         let mut a=Self::new(format!("message:{id}:{epoch}"),&format!("Message:{id}"),format!("{name}有新消息"),String::new());
-        a.image=icon.and_then(|raw|crate::renderer::Renderer::decode(raw).ok()).map(|v|v.0);
+        a.image=icon.and_then(|raw|crate::renderer::Renderer::decode_notification_icon(raw).ok());
         a.width=320.;a.hold=5.;a.expires=Instant::now()+Duration::from_secs(15);a
     }
     pub fn device(id:&str,icon:&str,name:&str,connected:bool,level:Option<u8>,low:bool)->Self{
@@ -37,7 +37,7 @@ impl Hub{
     pub fn visible(&self)->bool{self.banner.visible()}
     pub fn pending(&self)->bool{!self.queue.is_empty()}
     pub fn enqueue(&mut self,a:Alert){
-        self.seen.retain(|key,at|at.elapsed()<Duration::from_secs(if key.starts_with("device:"){3}else{120}));
+        self.seen.retain(|key,at|at.elapsed()<Duration::from_secs(if key.starts_with("device:")||key.starts_with("reminder:"){3}else{120}));
         if a.expires<=Instant::now()||self.seen.contains_key(&a.key){return}
         self.seen.insert(a.key.clone(),Instant::now());
         if self.queue.len()>=8{self.queue.pop_front();}
@@ -76,6 +76,7 @@ impl Hub{
     }
     pub fn dismiss(&mut self,base:Rect,radius:f64,now:f64,animate:bool){self.banner.dismiss(base,radius,now,animate,true);}
     pub fn clear(&mut self,base:Rect,radius:f64,now:f64,animate:bool){self.queue.clear();self.dismiss(base,radius,now,animate);}
+    pub fn remove_pending(&mut self,key:&str){self.queue.retain(|a|a.key!=key);self.seen.remove(key);}
 }
 
 #[derive(Default)]

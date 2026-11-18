@@ -1,4 +1,4 @@
-//go:build windows
+//go:build windows && (!dotisle_mygo_fontfile || (!amd64 && !arm64))
 
 package ui
 

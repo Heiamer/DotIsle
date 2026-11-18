@@ -1,7 +1,10 @@
 use serde_json::{json, Value};
 pub fn defaults() -> Value {
     let mut defaults = json!({"AutoCheckUpdatesEnabled":true,"LyricColorFromCover":true,"DeviceRemindersEnabled":true,"DeviceSoundEnabled":true,"DeviceSound":"Connect","DeviceSoundPath":"","DeviceVolume":55.,"HeadphoneConnectionRemindersEnabled":true,"SpeakerConnectionRemindersEnabled":true,"GamepadConnectionRemindersEnabled":true,"MouseConnectionRemindersEnabled":false,"KeyboardConnectionRemindersEnabled":false,"DeviceDisconnectRemindersEnabled":true,"SystemStateHintsEnabled":true,"SystemStateHintPlacement":"Island","CapsLockHintEnabled":true,"NumLockHintEnabled":true,"MicrophoneMuteHintEnabled":true,"TouchpadHintEnabled":true,"SwipeActivities":true,"AutoCompactMaxWidth":420.,"TodoDefaultColor":"#F3D79B","TodoRemindersEnabled":true,"TodoIslandEnabled":true,"AutoCompactWidth":true,"CompactTranslation":true,"ChineseTwoLine":true,"NotificationSoundEnabled":true,"TodoSoundEnabled":true,"NotificationSound":"Soft","TodoSound":"Bell","NotificationSoundPath":"","TodoSoundPath":"","QuickReminderHotkey":"","FocusCountUp":false,"FocusPauseOnLock":false,"AppEntryRemindersEnabled":false,"AppUsageRemindersEnabled":false,"NotificationVolume":35.,"TodoVolume":45.,"CompactWidth":260.,"FontSize":14.,"Floating":false,"Translation":true,"TranslationButton":true,"Animation":true,"HoverExpand":false,"ClickAnywhereExpand":true,"NotificationsEnabled":true,"PauseNotifications":false,"NotificationClickOpenApp":true,"MusicClickOpenApp":false,"MusicExpandedLayout":"SideBySide","NotificationWhitelistEnabled":false,"NotificationBlacklistEnabled":false,"NotificationBlockedApps":[],"NotificationAllowedApps":["QQNT","QQ"],"NotificationHistoryEnabled":true,"NotificationHistoryDays":7,"WordHighlight":true,"AlwaysOnTop":true,"AutoStart":true,"OnlineSongInfo":true,"CoverBackground":false,"IslandMonetPreferenceVersion":1,"HideWhenPaused":true,"IgnoredSources":["Browser"],"PlayerFilterVersion":2,"DefaultsOnboardingVersion":0,"ExpandedTextColor":"#F4F6F8","ExpandedComponentColor":"#B1E8D1","LyricProgressColor":"#A9E6CD","SettingsTheme":"System","ControlCenterStartPage":"overview","WorkflowModules":[{"id":"builtin-thinking","name":"整理思路","minutes":5,"kind":0},{"id":"builtin-focus","name":"专注","minutes":25,"kind":1},{"id":"builtin-rest","name":"休息","minutes":5,"kind":2},{"id":"builtin-review","name":"复盘","minutes":10,"kind":3},{"id":"builtin-move","name":"活动一下","minutes":3,"kind":4},{"id":"builtin-custom","name":"自定义","minutes":10,"kind":5}],"CenterX":0.5,"TopFraction":0.08,"Display":"","OffsetMilliseconds":0,"NeteaseCdpPort":"9223","LocalFolders":[],"Motion":crate::motion::Options::default()});
-    defaults["IslandResidentEnabled"] = json!(false);
+    defaults["IslandKeepVisibleEnabled"] = json!(false);
+    defaults[crate::resident::TIME] = json!(true);
+    defaults[crate::resident::SYSTEM] = json!(false);
+    defaults[crate::resident::DEVICES] = json!(false);
     defaults["MusicGlowEnabled"] = json!(false);
     defaults["TimerGlowEnabled"] = json!(false);
     defaults["UpdateGlowEnabled"] = json!(false);
@@ -11,6 +14,7 @@ pub fn defaults() -> Value {
     defaults["VerificationCodeEnabled"] = json!(true);
     for key in ["WeChatMessageHintsEnabled","FeishuMessageHintsEnabled","DingTalkMessageHintsEnabled","WeComMessageHintsEnabled"] { defaults[key]=json!(true); }
     defaults["WeatherAlertsEnabled"] = json!(true);
+    defaults["ReminderPlugins"] = json!({});
     defaults["WeatherCity"] = json!("");
     defaults["ControlCenterColorSource"] = json!("Content");
     defaults["IslandColorSource"] = json!("Content");
@@ -19,7 +23,7 @@ pub fn defaults() -> Value {
     defaults["ControlCenterMonetEnabled"] = json!(true);
     defaults["ControlCenterDynamicColorEnabled"] = json!(false);
     defaults["ControlCenterCustomColor"] = json!("#9ABFE8");
-    defaults["ProgressBarStyle"] = json!("Wavy");
+    defaults["ProgressBarStyle"] = json!("Normal");
     defaults["ProgressBarThumb"] = json!("Pill");
     defaults["ProgressBarThumbEnabled"] = json!(false);
     defaults["ProgressBarThumbSpin"] = json!(false);
@@ -104,6 +108,7 @@ pub fn load(path: &std::path::Path) -> Value {
         fields.remove("IslandGlassMaterial");
         fields.remove("MusicControlTheme");
         fields.remove("AlcoveThemeUnlocked");
+        fields.remove("IslandResidentEnabled");
     }
     // 2.0.x stored a boolean for the one optional frosted material. Carry that choice into the
     // three-value setting once; a file that already has IslandMaterial wins over the legacy key.
@@ -309,7 +314,7 @@ pub fn load(path: &std::path::Path) -> Value {
         .iter()
         .any(|v| v.key() == s["ProgressBarStyle"].as_str().unwrap_or(""))
     {
-        s["ProgressBarStyle"] = json!("Wavy");
+        s["ProgressBarStyle"] = json!("Normal");
     }
     if !dotisle_render::progress::ThumbStyle::ALL
         .iter()
@@ -581,7 +586,10 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         "AutoStart",
         "OnlineSongInfo",
         "HideWhenPaused",
-        "IslandResidentEnabled",
+        "IslandKeepVisibleEnabled",
+        crate::resident::TIME,
+        crate::resident::SYSTEM,
+        crate::resident::DEVICES,
         "NotificationsEnabled",
         "PauseNotifications",
         "NotificationClickOpenApp",
@@ -1157,7 +1165,7 @@ mod expanded_material_tests {
         ));
         let fresh = load(&path);
         assert_eq!(fresh["HideWhenPaused"], true);
-        assert_eq!(fresh["IslandResidentEnabled"], false);
+        assert_eq!(fresh["IslandKeepVisibleEnabled"], false);
         assert_eq!(fresh["IslandSizeMode"], "Classic");
         assert_eq!(fresh["Motion"]["Radius"], 30.);
         assert_eq!(fresh["CoverBackground"], false);
@@ -1166,7 +1174,7 @@ mod expanded_material_tests {
         std::fs::write(&path, r#"{"HideWhenPaused":false,"IslandSizeMode":"Mini"}"#).unwrap();
         let existing = load(&path);
         assert_eq!(existing["HideWhenPaused"], false);
-        assert_eq!(existing["IslandResidentEnabled"], false);
+        assert_eq!(existing["IslandKeepVisibleEnabled"], false);
         assert_eq!(existing["IslandSizeMode"], "Mini");
         let _ = std::fs::remove_file(path);
     }
@@ -1598,7 +1606,7 @@ mod progress_style_tests {
     #[test]
     fn both_seek_bar_choices_default_to_the_shipped_look_and_reject_unknown_values() {
         let d = defaults();
-        assert_eq!(d["ProgressBarStyle"], "Wavy");
+        assert_eq!(d["ProgressBarStyle"], "Normal");
         assert_eq!(d["ProgressBarThumb"], "Pill");
         assert_eq!(d["ProgressBarThumbEnabled"], false);
         for style in dotisle_render::progress::BarStyle::ALL {
@@ -1647,7 +1655,7 @@ mod progress_style_tests {
         ));
         std::fs::write(&file,r#"{"ProgressBarStyle":"Bouncy","ProgressBarThumb":"Star","ProgressBarThumbEnabled":"yes"}"#).unwrap();
         let loaded = load(&file);
-        assert_eq!(loaded["ProgressBarStyle"], "Wavy");
+        assert_eq!(loaded["ProgressBarStyle"], "Normal");
         assert_eq!(loaded["ProgressBarThumb"], "Pill");
         assert_eq!(loaded["ProgressBarThumbEnabled"], false);
         std::fs::write(&file, serde_json::to_vec(&loaded).unwrap()).unwrap();
@@ -1714,13 +1722,13 @@ mod resident_setting_tests {
     fn resident_is_opt_in_validated_and_persisted() {
         let path = std::env::temp_dir().join(format!("dotisle-resident-{}.json", std::process::id()));
         let mut settings = defaults();
-        assert_eq!(settings["IslandResidentEnabled"], false);
+        assert_eq!(settings["IslandKeepVisibleEnabled"], false);
         for invalid in [json!("true"), json!(1), Value::Null] {
-            assert!(validate_setting(json!({"key":"IslandResidentEnabled","value":invalid,"settings":settings})).is_err());
+            assert!(validate_setting(json!({"key":"IslandKeepVisibleEnabled","value":invalid,"settings":settings})).is_err());
         }
-        settings = validate_setting(json!({"key":"IslandResidentEnabled","value":true,"settings":settings})).unwrap();
+        settings = validate_setting(json!({"key":"IslandKeepVisibleEnabled","value":true,"settings":settings})).unwrap();
         std::fs::write(&path, serde_json::to_vec(&settings).unwrap()).unwrap();
-        assert_eq!(load(&path)["IslandResidentEnabled"], true);
+        assert_eq!(load(&path)["IslandKeepVisibleEnabled"], true);
         let _ = std::fs::remove_file(path);
     }
 }

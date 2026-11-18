@@ -9,7 +9,7 @@ on:
       version:
         description: Release version without the leading v
         required: true
-        default: "5.0.6"
+        default: "5.0.7"
       publish:
         description: Publish the release instead of leaving a draft
         type: boolean
@@ -129,13 +129,17 @@ jobs:
           $unformatted=@(& $gofmtExe -l .)
           if($LASTEXITCODE -ne 0){throw 'gofmt failed to run'}
           if($unformatted.Count -ne 0){throw "gofmt would rewrite: $($unformatted -join ', ')"}
-          & $goExe vet ./...
+          $modFile=Join-Path $env:RUNNER_TEMP 'dotisle-center/center.mod'
+          & $goExe run ./cmd/mygo-patch -go $goExe -out $modFile
+          if($LASTEXITCODE -ne 0){throw 'MyGo file-backed font patch failed'}
+          $buildFlags=@("-modfile=$modFile", '-tags=dotisle_mygo_fontfile')
+          & $goExe vet @buildFlags ./...
           if($LASTEXITCODE -ne 0){throw 'Center vet failed'}
-          & $goExe build -trimpath -ldflags "-s -w -H=windowsgui" -o $dst .
+          & $goExe build @buildFlags -trimpath -ldflags "-s -w -H=windowsgui" -o $dst .
           if($LASTEXITCODE -ne 0){throw 'Center build failed'}
           if(-not(Test-Path -LiteralPath $dst)){throw "Center build produced no binary at $dst"}
           if((Get-Item -LiteralPath $dst).Length -le 0){throw "Center build produced an empty binary at $dst"}
-          & $goExe test ./...
+          & $goExe test @buildFlags ./...
           if($LASTEXITCODE -ne 0){throw 'Center tests failed'}
           Write-Host "Center binary: $dst ($((Get-Item -LiteralPath $dst).Length) bytes)"
         working-directory: Go/settings-center
@@ -145,7 +149,8 @@ jobs:
         run: |
           $env:DOTISLE_DESIGN_CAPTURE=Join-Path $env:GITHUB_WORKSPACE 'validation/control-center'
           $env:DOTISLE_DESKTOP_DLL=Join-Path $env:GITHUB_WORKSPACE 'target/release/dotisle_desktop.dll'
-          & "$env:RUNNER_TEMP/go/go/bin/go.exe" test ./ui -run 'TestV3SurfaceCaptures|TestAlbumFrostAndPastelCaptures|TestPluginSurfaceCaptures' -count=1
+          $modFile=Join-Path $env:RUNNER_TEMP 'dotisle-center/center.mod'
+          & "$env:RUNNER_TEMP/go/go/bin/go.exe" test "-modfile=$modFile" -tags=dotisle_mygo_fontfile ./ui -run 'TestV3SurfaceCaptures|TestAlbumFrostAndPastelCaptures|TestPluginSurfaceCaptures' -count=1
           if($LASTEXITCODE -ne 0){throw 'Control center capture failed'}
 
       - name: Test workspace against built service DLLs
@@ -190,7 +195,9 @@ jobs:
           if(-not(Test-Path -LiteralPath $center)){throw "Packaged runtime is missing the control center: $center"}
           if((Get-Item -LiteralPath $center).Length -le 0){throw "Packaged control center is empty: $center"}
           $modules=@(Get-ChildItem (Split-Path -LiteralPath $center) -Filter 'dotisle_*.dll' -File)
-          if($modules.Count -ne 15){throw "Packaged runtime carries $($modules.Count) dotisle modules, expected 15"}
+          $inventory=Get-Content -Raw -LiteralPath "$out/DotIsle-$env:VERSION/Assets/RuntimeFiles.json" | ConvertFrom-Json -AsHashtable
+          $declared=@($inventory.files.Keys | Where-Object { $_ -match '^dotisle_[^/]+\.dll$' })
+          if(@(Compare-Object @($modules.Name) $declared).Count -ne 0){throw 'Packaged modules do not match the runtime inventory'}
           Write-Host "Control center packaged: $center ($((Get-Item -LiteralPath $center).Length) bytes); dotisle modules: $($modules.Count)"
 
       - name: Verify packaged settings app
@@ -204,6 +211,8 @@ jobs:
           $runtime="$pwd/publish/release-output/DotIsle-$env:VERSION"
           python tests/verify_pomodoro.py $runtime --scratch "$env:RUNNER_TEMP/native-timers" --report validation/native-timers/report.json
           if($LASTEXITCODE -ne 0){throw 'Native timer acceptance failed'}
+          python tests/verify_resident.py --binary-dir $runtime --report validation/resident/report.json
+          if($LASTEXITCODE -ne 0){throw 'Resident rotation acceptance failed'}
           $env:LYRICISLAND_TEST_PIPE='LyricIsland.Settings.test.release-effects.'+[guid]::NewGuid().ToString('N')
           foreach($effect in @('liquid','glow')){
             $destination="$pwd/validation/$effect"

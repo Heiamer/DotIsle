@@ -40,7 +40,7 @@ RUNTIME_DOCS = ('README.md', 'GESTURE-TUTORIAL.md', 'NETEASE-SEEKFIX.md', 'CHANG
                 'LICENSE', 'FONT-NOTICE.md', 'THIRD-PARTY-NOTICES.md', 'REWRITE.md', 'docs/UNIFIED-CONTROL-CENTER.md', 'docs/DISCLAIMER.md')
 
 HINT_BINARIES = '在仓库根跑 tools/li-cargo.ps1 build --release --workspace --bins --lib --locked 重新产出 Rust 运行时'
-HINT_CENTER = '先在 Go/settings-center 里构建控制中心：go build -trimpath -ldflags "-s -w -H=windowsgui" -o <仓库根>/target/release/LyricIsland.Center.exe .'
+HINT_CENTER = '先运行 Go/settings-center/build.cmd，再将构建出的 LyricIsland.Center.exe 放入 target/release。'
 HINT_SHADER = '把 Assets/ShaderCache/Hybrid29 整个目录放回仓库，或把 --shader-cache 指向真实存在的着色器缓存目录'
 HINT_ISCC = '安装 Inno Setup 6，或把 ISCC.exe 的绝对路径传给 --iscc（默认 C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe）'
 HINT_ASSETS = '补齐仓库内被复制的静态资源（Assets/、licenses/、docs/brand/、build/e_sqlite3.dll、build/installer.iss、build/ChineseSimplified.isl）'

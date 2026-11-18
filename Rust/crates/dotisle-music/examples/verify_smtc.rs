@@ -1,6 +1,6 @@
 //! Isolated Windows SMTC publisher: exercises production metadata and artwork reading.
 use std::{path::PathBuf,time::{Duration,Instant}};
-use windows::{core::{factory,w,HSTRING},Win32::{System::WinRT::{RoInitialize,RO_INIT_MULTITHREADED,ISystemMediaTransportControlsInterop},UI::WindowsAndMessaging::*},Media::{SystemMediaTransportControls,MediaPlaybackType,MediaPlaybackStatus},Storage::{StorageFile,Streams::RandomAccessStreamReference}};
+use windows::{core::{factory,w,HSTRING},Foundation::TimeSpan,Win32::{System::WinRT::{RoInitialize,RO_INIT_MULTITHREADED,ISystemMediaTransportControlsInterop},UI::WindowsAndMessaging::*},Media::{SystemMediaTransportControls,SystemMediaTransportControlsTimelineProperties,MediaPlaybackType,MediaPlaybackStatus},Storage::{StorageFile,Streams::RandomAccessStreamReference}};
 use dotisle_music::media::{Media,MediaSample,SourceFilter};
 macro_rules! wait{($op:expr)=>{{let op=$op?;let until=Instant::now()+Duration::from_secs(3);while op.Status()?.0==0{if Instant::now()>until{let _=op.Cancel();return Err("SMTC fixture async operation timed out".into())}std::thread::sleep(Duration::from_millis(10));}op.GetResults()?}};}
 fn main()->Result<(),Box<dyn std::error::Error>>{unsafe{
@@ -13,6 +13,29 @@ fn main()->Result<(),Box<dyn std::error::Error>>{unsafe{
     let display=controls.DisplayUpdater()?;display.SetType(MediaPlaybackType::Music)?;let music=display.MusicProperties()?;music.SetTitle(&HSTRING::from("First track"))?;music.SetArtist(&HSTRING::from("Fixture singer"))?;
     let set_cover=|path:&PathBuf|->Result<(),Box<dyn std::error::Error>>{let file=wait!(StorageFile::GetFileFromPathAsync(&HSTRING::from(path.to_string_lossy().as_ref())));display.SetThumbnail(&RandomAccessStreamReference::CreateFromFile(&file)?)?;display.Update()?;Ok(())};
     set_cover(&cover_a)?;
+    // Publish a progressing Windows media session without controlling any user player.
+    if let Some(seconds) = std::env::args().nth(4) {
+        let duration: i64 = seconds.parse()?;
+        let start = Instant::now();
+        let mut second_track = false;
+        while (start.elapsed().as_secs() as i64) < duration {
+            let elapsed = start.elapsed().as_secs() as i64;
+            if elapsed >= duration / 2 && !second_track {
+                music.SetTitle(&HSTRING::from("Second track"))?;
+                set_cover(&cover_b)?;
+                second_track = true;
+            }
+            let timeline = SystemMediaTransportControlsTimelineProperties::new()?;
+            timeline.SetStartTime(TimeSpan { Duration: 0 })?;
+            timeline.SetEndTime(TimeSpan { Duration: duration * 10_000_000 })?;
+            timeline.SetPosition(TimeSpan { Duration: elapsed * 10_000_000 })?;
+            controls.UpdateTimelineProperties(&timeline)?;
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        controls.SetIsEnabled(false)?;
+        DestroyWindow(window)?;
+        return Ok(());
+    }
     let mut reader=Media::new()?;let filter=SourceFilter{only:vec!["verify_smtc".into()],ignored:vec![]};
     let mut await_sample=|predicate:&dyn Fn(&MediaSample)->bool|->Result<MediaSample,Box<dyn std::error::Error>>{let until=Instant::now()+Duration::from_secs(8);loop{let sample=reader.read(&filter)?;if predicate(&sample){return Ok(sample)}if Instant::now()>until{return Err(format!("SMTC fixture timeout: {:?}",sample.playback.track).into())}std::thread::sleep(Duration::from_millis(60));}};
     let first=await_sample(&|s|s.playback.track.as_ref().is_some_and(|t|t.title=="First track")&&s.playback.cover_image_bytes.is_some())?;let a=first.playback.cover_image_bytes.unwrap();

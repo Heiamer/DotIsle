@@ -50,7 +50,19 @@ impl Server{
                     let result=callback(request.as_ptr());if result.is_null(){return dropped("GUI returned no response")}
                     let mut response=CStr::from_ptr(result).to_bytes().to_vec();CoTaskMemFree(Some(result as _));response.push(b'\n');
                     if response.len()>1024*1024{return dropped("response too large")}
-                    let mut written=0;if WriteFile(pipe,Some(&response),Some(&mut written),None).is_err(){return dropped("write failed")}
+                    let deadline = Instant::now() + Duration::from_secs(4);
+                    let mut sent = 0;
+                    while sent < response.len() {
+                        if worker_closed.load(Ordering::Acquire) { return None; }
+                        if Instant::now() > deadline { return dropped("response timeout"); }
+                        let mut written = 0;
+                        let end = (sent + 32 * 1024).min(response.len());
+                        if WriteFile(pipe, Some(&response[sent..end]), Some(&mut written), None).is_err() {
+                            return dropped("write failed");
+                        }
+                        sent += written as usize;
+                        if written == 0 { std::thread::sleep(Duration::from_millis(2)); }
+                    }
                     // DisconnectNamedPipe discards whatever the client has not consumed yet, so the
                     // response has to be drained first: FlushFileBuffers on a server handle returns
                     // once the client has read everything. Without this the client races the
@@ -94,13 +106,21 @@ unsafe fn same_user(pipe:HANDLE)->bool{
     unsafe extern "C" fn echo(request:*const c_char)->*mut c_char{
         let command=std::ffi::CStr::from_ptr(request).to_bytes().iter().filter(|b|**b!=b'\n').cloned().collect::<Vec<_>>();
         let command=serde_json::from_slice::<serde_json::Value>(&command).ok().and_then(|v|v["command"].as_str().map(str::to_owned)).unwrap_or_default();
-        let reply=format!("{{\"command\":\"{command}\"}}");
+        let reply=json!({"command":command,"image":if command=="large" {"x".repeat(260_000)}else{String::new()}}).to_string();
         let len=reply.len()+1;
         let Ok(c)=std::ffi::CString::new(reply)else{return std::ptr::null_mut()};
         let buffer=windows::Win32::System::Com::CoTaskMemAlloc(len);
         if buffer.is_null(){return std::ptr::null_mut()}
         std::ptr::copy_nonoverlapping(c.as_ptr() as *const u8,buffer as *mut u8,len);
         buffer as *mut c_char
+    }
+    #[test]
+    fn a_reply_larger_than_the_pipe_buffer_is_delivered_in_full() {
+        let pipe = format!("LyricIsland.Native.Settings.test.ipc-large-{}", std::process::id());
+        let server = Server::new(&pipe, echo);
+        let reply = crate::io::pipe_request(&pipe, &json!({"version":1,"command":"large"})).unwrap();
+        assert_eq!(reply["image"].as_str().unwrap().len(), 260_000);
+        server.close();
     }
     // Regression for the 3.5.2 withdrawal: the server used to close and recreate its pipe
     // instance after every reply, so a concurrent client could connect to a doomed instance

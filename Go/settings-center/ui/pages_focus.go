@@ -524,12 +524,9 @@ func (a *App) timerAction(id, action string) {
 // sendTimerCreate sends timerCreate and selects the created timer from the reply
 // (apply_native_reply: self.selected = reply["id"]).
 func (a *App) sendTimerCreate(payload map[string]any) {
-	go func() {
+	a.startAsync(func() {
 		reply, err := island.Request("timerCreate", payload)
-		if a.Win == nil {
-			return
-		}
-		a.Win.Update(func() {
+		a.applyAsync(func() {
 			if a.applyCommandReply("timerCreate", reply, err) {
 				return
 			}
@@ -540,7 +537,7 @@ func (a *App) sendTimerCreate(payload map[string]any) {
 			}
 			a.Refresh()
 		})
-	}()
+	})
 }
 
 // ---- the page ----

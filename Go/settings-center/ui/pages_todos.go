@@ -268,12 +268,9 @@ func (a *App) sendTodoSave() {
 		"daily":   todoDialogDraft.daily,
 		"color":   color,
 	}
-	go func() {
+	a.startAsync(func() {
 		reply, err := island.Request("todoSave", payload)
-		if a.Win == nil {
-			return
-		}
-		a.Win.Update(func() {
+		a.applyAsync(func() {
 			switch {
 			case err != nil:
 				todoDialogDraft.err = err.Error()
@@ -288,5 +285,5 @@ func (a *App) sendTodoSave() {
 			}
 			a.Refresh()
 		})
-	}()
+	})
 }

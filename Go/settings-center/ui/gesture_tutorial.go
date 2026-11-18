@@ -55,10 +55,10 @@ func (a *App) finishGestureTutorial() {
 		return
 	}
 	t.pending, t.error = true, ""
-	go func() {
+	a.startAsync(func() {
 		reply, err := island.Request("update", map[string]any{"key": "GestureTutorialSeen", "value": true})
-		a.Win.Update(func() { a.applyGestureTutorialReply(t, reply, err) })
-	}()
+		a.applyAsync(func() { a.applyGestureTutorialReply(t, reply, err) })
+	})
 }
 func (a *App) applyGestureTutorialReply(t *gestureTutorial, reply map[string]any, err error) {
 	if a.gestureTutorial != t {

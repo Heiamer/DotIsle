@@ -26,10 +26,12 @@ mod app_rules;
 mod banner;
 mod capsule_alert;
 mod device_data_preview;
+mod resident;
 mod resident_preview;
 mod verification_code;
 mod volume;
 mod screen_time;
+mod reminder_plugins;
 mod compact;
 mod config;
 mod devices;
@@ -212,6 +214,7 @@ struct App {
     device_watch: capsule_alert::DeviceWatch,
     weather_watch: capsule_alert::WeatherWatch,
     screen_time: screen_time::Tracker,
+    reminder_plugins: reminder_plugins::Scheduler,
     plugins: dotisle_domain::plugins::Registry,
     last_context_poll: Instant,
     osd: osd::Hub,
@@ -329,9 +332,11 @@ struct App {
     desktop_widgets: dotisle_domain::desktop_widgets::Store,
     overview_widgets: overview_widgets::Store,
     widget_metrics: widget_metrics::Hub,
+    resident: resident::Rotation,
     last_widget_host: Instant,
     greeting_pending: bool,
     center_process: Option<std::process::Child>,
+    center_started: bool,
     settings_wake: Option<io::SettingsWake>,
     renderer_generation: u64,
     render_frames: u64,
@@ -456,6 +461,7 @@ impl App {
         let usage_date = todo_now.date.clone();
         let plugins=dotisle_domain::plugins::Registry::new(data.join("plugins.json"));
         let screen_time = screen_time::Tracker::new(if demo {PathBuf::new()}else{data.join("screen-time.json")},awake_ms());
+        let reminder_plugins = reminder_plugins::Scheduler::new(&settings["ReminderPlugins"]);
         let mut history = history::Store::new(if demo {
             PathBuf::new()
         } else {
@@ -599,15 +605,18 @@ impl App {
             desktop_widgets,
             overview_widgets,
             widget_metrics: Default::default(),
+            resident: Default::default(),
             last_widget_host: now - Duration::from_secs(6),
             greeting_pending: false,
             alerts: Default::default(),
             device_watch: Default::default(),
             weather_watch: Default::default(),
             screen_time,
+            reminder_plugins,
             plugins,
             last_context_poll: now-Duration::from_secs(2),
             center_process: None,
+            center_started: false,
             settings_wake: io::SettingsWake::new(),
             renderer_generation: 0,
             render_frames: 0,
@@ -682,6 +691,27 @@ impl App {
             })
     }
     fn refresh_components(&mut self) {
+        if self.flag("IslandKeepVisibleEnabled", false)
+            && !self.demo && self.snapshot["isPlaying"] != true && !self.active_tasks()
+            && !(self.updates.selectable() && !self.update_card_deleted)
+        {
+            if self.selected != resident::ID {
+                self.selected = resident::ID.into();
+                self.components.clear();
+                self.components.push(resident::ID.into());
+                self.panel = Some(activities::Panel { kind: resident::KIND, ..Default::default() });
+                self.compact_key.clear();
+                self.dirty = true;
+            }
+            if !self.user_hidden || self.restore_hidden {
+                self.update_resident();
+            } else {
+                self.resident.suspend();
+            }
+            return;
+        }
+        let leaving_resident = self.selected == resident::ID;
+        if leaving_resident { self.resident.suspend(); }
         let mut components = vec![];
         if self.updates.selectable() && !self.update_card_deleted {
             components.push("update".into());
@@ -702,10 +732,32 @@ impl App {
             components.push("music".into());
         }
         if !components.contains(&self.selected) {
-            self.selected = components[0].clone();
+            let running = self.timers.items.iter().find(|t| t.running && !t.finished);
+            self.selected = if leaving_resident && components[0] != "update" && self.snapshot["isPlaying"] != true {
+                running.map_or_else(|| components[0].clone(), |t| format!("timer:{}", t.id))
+            } else {
+                components[0].clone()
+            };
         }
         self.components = components;
         self.panel = self.component_panel(&self.selected);
+    }
+    fn update_resident(&mut self) {
+        let expanded = self.expanded || self.frame.card_reveal > 0.01;
+        let paused = expanded || self.cursor_inside || self.banner.visible()
+            || self.osd_banner.visible() || self.bottom_osd.visible()
+            || self.alerts.visible() || self.alerts.pending() || !self.queue.is_empty();
+        let choices = resident::Choices {
+            time: self.flag(resident::TIME, true),
+            system: self.flag(resident::SYSTEM, false),
+            devices: self.flag(resident::DEVICES, false),
+        };
+        if self.resident.update(Instant::now(), choices, &self.widget_metrics.value, paused, expanded, || {
+            let local = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+            (local.wHour, local.wMinute)
+        }) {
+            self.dirty = true;
+        }
     }
     fn component_panel(&self, id: &str) -> Option<activities::Panel> {
         if id == "update" {
@@ -945,6 +997,7 @@ impl App {
         }
     }
     fn card_height(&self) -> f64 {
+        if self.selected == resident::ID { return self.resident.view.height(); }
         if let Some(p)=self.panel.as_ref().filter(|p|p.kind==4){return 70.+p.blocks.iter().map(|b|match b.kind.as_str(){"metric"=>56.,"progress"=>40.,"divider"=>12.,_=>28.}).sum::<f64>()}
         self.music_geometry().height
     }
@@ -1276,22 +1329,37 @@ impl App {
             }
             return;
         }
+        self.launch_center(self.center_started);
+    }
+    fn launch_center(&mut self, warm: bool) {
         let exe = self.base.join("LyricIsland.Center.exe");
-        if exe.exists() {
-            let spawned = std::process::Command::new(exe)
-                .creation_flags(0x08000000)
-                .env(
-                    "LYRICISLAND_TEST_PIPE",
-                    std::env::var("LYRICISLAND_TEST_PIPE")
-                        .unwrap_or_else(|_| "LyricIsland.Native.Settings.v1".into()),
-                )
-                .env("LYRICISLAND_NATIVE_DATA", &self.data)
-                .current_dir(&self.base)
-                .spawn()
-                .ok();
-            self.center_process = spawned;
-        } else {
+        if !exe.is_file() {
             self.error = Some("设置组件缺失，请完整解压运行包".into());
+            return;
+        }
+        let mut command = std::process::Command::new(exe);
+        if warm { command.arg("--warm"); }
+        self.center_process = command.creation_flags(0x08000000)
+            .env("LYRICISLAND_TEST_PIPE", std::env::var("LYRICISLAND_TEST_PIPE")
+                .unwrap_or_else(|_| "LyricIsland.Native.Settings.v1".into()))
+            .env("LYRICISLAND_NATIVE_DATA", &self.data)
+            .env("DOTISLE_CENTER_IDLE_EXIT", "1")
+            .current_dir(&self.base).spawn()
+            .map_err(|e| { self.error = Some(format!("无法启动控制中心：{e}")); e }).ok();
+        self.center_started |= self.center_process.is_some();
+    }
+    fn reap_center(&mut self) {
+        // Replay an open request that raced the clean idle exit, not a crash.
+        const IDLE_EXIT: i32 = 35;
+        if self.pending_page.is_none() {
+            return;
+        }
+        let Some(status) = self.center_process.as_mut().and_then(|p| p.try_wait().ok().flatten()) else {
+            return;
+        };
+        self.center_process = None;
+        if status.code() == Some(IDLE_EXIT) {
+            self.launch_center(true);
         }
     }
     fn ensure_widget_host(&mut self) {
@@ -1299,12 +1367,7 @@ impl App {
         if self.center_process.as_mut().is_some_and(|p|p.try_wait().ok().flatten().is_none()) { return; }
         if self.last_widget_host.elapsed() < Duration::from_secs(5) { return; }
         self.last_widget_host=Instant::now();
-        let exe=self.base.join("LyricIsland.Center.exe");
-        if !exe.is_file(){self.error=Some("桌面组件需要完整的控制中心运行文件".into());return;}
-        self.center_process=std::process::Command::new(exe).creation_flags(0x08000000)
-            .arg("--warm").env("LYRICISLAND_TEST_PIPE",std::env::var("LYRICISLAND_TEST_PIPE").unwrap_or_else(|_|"LyricIsland.Native.Settings.v1".into()))
-            .env("LYRICISLAND_NATIVE_DATA",&self.data).current_dir(&self.base).spawn()
-            .map_err(|e|{self.error=Some(format!("无法启动桌面组件：{e}"));e}).ok();
+        self.launch_center(true);
     }
     /// Register the configured quick-reminder hotkey. The previous binding is
     /// removed first; a conflict is reported so the caller can roll the setting back.
@@ -1391,11 +1454,14 @@ impl App {
         }
     }
     fn on_lock(&mut self) {
-        if !self.flag("FocusPauseOnLock", false) || self.session_locked {
+        if self.session_locked {
             return;
         }
-        self.advance_timers(Instant::now());
         self.session_locked = true;
+        self.reminder_plugins.break_session();
+        for kind in reminder_plugins::Kind::ALL { self.alerts.remove_pending(kind.alert_key()); }
+        if !self.flag("FocusPauseOnLock", false) { return; }
+        self.advance_timers(Instant::now());
         self.lock_generation = self.lock_generation.wrapping_add(1);
         match self.timers.pause_for_lock(self.lock_generation) {
             Ok(ids) if !ids.is_empty() => {
@@ -1493,7 +1559,6 @@ impl App {
         let entry = self.flag("AppEntryRemindersEnabled", false);
         let usage = self.flag("AppUsageRemindersEnabled", false);
         if !entry && !usage {
-            self.last_awake = awake_ms();
             return;
         }
         let now = todos::Now::local();
@@ -1576,7 +1641,7 @@ impl App {
         } else {
             font
         };
-        let double = !self.compact_secondary.is_empty();
+        let double = self.selected == "music" && !self.compact_secondary.is_empty();
         let scale = GetDpiForWindow(self.hwnd).max(96) as f64 / 96.;
         let height = if self.mini() {
             14.
@@ -1587,7 +1652,9 @@ impl App {
                 .unwrap_or(40.)
         };
         let auto = self.flag("AutoCompactWidth", false);
-        let target = if self.selected != "music" {
+        let target = if self.selected == resident::ID {
+            base.max(if self.mini() { 160. } else { 190. })
+        } else if self.selected != "music" {
             260.
         } else if auto {
             let secondary_size = (font * 0.78).clamp(9., 11.5);
@@ -1881,7 +1948,7 @@ impl App {
                     .as_str()
                     .unwrap_or("")
                     .ends_with("|ProcessFallback");
-            let flag = self.flag("IslandResidentEnabled", false) || island_needed(
+            let flag = self.flag("IslandKeepVisibleEnabled", false) || island_needed(
                 valid,
                 self.snapshot["isPlaying"] == true,
                 self.flag("HideWhenPaused", true),
@@ -1932,19 +1999,16 @@ impl App {
     fn active_tasks(&self) -> bool {
         self.timers.items.iter().any(|t| t.running && !t.finished)
             || (self.updates.busy() && !self.update_card_deleted)
-            || !self.plugins.island_ids().is_empty()
+            || self.plugins.has_island_plugins()
     }
     fn resident_idle(&self) -> bool {
-        // Presence is a preference; an occupied island is determined by live tasks.
-        self.flag("IslandResidentEnabled", false)
+        // Visible but idle; only pacing uses this state.
+        self.flag("IslandKeepVisibleEnabled", false)
             && self.snapshot["isPlaying"] != true
             && !self.active_tasks()
             && !self.updates.busy()
             && !self.banner.visible() && !self.osd_banner.visible()
             && !self.alerts.visible() && !self.alerts.pending() && self.queue.is_empty()
-    }
-    fn background_opacity(&self) -> f32 {
-        if self.resident_idle() { 0. } else { 1. }
     }
     fn base_needed(&self) -> bool {
         let valid = self.snapshot["track"]["title"]
@@ -1954,7 +2018,7 @@ impl App {
                 .as_str()
                 .unwrap_or("")
                 .ends_with("|ProcessFallback");
-        self.flag("IslandResidentEnabled", false) || island_needed(
+        self.flag("IslandKeepVisibleEnabled", false) || island_needed(
             valid,
             self.snapshot["isPlaying"] == true,
             self.flag("HideWhenPaused", true),
@@ -2021,7 +2085,7 @@ impl App {
                 && self.music_controls.value > 0.08)
     }
     fn hit(&self, x: f64, y: f64) -> i32 {
-        if self.opacity < 0.01 || self.resident_idle() {
+        if self.opacity < 0.01 {
             return -1;
         }
         if self.alerts.visible(){
@@ -2059,6 +2123,11 @@ impl App {
                 let x = (x - shape.x) / scale;
                 let y = (y - shape.y) / scale - self.frame.content_offset_y;
                 let w = self.layout.card.w;
+                if self.selected == resident::ID {
+                    if layout::activity_close(w).contains(x, y) { return resident::COLLAPSE; }
+                    return resident::buttons(w).into_iter().find(|(_, rect, _)| rect.contains(x, y))
+                        .map_or(0, |(id, _, _)| id);
+                }
                 if self.selected != "update" && layout::activity_close(w).contains(x, y) {
                     return layout::ACTIVITY_CLOSE;
                 }
@@ -2182,7 +2251,7 @@ impl App {
         } else {
             Rect::default()
         };
-        let key = if self.opacity < 0.01 || self.resident_idle() {
+        let key = if self.opacity < 0.01 {
             [0; 10]
         } else {
             [
@@ -2275,7 +2344,8 @@ impl App {
             volume::BUTTON => {self.volume.refresh(true);self.tooltip_visible=true;self.dirty=true;},
             50 => match self.updates.phase() {
                 "available" => {
-                    self.request(json!({"version":1,"command":"updateDownload"}));
+                    self.show_settings_page("update");
+                    self.pending_center_action = json!({"action":"updateReview"});
                 }
                 "ready" => {
                     self.updates.ask_apply();
@@ -2299,6 +2369,22 @@ impl App {
                 if self.updates.skip() {
                     self.close_update();
                 }
+            }
+            resident::FOCUS => {
+                let result = self.request(json!({"version":1,"command":"timerCreate",
+                    "value":{"mode":"pomodoro","focus":1500,"rest":300,"rounds":4}}));
+                if result["success"] != true {
+                    self.error = result["message"].as_str().map(str::to_owned);
+                }
+            }
+            resident::TODO => {
+                self.show_settings_page("todos");
+                self.pending_center_action = json!({"action":"todoEdit","id":""});
+            }
+            resident::CENTER => self.show_settings(),
+            resident::COLLAPSE => {
+                self.held = false;
+                self.retarget(false);
             }
             20 => self.cycle_component(1),
             21 => self.cycle_component(-1),
@@ -2349,7 +2435,7 @@ impl App {
                 if self.expanded {
                     self.held = false;
                     self.retarget(false)
-                } else if self.mini() || self.flag("ClickAnywhereExpand", false) {
+                } else if self.selected == resident::ID || self.mini() || self.flag("ClickAnywhereExpand", false) {
                     self.held = true;
                     self.retarget(true)
                 }
@@ -2614,7 +2700,7 @@ impl App {
             .presentation(self.start.elapsed().as_secs_f64());
         let (alert_rect,alert_radius,alert_mix)=self.alerts.banner.presentation(self.start.elapsed().as_secs_f64());
         Scene {
-            background_opacity: self.background_opacity(),
+            background_opacity: 1.,
             alert: self.alerts.active.as_ref().filter(|_|self.alerts.visible()),
             alert_rect, alert_radius, alert_mix,
             glow: self.glow.frame(
@@ -2703,6 +2789,7 @@ impl App {
                 .unwrap_or(0),
             panel: self.panel.as_ref(),
             previous_panel: self.previous_panel.as_ref(),
+            resident: &self.resident.view,
             component_count: self.components.len(),
             switching: self.switching,
             switch_offset: self.slide.value,
@@ -2796,7 +2883,7 @@ impl App {
             component_color: col("ExpandedComponentColor", 0xffb1e8d1),
             progress_color: col("LyricProgressColor", 0xffa9e6cd),
             progress_bar: dotisle_render::progress::BarStyle::from_setting(
-                self.settings["ProgressBarStyle"].as_str().unwrap_or("Wavy"),
+                self.settings["ProgressBarStyle"].as_str().unwrap_or("Normal"),
             ),
             progress_thumb: if self.flag("ProgressBarThumbEnabled", false) {
                 dotisle_render::progress::ThumbStyle::from_setting(
@@ -2811,7 +2898,7 @@ impl App {
             ),
             hover: self.hover,
             pressed: self.pressed,
-            opacity: if self.resident_idle() { 0. } else { self.opacity as f32 },
+            opacity: self.opacity as f32,
             transparent: self.transparent,
             floating: !self.mini() && self.flag("Floating", false),
             favorite_enabled: track["sourceApp"]
@@ -2827,18 +2914,85 @@ impl App {
             outgoing_y: self.outgoing_y,
         }
     }
+    unsafe fn music_layout_preview(&mut self, value: &Value) -> std::result::Result<Value, String> {
+        use lyric_core::custom_layout::{element_label, elements, resizable, Layout};
+
+        let draft = Layout::from_value(value)?;
+        self.ensure_renderer().map_err(|error| error.to_string())?;
+        let mut renderer = self.renderer.take().unwrap();
+        let result = (|| -> std::result::Result<Value, String> {
+            let mut s = self.scene();
+            s.music_mix = s.music_layout.position();
+            let width = s.layout.card.w;
+            let geometry = if draft.enabled {
+                let geometry = draft.geometry(width, s.layout_scale, s.font_size);
+                s.custom_geometry = Some(geometry);
+                s.transport_theme = dotisle_render::transport::TransportTheme::from_setting(&draft.transport_theme);
+                s.progress_bar = dotisle_render::progress::BarStyle::from_setting(&draft.bar_style);
+                s.progress_thumb = if draft.thumb_enabled {
+                    dotisle_render::progress::ThumbStyle::from_setting(&draft.thumb_style)
+                } else {
+                    dotisle_render::progress::ThumbStyle::None
+                };
+                s.progress_thumb_spin = draft.thumb_spin;
+                geometry
+            } else {
+                s.custom_geometry = None;
+                layout::music_geometry(width, s.music_layout, s.music_mix, s.layout_scale, s.font_size)
+            };
+            // Render the settled expanded music scene, without presenting a second island.
+            let pad = 20.;
+            let height = geometry.height;
+            s.layout.card = Rect::new(pad, pad, width, height);
+            s.layout.host = Rect::new(0., 0., width + 2. * pad, height + 2. * pad);
+            s.frame = Frame::expanded();
+            s.opacity = 1.;
+            s.controls_opacity = 1.;
+            s.component_count = 1;
+            s.panel = None;
+            s.notification = None;
+            s.osd = None;
+            s.alert = None;
+            s.transient_only = false;
+            s.drag_active = false;
+            s.switching = false;
+            s.switch_offset = 0.;
+            s.swipe_offset = 0.;
+            s.resizing = false;
+            s.hover = 0;
+            s.pressed = 0;
+            s.feedback = [0.; 64];
+            s.translation_tooltip = false;
+            s.seek_offer = false;
+            s.lyric_age_ms = 1000.;
+            s.cover_age_ms = 1000.;
+            let glass = matches!(s.material, renderer::Material::Glass);
+            let png = renderer.capture_layout_frame(&s).map_err(|error| error.to_string())?;
+            let hitboxes = elements(&geometry).into_iter().map(|(id, rect)| {
+                json!({"id":id,"label":element_label(id),"resizable":resizable(id),
+                    "x":rect.x,"y":rect.y,"w":rect.w,"h":rect.h})
+            }).collect::<Vec<_>>();
+            Ok(json!({"success":true,"width":width,"height":height,"padding":pad,
+                "elements":hitboxes,"glass":glass,"hasTrack":s.has_track,
+                "png":base64::engine::general_purpose::STANDARD.encode(png)}))
+        })();
+        self.renderer = Some(renderer);
+        result
+    }
     unsafe fn draw(&mut self) -> Result<()> {
         // Take the renderer to split immutable scene data from mutable graphics state.
         let showing = self.opacity > 0.001;
-        if showing && !self.renderer.is_some() {
-            self.ensure_renderer()?;
-        }
         // A fully transparent swapchain can leave DWM presenting the last visible
         // frame (a pale ghost of the capsule). Hide the visual window instead of
         // trusting the compositor to discard it.
-        if showing && !IsWindowVisible(self.visual_hwnd).as_bool() {
-            let _ = ShowWindow(self.visual_hwnd, SW_SHOWNA);
+        if !showing {
+            if IsWindowVisible(self.visual_hwnd).as_bool() {
+                let _ = ShowWindow(self.visual_hwnd, SW_HIDE);
+            }
+            self.dirty = false;
+            return Ok(());
         }
+        self.ensure_renderer()?;
         if let Some(mut r) = self.renderer.take() {
             let result = r.render(&self.scene(), true);
             self.renderer = Some(r);
@@ -2852,8 +3006,8 @@ impl App {
                 }
             }
         }
-        if !showing {
-            let _ = ShowWindow(self.visual_hwnd, SW_HIDE);
+        if !IsWindowVisible(self.visual_hwnd).as_bool() {
+            let _ = ShowWindow(self.visual_hwnd, SW_SHOWNA);
         }
         self.continuous_last = Instant::now();
         self.dirty = false;
@@ -3055,11 +3209,18 @@ impl App {
     fn advance_timers(&mut self, now: Instant) {
         let dt = now.saturating_duration_since(self.last_timer);
         self.last_timer = now;
+        if !self.timers.items.iter().any(|t| t.running && !t.finished) {
+            self.timer_fraction = 0;
+            return;
+        }
         let nanos = dt.as_nanos() + self.timer_fraction;
         self.timer_fraction = nanos % 1_000_000;
         let elapsed_ms = (nanos / 1_000_000).min(u64::MAX as u128) as u64;
-        self.widget_data
-            .advance_focus(&self.timers.items, elapsed_ms);
+        if elapsed_ms == 0 { return; }
+        if self.timers.items.iter().any(|t| t.running && !t.finished &&
+            (t.mode == "workflow" || (t.mode == "pomodoro" && t.phase == "focus"))) {
+            self.widget_data.advance_focus(&self.timers.items, elapsed_ms);
+        }
         let events = self.timers.advance(elapsed_ms);
         if !events.is_empty() {
             for t in events {
@@ -3086,20 +3247,33 @@ impl App {
             }
         }
     }
+    fn tick_reminder_plugins(&mut self, sample: screen_time::Sample) {
+        if !self.reminder_plugins.enabled() { return; }
+        let can_show = !self.user_hidden && !self.session_locked && !self.flag("PauseNotifications", false);
+        let due = self.reminder_plugins.sample(sample.active_ms, sample.continuous, can_show);
+        for kind in reminder_plugins::Kind::ALL {
+            if !due[kind as usize] { continue; }
+            let (icon,title,detail) = match kind {
+                reminder_plugins::Kind::Stand => ("StandReminder", "久坐提醒", "起来走一走，活动一下。"),
+                reminder_plugins::Kind::Water => ("WaterReminder", "喝水提醒", "记得喝口水。"),
+            };
+            let mut alert = capsule_alert::Alert::new(kind.alert_key().into(),icon,title.into(),detail.into());
+            alert.height = 72.;
+            alert.expires = Instant::now() + Duration::from_secs(15);
+            self.alerts.enqueue(alert);
+        }
+    }
     unsafe fn tick(&mut self) -> Result<()> {
         if self.module_updates.tick(){self.dirty=true;}
+        self.reap_center();
         self.ensure_widget_host();
         if self.opacity > 0.001 {
             self.last_visible = Instant::now();
         }
-        // Nothing has been on screen for ten minutes: return the whole wgpu +
-        // Vello context instead of holding roughly half a gigabyte idle. The next
-        // appearance rebuilds it on demand (`ensure_renderer`). Queued banners, a
-        // decoding cover or a running update all postpone the retirement.
+        // Release an unused renderer without tearing down task state or the host.
         if self.renderer.is_some()
-            && self.opacity <= 0.001
-            && self.fade_to <= 0.001
-            && self.last_visible.elapsed() >= Duration::from_secs(60)
+            && self.opacity <= 0.001 && self.fade_to <= 0.001
+            && self.last_visible.elapsed() >= Duration::from_secs(20)
             && !self.banner.visible()
             && !self.osd_banner.visible()
             && !self.bottom_osd.visible()
@@ -3215,7 +3389,10 @@ impl App {
         self.advance_timers(Instant::now());
         if self.last_context_poll.elapsed()>=Duration::from_secs(1){
             self.last_context_poll=Instant::now();
-            if !self.demo{self.screen_time.poll(awake_ms(),self.session_locked);}
+            if !self.demo {
+                let sample = self.screen_time.poll(self.last_context_poll,awake_ms(),self.session_locked);
+                self.tick_reminder_plugins(sample);
+            }
             self.widget_metrics.poll();
             let mut placements=self.desktop_widgets.items.clone();
             placements.extend(self.overview_widgets.items.iter().cloned());
@@ -3462,13 +3639,14 @@ impl App {
             self.dirty = true;
         }
         let mut pt = POINT::default();
-        let _ = GetCursorPos(&mut pt);
-        let mut local = pt;
-        let _ = ScreenToClient(self.hwnd, &mut local);
-        let scale = GetDpiForWindow(self.hwnd).max(96) as f64 / 96.;
-        let x = local.x as f64 / scale;
-        let y = local.y as f64 / scale;
-        let hit = self.hit(x, y);
+        let interactive_surface = self.opacity >= 0.01;
+        if interactive_surface || self.dragging.is_some() { let _ = GetCursorPos(&mut pt); }
+        let hit = if interactive_surface {
+            let mut local = pt;
+            let _ = ScreenToClient(self.hwnd, &mut local);
+            let scale = GetDpiForWindow(self.hwnd).max(96) as f64 / 96.;
+            self.hit(local.x as f64 / scale,local.y as f64 / scale)
+        } else { -1 };
         let inside = hit >= 0;
         if inside {
             if let Some(t) = self.manual_until.as_mut() {
@@ -3595,6 +3773,9 @@ impl App {
                 self.last_poll = Instant::now() - Duration::from_secs(1);
                 self.finish_transient();
             }
+        }
+        if self.alerts.pending() && (self.user_hidden || self.flag("PauseNotifications", false)) {
+            for kind in reminder_plugins::Kind::ALL { self.alerts.remove_pending(kind.alert_key()); }
         }
         if self.alerts.visible(){
             let(r,rad)=self.shape();
@@ -3841,8 +4022,10 @@ impl App {
             {
                 let (shape, _) = self.shape();
                 let scale = GetDpiForWindow(self.hwnd).max(96) as f64 / 96.;
-                let x = ((shape.x + shape.w * 0.5) * scale).round() as u16;
-                let y = ((shape.y + shape.h * 0.25) * scale).round() as u16;
+                let x_fraction = r["value"]["x"].as_f64().unwrap_or(0.5).clamp(0., 1.);
+                let y_fraction = r["value"]["y"].as_f64().unwrap_or(0.25).clamp(0., 1.);
+                let x = ((shape.x + shape.w * x_fraction) * scale).round() as u16;
+                let y = ((shape.y + shape.h * y_fraction) * scale).round() as u16;
                 let pos = LPARAM(((y as u32) << 16 | x as u32) as isize);
                 let down = PostMessageW(Some(self.hwnd), WM_LBUTTONDOWN, WPARAM(1), pos);
                 let up = PostMessageW(Some(self.hwnd), WM_LBUTTONUP, WPARAM(0), pos);
@@ -3878,18 +4061,25 @@ impl App {
                 let mut state = json!({"success":true,"version":DISPLAY_VERSION,"bundleVersion":lyric_backend::updates::installed_version(),"settings":self.settings,"moduleManagement":self.module_updates.state,"moduleVersions":module_versions,"moduleErrors":dotisle_module_api::initialization_errors(),"moduleReady":dotisle_module_api::initialization_errors().as_object().is_some_and(|m|m.is_empty()),"softwareUpdate":self.updates.state,"updateChannel":self.updates.channel(),"settingsDark":match self.settings["SettingsTheme"].as_str().unwrap_or("System"){"Dark"=>true,"Light"=>false,_=>theme_accent::system_dark()},"dataDirectory":self.data.to_string_lossy(),"musicPreview":self.music_preview(),"activeSource":self.snapshot["activeSource"],"nativeStatus":self.snapshot["nativeStatus"],"title":t["title"],"artist":t["artist"],"songId":t["songId"],"player":t["sourceApp"],"position":self.snapshot["positionSeconds"],"duration":t["durationSeconds"],"timeline":self.snapshot["clockStatus"],"lyricSource":self.snapshot["lyricSource"],"isPlaying":self.snapshot["isPlaying"],"canSeek":self.snapshot["canSeek"],"seekStatus":self.snapshot["seekStatus"],"neteaseAttention":lyric_backend::netease_control::attention_diagnostics(),"mediaCommand":self.snapshot["mediaCommand"],"expanded":self.expanded,"islandEnabled":!self.user_hidden,"islandVisible":self.opacity>0.001,"processId":std::process::id(),"windowLevel":unsafe{window_level::snapshot(self.visual_hwnd,self.hwnd)},"glassCaptures":self.renderer.as_ref().map_or(0,Renderer::glass_captures),"rendererGeneration":self.renderer_generation,"renderFrames":self.render_frames,"renderer":"Vello Hybrid 0.2 / wgpu 29","lastError":self.error,"notificationState":self.notification_state,"notificationVisible":self.banner.visible(),"notificationGeometry":self.notification_geometry(),"osdVisible":self.osd_banner.visible()||self.bottom_osd.visible(),"bottomOsdVisible":self.bottom_osd.visible(),"systemState":self.osd.status(),"todos":self.todos.list(&self.todo_now),"todoError":self.todos.error,"today":self.todo_now.date,"now":self.todo_now.time,"pendingPage":self.pending_page,"pendingRequestId":self.pending_request,"pendingCenterAction":self.pending_center_action,"centerFrontend":if self.base.join("LyricIsland.Center.exe").is_file(){"go"}else{"missing"},"islandGeometry":{"mini":self.mini(),"capsule":self.layout.capsule,"card":self.layout.card,"satellite":!self.mini()&&self.components.len()>1,"horizontalGestures":self.flag("SwipeActivities",true)},"miniContrast":{"enabled":self.mini()&&self.flag("MiniAutoContrast",true)&&self.settings["MiniMaterial"]=="Glass","sampledLuminance":self.mini_contrast.sampled,"darkText":self.mini_contrast.dark,"foreground":format!("#{:06X}",self.mini_contrast.ink()&0xffffff)},"compactTargetWidth":self.compact_size.width_target,"compactWidth":self.compact_size.width,"compactHeight":self.compact_size.height,"compactSecondary":self.compact_secondary,"timers":self.timers.list(),"timerError":self.timers.error,"screenTime":self.screen_time.snapshot(),"weather":self.widget_data.value["island-weather"],"capsuleAlertVisible":self.alerts.visible(),"widgetData":self.widget_data.value,"desktopWidgets":self.desktop_widgets.list(),"overviewWidgets":self.overview_widgets.list(),"desktopWidgetError":self.desktop_widgets.error,"systemMetrics":self.widget_metrics.value,"activeComponent":self.selected,"components":self.components,"notificationHistory":self.history.list(),"historyError":self.history.error,"quickHotkey":self.settings["QuickReminderHotkey"],"pendingAction":self.pending_action,"sessionLocked":self.session_locked,"focusResume":self.focus_resume.as_ref().map(|r|json!({"generation":r.generation,"ids":r.ids,"prompted":r.prompted})),"templates":self.templates.list(),"workflowTemplateError":self.templates.error,"appRules":self.rules.list(&self.todo_now.date),"appRuleError":self.rules.error,"foreground":{"path":self.foreground.path,"name":self.foreground.name,"unreadable":self.foreground.unreadable},"lockWatch":true});
                 state["notificationContent"]=self.banner.notice.as_ref().map(|n|json!({"appId":n.app_id,"titleCharacters":n.title.chars().count(),"bodyCharacters":n.body.chars().count(),"iconBytes":n.icon.as_ref().map_or(0,Vec::len)})).unwrap_or(Value::Null);
                 state["islandWindowPresent"] = json!(self.opacity > 0.001);
-                state["islandVisible"] = json!(self.opacity > 0.001 && !self.resident_idle());
-                state["idleClickThrough"] = json!(self.resident_idle() && self.input_region == Some([0; 10]));
+                state["idleClickThrough"] = json!(self.input_region == Some([0; 10]));
                 state["verificationAlertVisible"] = json!(self.alerts.visible() && self.alerts.active.as_ref().is_some_and(|a|a.code.is_some()));
                 state["verificationCodeLength"] = json!(self.alerts.active.as_ref().and_then(|a|a.code.as_ref()).map(String::len));
                 state["residentIdle"] = json!(self.resident_idle());
-                state["backgroundOpacity"] = json!(self.background_opacity());
+                if self.selected == resident::ID {
+                    let view = &self.resident.view;
+                    state["residentContent"] = json!({"page":view.page.name(),"text":view.label,"battery":view.battery,
+                        "expandedDeviceRows":view.devices.len(),"extraDevices":view.more_devices});
+                }
+                state["backgroundOpacity"] = json!(1.);
                 state["glassRefraction"] = self
                     .renderer
                     .as_ref()
                     .map(|r| r.glass_status())
                     .unwrap_or(json!({"active":false,"samples":0}));
                 state["plugins"] = self.plugins.state.clone();
+                state["reminderPlugins"] = self.reminder_plugins.state();
+                state["reminderPluginVisible"] = json!(self.alerts.active.as_ref().and_then(|alert| alert.key.strip_prefix("reminder:")));
+                state["rendererLoaded"] = json!(self.renderer.is_some());
                 state["pluginError"] = json!(self.plugins.error);
                 state["systemAccent"] = json!(theme_accent::system_accent());
                 state
@@ -3939,6 +4129,14 @@ impl App {
                 self.updates.check(true);
                 json!({"success":true,"message":"正在检查双源更新…"})
             }
+            "musicLayoutPreview" => match self.music_layout_preview(&r["value"]) {
+                Ok(preview) => preview,
+                Err(message) => json!({"success":false,"message":message}),
+            },
+            "updateReview" => match self.updates.review() {
+                Ok(review) => review,
+                Err(message) => json!({"success":false,"message":message}),
+            },
             "neteaseEnableSilent" => {
                 self.enable_netease_silent();
                 json!({"success":true,"message":"已显示网易云自动连接状态。"})
@@ -3946,7 +4144,7 @@ impl App {
             "updateDownload" | "installUpdate" => {
                 let pipe = std::env::var("LYRICISLAND_TEST_PIPE")
                     .unwrap_or_else(|_| "LyricIsland.Native.Settings.v1".into());
-                match self.updates.begin(&self.base, &self.data, &pipe) {
+                match self.updates.begin(&self.base, &self.data, &pipe, &r["value"]) {
                     Ok(()) => {
                         self.update_card_deleted = false;
                         if self.selected != "update" {
@@ -4034,6 +4232,26 @@ impl App {
                 let on = r["value"]["on"].as_bool().unwrap_or(true);
                 self.show_osd(osd::Hint { kind, on }, true);
                 json!({"success":true})
+            }
+            "reminderPluginConfigure" => {
+                let (kind, next) = match self.reminder_plugins.proposed(&r["value"]) {
+                    Ok(v) => v,
+                    Err(message) => return json!({"success":false,"message":message}),
+                };
+                let old = std::mem::replace(&mut self.settings["ReminderPlugins"], next.clone());
+                if let Err(message) = self.save() {
+                    self.settings["ReminderPlugins"] = old;
+                    return json!({"success":false,"message":message});
+                }
+                if self.reminder_plugins.apply(kind, &next) {
+                    self.alerts.remove_pending(kind.alert_key());
+                    if self.alerts.active.as_ref().is_some_and(|a| a.key == kind.alert_key()) {
+                        let (r,rad) = self.shape();
+                        self.alerts.dismiss(r,rad,self.start.elapsed().as_secs_f64(),self.flag("Animation",true));
+                        self.dirty = true;
+                    }
+                }
+                json!({"success":true,"reminderPlugins":next,"message":"已保存"})
             }
             "pluginInstall" | "pluginEnable" | "pluginRemove" => {
                 let result=match r["command"].as_str().unwrap_or(""){
@@ -4564,6 +4782,7 @@ impl App {
                     self.dirty = true;
                 }
                 let key = r["value"]["key"].as_str().unwrap_or("");
+                if key == "AppUsageRemindersEnabled" { self.last_awake = awake_ms(); }
                 if config::is_paint_setting(key) {
                     if let Some(values) = self.acrylic_preview.as_object_mut() {
                         values.remove(key);
@@ -4672,8 +4891,8 @@ impl App {
                 {
                     self.apply_osd();
                 }
-                if key == "IslandResidentEnabled" {
-                    if self.flag("IslandResidentEnabled", false) {
+                if key == "IslandKeepVisibleEnabled" {
+                    if self.flag("IslandKeepVisibleEnabled", false) {
                         self.hide_at = None;
                         self.missing_since = None;
                         self.display_wanted = true;
@@ -4681,6 +4900,9 @@ impl App {
                     }
                     self.poll();
                     self.dirty = true;
+                }
+                if [resident::TIME, resident::SYSTEM, resident::DEVICES].contains(&key) {
+                    self.refresh_components();
                 }
                 self.sync_bottom_material();
                 self.transition = None;
@@ -6383,7 +6605,8 @@ fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 // The 16 ms poll serves interaction and playback polling. A fully hidden
                 // island with nothing scheduled has neither, so it settles into a slow
                 // heartbeat instead of waking the loop sixty times a second forever.
-                let idle = app.opacity <= 0.001
+                let idle = (app.opacity <= 0.001 || (app.resident_idle() && !app.cursor_inside && app.pressed == 0))
+                    && !app.expanded && !app.held && app.dragging.is_none()
                     && !app.banner.visible()
                     && !app.osd_banner.visible()
                     && !app.alerts.visible()
@@ -7728,7 +7951,7 @@ mod resident_tests {
         a.snapshot = json!({"track":null,"isPlaying":false});
         a.expanded = false;
         a.held = false;
-        a.settings["IslandResidentEnabled"] = json!(true);
+        a.settings["IslandKeepVisibleEnabled"] = json!(true);
         a
     }
     #[test]
@@ -7743,32 +7966,24 @@ mod resident_tests {
         a.finish_transient();
         assert_eq!(a.fade_to, 1.);
         assert!(a.resident_idle());
-        a.settings["IslandResidentEnabled"] = json!(false);
+        a.settings["IslandKeepVisibleEnabled"] = json!(false);
         a.finish_transient();
         assert_eq!(a.opacity, 0.);
     }
     #[test]
-    fn occupied_island_restores_background_even_without_music() {
+    fn idle_island_is_opaque_and_interactive_without_music() {
         let mut a = idle();
-        assert!(a.background_opacity() < 0.2);
+        a.opacity = 1.;
+        assert_eq!(a.scene().background_opacity, 1.);
+        assert_eq!(a.scene().opacity, 1.);
+        assert_ne!(a.hit(a.layout.capsule.x + a.layout.capsule.w / 2., a.layout.capsule.y + a.layout.capsule.h / 2.), -1);
         a.snapshot = json!({"track":{"id":"song","title":"音乐"},"isPlaying":true});
-        assert_eq!(a.background_opacity(), 1.);
+        assert!(!a.resident_idle());
         a.snapshot["isPlaying"] = json!(false);
         assert!(a.resident_idle());
         let (r, radius) = a.shape();
         a.banner.show(Default::default(), r, radius, a.layout.host.w, 80., 0., false);
-        assert_eq!(a.background_opacity(), 1.);
-        a.banner = Default::default();
-        a.osd_banner.show_compact(Default::default(), r, radius, a.layout.host.w, 0., false);
-        assert_eq!(a.background_opacity(), 1.);
-        a.osd_banner = Default::default();
-        a.expanded = true;
-        assert_eq!(a.background_opacity(), 0.);
-        assert_eq!(a.scene().opacity, 0.);
-        assert_eq!(a.hit(a.layout.capsule.x + 10., a.layout.capsule.y + 10.), -1);
-        a.expanded = false;
-        a.settings["IslandResidentEnabled"] = json!(false);
-        assert_eq!(a.background_opacity(), 1.);
+        assert!(!a.resident_idle());
     }
     #[test]
     fn verification_restores_manual_hide_even_when_residency_is_enabled() {

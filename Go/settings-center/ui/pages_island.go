@@ -311,14 +311,20 @@ func (a *App) islandTabGestures(c *ui.Context, p *Palette, x, y, w float32) floa
 	Button(c, p, "再看一次", x+w-174, y+29, 150, 46, "再看一次", "play_arrow", false, true, a.startGestureTutorial)
 	y += 128
 	y = a.islandHeading(c, p, "出现与退场", x, y, w)
-	on := a.islandBool("IslandResidentEnabled", false)
+	on := a.islandBool("IslandKeepVisibleEnabled", false)
 	Panel(c, p, x, y, w, 88, s.Container)
-	ToggleRow(c, p, "IslandResidentEnabled", x+24, y+12, w-48, "灵动岛常驻", "空闲时整岛透明并穿透鼠标；任务占用时恢复显示。", on, func() {
-		a.pushNative("IslandResidentEnabled", !on)
+	ToggleRow(c, p, "IslandKeepVisibleEnabled", x+24, y+12, w-48, "灵动岛常驻", "空闲时循环显示你选择的内容。", on, func() {
+		a.pushNative("IslandKeepVisibleEnabled", !on)
 	})
-	ui.Box(c).Absolute().Left(x + 106).Top(y + 21).Width(38).Height(LineHeight(14)).Radius(7).Background(Col(s.SecondaryContainer)).IgnoreInput(true)
-	CenteredText(c, "Beta", x+106, y+21, 38, LineHeight(14), 10, s.OnSecondaryContainer, true).IgnoreInput(true)
 	y += 104
+	if on {
+		y = a.islandHeading(c, p, "常驻轮播内容", x, y, w)
+		y = a.islandToggles(c, p, x, y, w, []islandToggleRow{
+			{"时间", "显示本地时间。当没有可轮播的内容时，也会显示时间。", "IslandResidentShowTime", true},
+			{"系统占用", "同时显示 CPU 与内存的当前占用率。", "IslandResidentShowSystem", false},
+			{"设备电量", "逐个显示已连接的无线设备。没有连接时跳过。", "IslandResidentShowDevices", false},
+		})
+	}
 	y = a.islandToggles(c, p, x, y, w, []islandToggleRow{
 		{"暂停音乐后隐藏", "有计时器等活动或开启常驻时继续显示。", "HideWhenPaused", true},
 		{"始终置顶", "不抢占键盘焦点。", "AlwaysOnTop", true},
@@ -474,10 +480,10 @@ func (a *App) islandTabProgress(c *ui.Context, p *Palette, x, y, w float32) floa
 	s := &p.Scheme
 	y = a.islandHeading(c, p, "进度条样式", x, y, w)
 	barStyles := [][2]string{
-		{"波浪", "Wavy"}, {"常规", "Normal"}, {"圆角", "Rounded"}, {"纤细", "Thin"},
+		{"标准", "Normal"}, {"波浪", "Wavy"}, {"圆角", "Rounded"}, {"纤细", "Thin"},
 		{"厚重", "Thick"}, {"渐变", "Gradient"}, {"分段", "Segmented"}, {"圆点", "Dots"},
 	}
-	y = a.styleChipGrid(c, p, x, y, w, barStyles, "ProgressBarStyle", "Wavy")
+	y = a.styleChipGrid(c, p, x, y, w, barStyles, "ProgressBarStyle", "Normal")
 	thumbOn := a.islandBool("ProgressBarThumbEnabled", false)
 	y = a.islandToggles(c, p, x, y, w, []islandToggleRow{
 		{"显示滑块", "进度末端显示当前主题的滑块。", "ProgressBarThumbEnabled", false},
@@ -494,7 +500,7 @@ func (a *App) islandTabProgress(c *ui.Context, p *Palette, x, y, w float32) floa
 	// Live preview of the current bar style at full width.
 	Panel(c, p, x, y, w, 72, s.Container)
 	fraction := 0.38
-	bar := a.islandString("ProgressBarStyle", "Wavy")
+	bar := a.islandString("ProgressBarStyle", "Normal")
 	drawBarPreview(c, p, x+24, y+22, w-48, 28, bar, fraction)
 	return y + 88
 }

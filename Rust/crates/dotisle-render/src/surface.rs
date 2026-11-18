@@ -20,13 +20,24 @@ pub fn composition_instance() -> wgpu::Instance {
 fn device(
     instance: &wgpu::Instance,
     surface: Option<&wgpu::Surface<'_>>,
+    power_preference: wgpu::PowerPreference,
 ) -> Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue), String> {
+    let started = std::time::Instant::now();
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         compatible_surface: surface,
-        power_preference: wgpu::PowerPreference::HighPerformance,
+        power_preference,
         ..Default::default()
     }))
     .map_err(|e| e.to_string())?;
+    open_device(adapter, started.elapsed(), "enumerated")
+}
+
+fn open_device(
+    adapter: wgpu::Adapter,
+    select_time: std::time::Duration,
+    route: &str,
+) -> Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue), String> {
+    let started = std::time::Instant::now();
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("DotIsle Hybrid"),
         required_limits: wgpu::Limits {
@@ -41,8 +52,20 @@ fn device(
     .map_err(|e| e.to_string())?;
     if std::env::var_os("DOTISLE_TRACE_GPU").is_some() {
         eprintln!("hybrid adapter {:?}", adapter.get_info());
+        eprintln!("hybrid device {route}: select {select_time:?}, open {:?}", started.elapsed());
     }
     Ok((adapter, device, queue))
+}
+
+fn preferred_integrated_device(instance: &wgpu::Instance) -> Option<(wgpu::Adapter, wgpu::Device, wgpu::Queue)> {
+    let started = std::time::Instant::now();
+    // Expose and register the adapter from this very instance; wgpu still owns
+    // validation and device creation after the DXGI-only selection shortcut.
+    let adapter = unsafe {
+        let hal = instance.as_hal::<wgpu::hal::api::Dx12>()?;
+        instance.create_adapter_from_hal(hal.preferred_integrated_adapter()?)
+    };
+    open_device(adapter, started.elapsed(), "preferred").ok()
 }
 fn texture(
     device: &wgpu::Device,
@@ -74,6 +97,17 @@ fn save_texture(
     path: &Path,
     straight_alpha: bool,
 ) -> Result<(), String> {
+    let pixels = read_texture(device, queue, texture, straight_alpha)?;
+    image::save_buffer(path, &pixels, texture.width(), texture.height(), image::ColorType::Rgba8)
+        .map_err(|e| e.to_string())
+}
+
+fn read_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    straight_alpha: bool,
+) -> Result<Vec<u8>, String> {
     let w = texture.width();
     let h = texture.height();
     let row = (w * 4).div_ceil(256) * 256;
@@ -139,7 +173,7 @@ fn save_texture(
     }
     drop(mapped);
     buffer.unmap();
-    image::save_buffer(path, &pixels, w, h, image::ColorType::Rgba8).map_err(|e| e.to_string())
+    Ok(pixels)
 }
 
 // Every control-centre/desktop window on this event thread shares one device,
@@ -151,14 +185,27 @@ struct SharedContext {
     queue: wgpu::Queue,
     renderers: RefCell<HashMap<wgpu::TextureFormat, Rc<RefCell<Renderer>>>>,
 }
-thread_local! {static SHARED_CONTEXT:RefCell<Weak<SharedContext>>=RefCell::new(Weak::new());}
-fn shared_context() -> Result<Rc<SharedContext>, String> {
-    SHARED_CONTEXT.with(|slot| {
+thread_local! {
+    static SHARED_CONTEXT: RefCell<Weak<SharedContext>> = RefCell::new(Weak::new());
+    static ISLAND_CONTEXT: RefCell<Weak<SharedContext>> = RefCell::new(Weak::new());
+}
+fn shared_context(low_power: bool, prefer_dxgi: bool) -> Result<Rc<SharedContext>, String> {
+    let cache = if low_power { &ISLAND_CONTEXT } else { &SHARED_CONTEXT };
+    cache.with(|slot| {
         if let Some(context) = slot.borrow().upgrade() {
             return Ok(context);
         }
         let instance = composition_instance();
-        let (adapter, device, queue) = device(&instance, None)?;
+        let (adapter, device, queue) = if low_power {
+            if let Some(gpu) = prefer_dxgi.then(|| preferred_integrated_device(&instance)).flatten() {
+                gpu
+            } else {
+                device(&instance, None, wgpu::PowerPreference::LowPower)
+                    .or_else(|_| device(&instance, None, wgpu::PowerPreference::HighPerformance))?
+            }
+        } else {
+            device(&instance, None, wgpu::PowerPreference::HighPerformance)?
+        };
         let context = Rc::new(SharedContext {
             instance,
             adapter,
@@ -188,6 +235,29 @@ pub struct Surface {
 }
 impl Surface {
     pub unsafe fn new(hwnd: HWND, width: u32, height: u32) -> Result<Self, String> {
+        Self::new_with_profile(hwnd, width, height, false, 3, false, false)
+    }
+    pub unsafe fn new_island(hwnd: HWND, width: u32, height: u32) -> Result<Self, String> {
+        Self::new_with_profile(hwnd, width, height, true, 2, false, true)
+    }
+    pub unsafe fn new_desktop(hwnd: HWND, width: u32, height: u32) -> Result<Self, String> {
+        let (low_power, latency, prefer_dxgi, defer_filter) = if std::env::var("LYRICISLAND_TEST_PIPE")
+            .is_ok_and(|pipe| pipe.starts_with("LyricIsland.Settings.test."))
+        {
+            match std::env::var("DOTISLE_TEST_WIDGET_GPU").as_deref() {
+                Ok("high-3") => (false, 3, false, false),
+                Ok("high-2") => (false, 2, false, false),
+                Ok("low-3") => (true, 3, false, false),
+                Ok("low-2") => (true, 2, false, false),
+                Ok("low-2-select") => (true, 2, true, false),
+                _ => (true, 2, true, true),
+            }
+        } else {
+            (true, 2, true, true)
+        };
+        Self::new_with_profile(hwnd, width, height, low_power, latency, prefer_dxgi, defer_filter)
+    }
+    unsafe fn new_with_profile(hwnd: HWND, width: u32, height: u32, low_power: bool, latency: u32, prefer_dxgi: bool, defer_filter: bool) -> Result<Self, String> {
         let phase = std::time::Instant::now();
         let composition: IDCompositionDevice =
             DCompositionCreateDevice2(None::<&windows::core::IUnknown>)
@@ -197,7 +267,9 @@ impl Surface {
             .map_err(|e| e.to_string())?;
         let visual = composition.CreateVisual().map_err(|e| e.to_string())?;
         target.SetRoot(&visual).map_err(|e| e.to_string())?;
-        let shared = shared_context()?;
+        let composition_at = std::time::Instant::now();
+        let shared = shared_context(low_power, prefer_dxgi)?;
+        let context_at = std::time::Instant::now();
         let instance = shared.instance.clone();
         let device = shared.device.clone();
         let queue = shared.queue.clone();
@@ -223,29 +295,31 @@ impl Surface {
             width: width.max(1),
             height: height.max(1),
             present_mode: wgpu::PresentMode::AutoVsync,
-            // Keep a bounded queue for the hybrid-GPU copy and compositor.
-            // This avoids missed refreshes while VSync bounds presentation.
-            desired_maximum_frame_latency: 3,
+            desired_maximum_frame_latency: latency,
             alpha_mode: wgpu::CompositeAlphaMode::PreMultiplied,
             view_formats: vec![],
         };
         raw.configure(&device, &config);
+        let swapchain_at = std::time::Instant::now();
         let renderer = shared
             .renderers
             .borrow_mut()
             .entry(format)
             .or_insert_with(|| {
-                Rc::new(RefCell::new(Renderer::new(
+                Rc::new(RefCell::new(Renderer::with_filter_policy(
                     &device,
                     format,
                     config.width,
                     config.height,
+                    defer_filter,
                 )))
             })
             .clone();
         composition.Commit().map_err(|e| e.to_string())?;
         if std::env::var_os("DOTISLE_TRACE_GPU").is_some() {
-            eprintln!("hybrid surface initialized {:?}", phase.elapsed());
+            eprintln!("hybrid surface initialized {:?}, latency {latency}", phase.elapsed());
+            eprintln!("hybrid surface phases: composition {:?}, context {:?}, swapchain {:?}, renderer {:?}",
+                composition_at - phase, context_at - composition_at, swapchain_at - context_at, swapchain_at.elapsed());
         }
         Ok(Self {
             draw_timings: [0.; 7],
@@ -302,7 +376,9 @@ impl Surface {
                 wgpu::CurrentSurfaceTexture::Success(frame)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => Some(frame),
                 wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                    None
+                    // Preserve atlas uploads without rasterizing an unpresentable frame.
+                    self.queue.submit([encoder.finish()]);
+                    return Ok(());
                 }
                 wgpu::CurrentSurfaceTexture::Outdated => {
                     // Preparation may have uploaded new atlas images. Keep those
@@ -440,6 +516,19 @@ impl Surface {
         *target = None;
         result
     }
+
+    pub fn capture_frame(&self, scene: &Scene, scale: f64, width: u32, height: u32) -> Result<Vec<u8>, String> {
+        let target = texture(&self.device, width, height, self.config.format);
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        self.renderer.borrow_mut().render(&self.device, &self.queue, &mut encoder,
+            scene, scale, width, height, &target.create_view(&Default::default()))?;
+        self.queue.submit([encoder.finish()]);
+        let pixels = read_texture(&self.device, &self.queue, &target, true)?;
+        let mut png = Vec::new();
+        image::ImageEncoder::write_image(image::codecs::png::PngEncoder::new(&mut png),
+            &pixels, width, height, image::ExtendedColorType::Rgba8).map_err(|e| e.to_string())?;
+        Ok(png)
+    }
 }
 
 pub struct Offscreen {
@@ -451,7 +540,7 @@ pub struct Offscreen {
 impl Offscreen {
     pub fn new(width: u32, height: u32) -> Result<Self, String> {
         let instance = composition_instance();
-        let (_, device, queue) = device(&instance, None)?;
+        let (_, device, queue) = device(&instance, None, wgpu::PowerPreference::HighPerformance)?;
         let renderer = Renderer::new(&device, wgpu::TextureFormat::Rgba8Unorm, width, height);
         Ok(Self {
             renderer,
@@ -481,5 +570,45 @@ impl Offscreen {
         )?;
         self.queue.submit([encoder.finish()]);
         save_texture(&self.device, &self.queue, &texture, path, false)
+    }
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+    use vello::{kurbo::{Affine, Rect}, peniko::{Color, Fill}};
+
+    #[test]
+    #[ignore = "requires a real Windows DX12 device"]
+    fn deferred_filter_matches_eager_pixels_on_first_use_and_reuse() {
+        let instance = composition_instance();
+        let (_, device, queue) = preferred_integrated_device(&instance)
+            .or_else(|| self::device(&instance, None, wgpu::PowerPreference::LowPower).ok())
+            .expect("DX12 render device");
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let mut eager = Renderer::new(&device, format, 64, 64);
+        let mut lazy = Renderer::with_filter_policy(&device, format, 64, 64, true);
+        let target = texture(&device, 64, 64, format);
+        let view = target.create_view(&Default::default());
+        let render = |renderer: &mut Renderer, scene: &Scene| {
+            let mut encoder = device.create_command_encoder(&Default::default());
+            renderer.render(&device, &queue, &mut encoder, scene, 1., 64, 64, &view).unwrap();
+            queue.submit([encoder.finish()]);
+            read_texture(&device, &queue, &target, false).unwrap()
+        };
+        let fill = |scene: &mut Scene| {
+            scene.fill(Fill::NonZero, Affine::IDENTITY, Color::from_rgba8(190, 70, 50, 255),
+                None, &Rect::new(24., 24., 40., 40.));
+        };
+        let mut plain = Scene::new();
+        fill(&mut plain);
+        let mut filtered = Scene::new();
+        filtered.push_gaussian_layer(Affine::IDENTITY, &Rect::new(4., 4., 60., 60.), 2.5);
+        fill(&mut filtered);
+        filtered.pop_layer();
+        let reference = render(&mut eager, &filtered);
+        assert_ne!(render(&mut lazy, &plain), reference, "fixture must exercise filtering");
+        assert_eq!(render(&mut lazy, &filtered), reference);
+        assert_eq!(render(&mut lazy, &filtered), reference);
     }
 }

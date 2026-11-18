@@ -15,14 +15,18 @@ for %%F in ("%FMT_REPORT%") do if %%~zF GTR 0 (
   exit /b 1
 )
 del "%FMT_REPORT%"
+set "CENTER_MOD=%TEMP%\DotIsle-MyGo-%RANDOM%-%RANDOM%\center.mod"
+echo === MyGo file-backed fonts ===
+go run ./cmd/mygo-patch -out "%CENTER_MOD%"
+if errorlevel 1 exit /b 1
 echo === go vet ===
-go vet ./...
+go vet -modfile="%CENTER_MOD%" -tags=dotisle_mygo_fontfile ./...
 if errorlevel 1 exit /b 1
 echo === go build ===
-go build -trimpath -ldflags "-s -w -H=windowsgui" -o LyricIsland.Center.exe .
+go build -modfile="%CENTER_MOD%" -tags=dotisle_mygo_fontfile -trimpath -ldflags "-s -w -H=windowsgui" -o LyricIsland.Center.exe .
 if errorlevel 1 exit /b 1
 echo === go test all packages ===
-go test -count=1 -timeout=90s ./...
+go test -modfile="%CENTER_MOD%" -tags=dotisle_mygo_fontfile -count=1 -timeout=90s ./...
 if errorlevel 1 exit /b 1
 echo BUILD_AND_TESTS=PASS
 exit /b 0

@@ -73,6 +73,12 @@ func (a *App) pickModuleDLL(id string) {
 // dialogViews renders whichever modal the page layer requested. Call from the root
 // after the page content so dialogs paint on top.
 func (a *App) dialogViews(c *ui.Context, w, h float32) {
+	a.considerInstalledNotes()
+	if a.updateNotes != nil {
+		a.updateNotesView(c, w, h)
+		a.showToast(c)
+		return
+	}
 	a.maybePromptCity()
 	if a.cityPrompt != nil {
 		a.cityPromptView(c)

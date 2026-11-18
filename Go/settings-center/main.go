@@ -8,8 +8,6 @@ import (
 	"log"
 	"os"
 	"runtime/debug"
-	"sync/atomic"
-	"time"
 
 	"dotisle/settings/consent"
 	"dotisle/settings/desktop"
@@ -17,12 +15,7 @@ import (
 	"dotisle/settings/prefs"
 	"dotisle/settings/ui"
 	"github.com/egoist/mygo"
-	mygoui "github.com/egoist/mygo/ui"
 )
-
-// centerHidden tells that the window was closed to the tray, where the process
-// stays resident for the island pump and the desktop widgets.
-var centerHidden atomic.Bool
 
 // tuneGC keeps the resident process small: its live heap is a few megabytes, but
 // the default GOGC=100 keeps a target of twice that plus the churn of a frame
@@ -32,23 +25,6 @@ var centerHidden atomic.Bool
 func tuneGC() {
 	debug.SetGCPercent(50)
 	debug.SetMemoryLimit(192 << 20)
-}
-
-// trimWhenHidden returns heap pages to the OS once the window has stayed hidden,
-// instead of waiting for the runtime's five-minute scavenger. Showing the window
-// in the meantime cancels it, so a user reopening never pays for the trim.
-func trimWhenHidden(win *mygo.Window, app *ui.App) {
-	win.OnShow(func() { centerHidden.Store(false); app.BeginCenterVisit() })
-	win.OnHide(func() {
-		centerHidden.Store(true)
-		app.EndCenterVisit()
-		go func() {
-			time.Sleep(3 * time.Second)
-			if centerHidden.Load() {
-				debug.FreeOSMemory()
-			}
-		}()
-	})
 }
 
 func main() {
@@ -89,12 +65,10 @@ func main() {
 	}
 
 	app := &ui.App{Prefs: p, Data: data, SettingsTab: ui.TabRoot, EnableCityPrompt: true}
-	if !*warm {
-		app.BeginCenterVisit()
-	}
 	app.LoadStartupSettings()
 	host := desktop.New(data)
 	defer host.Stop()
+	center := &centerWindow{app: app, allowIdleExit: os.Getenv("DOTISLE_CENTER_IDLE_EXIT") == "1", released: *warm}
 	// Connect while the native window and fonts initialize. The buffered pump
 	// retains its first snapshot until the UI thread can apply it.
 	snapshots := island.Run(data)
@@ -102,36 +76,13 @@ func main() {
 
 	mygo.App.WhenReady(func() {
 		startupMark("ready")
-		ui.RegisterFonts()
-		startupMark("fonts")
+		app.ShowCenter = center.show
+		// Closing the last MyGo window must not stop the embedded desktop host.
+		mygo.App.OnWindowAllClosed(func() {})
 		if !*warm {
 			app.StartSignature()
+			center.show()
 		}
-		win := mygo.NewWindow(mygo.WindowOptions{
-			Title:             "点屿 · 控制中心",
-			Hidden:            *warm,
-			Width:             ui.WindowW,
-			Height:            ui.WindowH,
-			MinWidth:          ui.WindowW,
-			MinHeight:         ui.WindowH,
-			MaxWidth:          ui.WindowW,
-			MaxHeight:         ui.WindowH,
-			DisableResize:     true,
-			DisableMaximize:   true,
-			DisableFullScreen: true,
-			Frameless:         true,
-			Vibrancy:          mygo.VibrancyMica,
-			BackgroundColor:   "transparent",
-			Content:           mygoui.View(app.View),
-		})
-		win.OnReadyToShow(func() {
-			startupMark("first-frame")
-			if err := win.SetIcon(ui.AppIcon); err != nil {
-				log.Printf("window icon: %v", err)
-			}
-		})
-		startupMark("window")
-		app.Win = win
 		// Window creation also overlaps the pipe read. Install any ready packet
 		// before returning to the first frame, without waiting for a slow backend.
 		var initial *island.State
@@ -153,22 +104,14 @@ func main() {
 			}
 		default:
 		}
-		trimWhenHidden(win, app)
-		watchCenterShow(data, func() {
-			win.Update(func() {
-				if win.IsMinimized() {
-					win.Restore()
-				}
-				win.Show()
-			})
-		})
+		watchCenterShow(data, func() { mygo.RunOnMain(center.show) })
 		startupMark("watch")
 
-		// The island pump: every snapshot lands on the main thread through Update.
+		// The pump and desktop host keep running even when there is no window.
 		go func() {
 			firstState := initial == nil || initial.Err != ""
 			if initial != nil && initial.Err == "" {
-				win.Update(func() {
+				mygo.RunOnMain(func() {
 					if err := host.Apply(initial.Raw); err != nil {
 						log.Printf("desktop bridge: %v", err)
 						app.ReportError(err.Error())
@@ -177,7 +120,10 @@ func main() {
 			}
 			for st := range snapshots {
 				island.PumpTrace("update enter err=%q", st.Err)
-				win.Update(func() {
+				mygo.RunOnMain(func() {
+					if center.idleExit {
+						return
+					}
 					if st.Exited {
 						host.Stop()
 						mygo.App.Quit()
@@ -197,11 +143,16 @@ func main() {
 						}
 					}
 					island.PumpTrace("update applied")
+					center.tryIdleExit()
 				})
 			}
 		}()
 	})
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
+	}
+	if center.idleExit {
+		host.Stop()
+		os.Exit(35) // lyric-native replays an open request that raced this exit.
 	}
 }

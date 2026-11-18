@@ -29,19 +29,40 @@ def run(args):
         settings = json.loads(path.read_text(encoding='utf-8'))
         settings.update(StartupSignatureEnabled=False, StartupGreetingEnabled=False,
                         WeatherAlertsEnabled=False, Animation=False,
+                        IslandResidentEnabled=True,  # Retired transparent preference; ignored.
                         AllowedSources=['LyricIsland.Verify13'])
         path.write_text(json.dumps(settings), encoding='utf-8')
         state = app.start(preserve_settings=True)
-        assert not state['settings']['IslandResidentEnabled']
+        assert not state['settings']['IslandKeepVisibleEnabled'] and 'IslandResidentEnabled' not in state['settings']
         state_when(lambda s: not s['islandVisible'])
         report['checks'].append('Default off: idle island stays hidden')
         for mode in ('Classic', 'Mini'):
             setting('IslandSizeMode', mode)
-            setting('IslandResidentEnabled', True)
-            state = state_when(lambda s: s['islandWindowPresent'] and s['residentIdle'] and not s['islandVisible'] and s['idleClickThrough'])
+            setting('IslandKeepVisibleEnabled', True)
+            def idle(s):
+                return s['islandVisible'] and s['residentIdle'] and not s['idleClickThrough'] and s['backgroundOpacity'] == 1
+            state_when(lambda s: idle(s) and s['residentContent']['page'] == 'time')
+            setting('IslandResidentShowTime', False)
+            setting('IslandResidentShowSystem', True)
+            state_when(lambda s: s.get('residentContent', {}).get('page') == 'system')
+            setting('IslandResidentShowTime', True)
+            state_when(lambda s: s.get('residentContent', {}).get('page') == 'time')
+            state_when(lambda s: s.get('residentContent', {}).get('page') == 'system', timeout=12)
+            assert app.request('testPointerClick')['success']
+            expanded = state_when(lambda s: s['expanded'] and s['residentContent']['page'] == 'system')
+            if not any(d['connected'] for d in expanded['systemMetrics']['wirelessDevices']):
+                assert expanded['residentContent']['expandedDeviceRows'] == 0, expanded
+            shot = app.data / f'{mode}-dashboard.png'
+            assert app.request('debugSnapshot', str(shot))['success'] and shot.stat().st_size > 0
+            width = expanded['islandGeometry']['card']['w']
+            height = expanded['islandGeometry']['card']['h']
+            assert app.request('testPointerClick', {'x': (width - 34) / width, 'y': 28 / height})['success']
+            state_when(lambda s: not s['expanded'])
+            setting('IslandResidentShowSystem', False)
+            report['checks'].append(mode + ': configured rotation, live CPU/memory page, expanded dashboard')
             time.sleep(6.5)
             state = app.request('state')
-            assert state['islandWindowPresent'] and not state['islandVisible'] and state['residentIdle'] and state['backgroundOpacity'] == 0 and state['idleClickThrough'], state
+            assert idle(state), state
             report['snapshots'][mode + ':idle'] = {k: state[k] for k in ('islandVisible', 'islandWindowPresent', 'residentIdle', 'backgroundOpacity', 'idleClickThrough')}
             timer = app.create({'mode': 'pomodoro', 'focus': 60, 'rest': 60, 'rounds': 1})
             state = state_when(lambda s: not s['residentIdle'] and s['backgroundOpacity'] == 1)
@@ -54,24 +75,23 @@ def run(args):
             assert app.act(timer, 'resume')['success']
             state_when(lambda s: s['islandVisible'] and not s['residentIdle'] and s['backgroundOpacity'] == 1)
             assert app.act(timer, 'delete')['success']
-            state_when(lambda s: s['residentIdle'] and not s['islandVisible'] and s['backgroundOpacity'] == 0 and s['idleClickThrough'])
+            state_when(idle)
             setting('PauseNotifications', False)
             assert app.request('notificationPreview')['success']
             state_when(lambda s: s['notificationVisible'] and s['backgroundOpacity'] == 1)
-            setting('PauseNotifications', True)
-            state_when(lambda s: s['residentIdle'] and s['islandWindowPresent'] and not s['islandVisible'] and s['idleClickThrough'])
+            state_when(idle, timeout=20)
             assert app.request('toggleVisibility')['success']
             state_when(lambda s: not s['islandVisible'] and not s['islandEnabled'])
             assert app.request('toggleVisibility')['success']
-            state_when(lambda s: s['islandWindowPresent'] and s['residentIdle'] and not s['islandVisible'] and s['idleClickThrough'])
+            state_when(idle)
             report['checks'].append(mode + ': idle beyond auto-hide deadline; timer and notification hand-offs; manual hide/show')
         assert app.request('prepareUpdateExit')['success']
         app.process.wait(timeout=20)
         app.stop()
         state = app.start(preserve_settings=True)
-        assert state['settings']['IslandResidentEnabled']
-        state_when(lambda s: s['islandWindowPresent'] and s['residentIdle'] and not s['islandVisible'] and s['idleClickThrough'])
-        setting('IslandResidentEnabled', False)
+        assert state['settings']['IslandKeepVisibleEnabled']
+        state_when(idle)
+        setting('IslandKeepVisibleEnabled', False)
         state_when(lambda s: not s['islandVisible'])
         report['checks'].append('Resident preference survives restart; disabling restores auto-hide')
         assert app.request('prepareUpdateExit')['success']

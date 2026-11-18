@@ -45,7 +45,8 @@ pub fn describe_channel(release:&Value,current:&str,channel:&str)->Result<Value,
  if !preview&&latest.1!=4{return Err("测试版本缺少预发行标记".into())}
  let installed=release_version(current).ok_or("当前版本号无效")?;
  let newer=latest>installed;
- Ok(json!({"success":true,"message":if newer{format!("发现新版本 {tag}，下载校验后由你确认安装。")}else{format!("当前渠道暂无更新（{current}）")},"newer":newer,"version":tag,"channel":channel,"prerelease":preview,"url":RELEASES}))
+ let notes: String = if newer { release["body"].as_str().unwrap_or("").chars().take(6_000).collect() } else { String::new() };
+ Ok(json!({"success":true,"message":if newer{format!("发现新版本 {tag}，下载校验后由你确认安装。")}else{format!("当前渠道暂无更新（{current}）")},"newer":newer,"version":tag,"channel":channel,"prerelease":preview,"url":RELEASES,"releaseNotes":notes}))
 }
 fn choose_release(releases:&Value,channel:&str,current:&str)->Result<Value,String>{
  let items=releases.as_array().ok_or("更新列表格式无效")?;

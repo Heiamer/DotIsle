@@ -62,9 +62,9 @@ func (a *App) saveWidgetEditor(e *widgetEditorState) {
 	if e.field != "" {
 		config[e.field] = e.value
 	}
-	go func() {
+	a.startAsync(func() {
 		reply, err := island.Request("widgetUpdate", map[string]any{"id": e.id, "config": config})
-		a.Win.Update(func() {
+		a.applyAsync(func() {
 			if a.widgetEditor != e {
 				return
 			}
@@ -77,7 +77,7 @@ func (a *App) saveWidgetEditor(e *widgetEditorState) {
 				a.widgetEditor = nil
 			}
 		})
-	}()
+	})
 }
 
 func (a *App) widgetEditorView(c *ui.Context) {

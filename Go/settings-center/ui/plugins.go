@@ -3,6 +3,7 @@ package ui
 import (
 	"dotisle/settings/prefs"
 	"github.com/egoist/mygo/ui"
+	"strconv"
 	"strings"
 )
 
@@ -57,6 +58,7 @@ func (a *App) addPluginCard(id string) {
 }
 func (a *App) pluginsPage(c *ui.Context, x, y, w float32) float32 {
 	p, s := &a.Palette, &a.Palette.Scheme
+	y = a.reminderPluginRows(c, x, y, w)
 	Label(c, "插件积木", x, y, 24, s.OnSurface, true, w-170)
 	Button(c, p, "安装插件", x+w-150, y, 150, 38, "添加本地插件", "add", true, a.Connected, func() {
 		if a.Win != nil {
@@ -119,6 +121,72 @@ func (a *App) pluginsPage(c *ui.Context, x, y, w float32) float32 {
 		y += 214
 	}
 	return y + 12
+}
+
+func reminderMinutes(text string) (int, bool) {
+	text = strings.TrimSpace(text)
+	for _, c := range text {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+	}
+	v, err := strconv.Atoi(text)
+	return v, err == nil && v >= 1 && v <= 1440
+}
+
+func (a *App) reminderPluginRows(c *ui.Context, x, y, w float32) float32 {
+	p, s := &a.Palette, &a.Palette.Scheme
+	Label(c, "内置插件", x, y, 24, s.OnSurface, true, w)
+	y += 48
+	values, _ := a.State["reminderPlugins"].(map[string]any)
+	for i, plugin := range [...]struct{ id, name, detail string }{
+		{"sedentary", "久坐提醒", "连续用机时计时；离席后重新计时。"},
+		{"hydration", "喝水提醒", "累计活跃用机时间；离席期间暂停。"},
+	} {
+		const height = 138
+		if y+height < a.scrollY() || y > a.scrollY()+float32(clipH) {
+			y += height + 12
+			continue
+		}
+		value, supported := values[plugin.id].(map[string]any)
+		available := a.Connected && supported
+		minutes, hasMinutes := stateFloat(value, "minutes")
+		configured := ""
+		if hasMinutes && minutes >= 1 && minutes <= 1440 {
+			configured = strconv.Itoa(int(minutes))
+		}
+		f := &a.reminderFields[i]
+		if !f.seeded || configured != f.lastNative {
+			f.text, f.lastNative, f.seeded = configured, configured, true
+		}
+		appleWidgetSurface(c, p, overviewRect{"", x, y, w, height})
+		Label(c, plugin.name, x+22, y+17, 18, s.OnSurface, true, w-151)
+		Label(c, plugin.detail, x+22, y+47, 12, s.OnSurfaceVariant, false, w-44)
+		on := value["enabled"] == true
+		toggle := pluginChoice(on, "停用", "启用")
+		Button(c, p, toggle+plugin.name, x+w-102, y+14, 80, 34, toggle, "", on, available && (on || configured != ""), func() {
+			a.command("reminderPluginConfigure", map[string]any{"id": plugin.id, "enabled": !on})
+		})
+		fieldWidth := min(float32(156), w-175)
+		input := ui.TextInput(c, &f.text).Absolute().Left(x + 22).Top(y + 78).Width(fieldWidth).Height(40).
+			FontSize(14).TextColor(Col(s.OnSurface)).Placeholder("1–1440 分钟").Label(plugin.name + "间隔分钟数")
+		fieldStyle(&input, p)
+		if !available {
+			input.Disabled(true)
+		}
+		v, valid := reminderMinutes(f.text)
+		canSave := available && valid && strconv.Itoa(v) != configured
+		save := func() {
+			a.command("reminderPluginConfigure", map[string]any{"id": plugin.id, "minutes": v})
+		}
+		if canSave && input.Submitted() {
+			save()
+		}
+		Label(c, "分钟", x+30+fieldWidth, y+90, 12, s.OnSurfaceVariant, false, 32)
+		Button(c, p, "保存"+plugin.name+"间隔", x+70+fieldWidth, y+78, 76, 40, "保存", "", true, canSave, save)
+		y += height + 12
+	}
+	return y + 22
 }
 func (a *App) pluginCard(c *ui.Context, r overviewRect) {
 	id := strings.TrimPrefix(r.key, "plugin:")

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"dotisle/settings/island"
@@ -23,7 +24,16 @@ func (a *App) BeginCenterVisit() {
 	a.Refresh()
 }
 
-func (a *App) EndCenterVisit() { a.centerVisible = false }
+func (a *App) EndCenterVisit() {
+	a.centerVisible = false
+	a.signaturePending = false
+	a.signatureStart = time.Time{}
+	a.cancelOverviewGesture()
+	if e := a.musicEditor; e != nil {
+		e.Preview = nil
+		e.PreviewKey = layoutPreviewKey{}
+	}
+}
 
 func (a *App) configuredWeatherCity() string {
 	if city := strings.TrimSpace(stateString(a.settings(), "", "WeatherCity")); city != "" {
@@ -110,12 +120,10 @@ func (a *App) saveCityPrompt() {
 		return
 	}
 	draft.saving, draft.sent, draft.error = true, city, ""
-	go func() {
+	a.startAsync(func() {
 		reply, err := island.Request("update", map[string]any{"key": "WeatherCity", "value": city})
-		if a.Win != nil {
-			a.Win.Update(func() { a.applyCitySaveReply(draft, reply, err) })
-		}
-	}()
+		a.applyAsync(func() { a.applyCitySaveReply(draft, reply, err) })
+	})
 }
 
 func (a *App) cityPromptView(c *ui.Context) {

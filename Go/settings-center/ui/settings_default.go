@@ -90,9 +90,9 @@ func updateChannelLocked(phase string) bool {
 // Channel state is acknowledged by the native updater, never guessed locally.
 func (a *App) aboutBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	s := &p.Scheme
-	version := stateString(a.State, "5.0.6", "bundleVersion")
-	if version == "5.0.6" {
-		version = stateString(a.State, "5.0.6", "version")
+	version := stateString(a.State, "5.0.7", "bundleVersion")
+	if version == "5.0.7" {
+		version = stateString(a.State, "5.0.7", "version")
 	}
 	u, _ := a.State["softwareUpdate"].(map[string]any)
 	phase := leafStr(u["phase"], "idle")
@@ -103,6 +103,7 @@ func (a *App) aboutBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	drawWordmark(c, x+(w-wordW)/2, y+26, wordW, 112, s.OnSurface)
 	CenteredText(c, "版本 "+version, x+24, y+151, w-48, 24, 14, s.OnSurfaceVariant, false)
 	CenteredText(c, "界面字体 · HarmonyOS Sans", x+24, y+192, w-48, 20, 12, s.OnSurfaceVariant, false)
+	Button(c, p, "查看本版更新内容", x+w-142, y+184, 118, 34, "本次更新", "", true, a.releaseVersion() != "", a.openInstalledNotes)
 	y += 252
 	Panel(c, p, x, y, w, 140, s.Container)
 	Label(c, "更新渠道", x+24, y+17, 14, s.OnSurface, true, w-48)
@@ -162,7 +163,16 @@ func (a *App) aboutBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	}
 	Label(c, message, x+24, y+58, 12, s.OnSurfaceVariant, false, w-48)
 	if label, command := leafUpdateAction(phase); command != "" {
-		Button(c, p, "更新"+command, x+24, y+140, 164, 40, label, "", false, a.Connected, func() { a.command(command, nil) })
+		if command == "updateReview" && a.updateReviewLoading {
+			label = "正在读取…"
+		}
+		Button(c, p, "更新"+command, x+24, y+140, 164, 40, label, "", false, a.Connected && !a.updateReviewLoading, func() {
+			if command == "updateReview" {
+				a.openUpdateReview()
+			} else {
+				a.command(command, nil)
+			}
+		})
 		if phase == "ready" {
 			Button(c, p, "取消就绪的更新", x+200, y+140, 100, 40, "取消", "", true, true, func() { a.command("updateCancel", nil) })
 		}

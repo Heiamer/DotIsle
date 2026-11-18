@@ -90,9 +90,9 @@ func (a *App) saveOverviewEditor(e *overviewEditorState) {
 	if e.field != "" {
 		config[e.field] = e.value
 	}
-	go func() {
+	a.startAsync(func() {
 		reply, err := island.Request("overviewWidgetSet", map[string]any{"kind": e.kind, "config": config})
-		a.Win.Update(func() {
+		a.applyAsync(func() {
 			if a.overviewEditor != e {
 				return
 			}
@@ -105,7 +105,7 @@ func (a *App) saveOverviewEditor(e *overviewEditorState) {
 				a.overviewEditor = nil
 			}
 		})
-	}()
+	})
 }
 
 // pickLauncherTarget fills the shortcut tile from the native file dialog.

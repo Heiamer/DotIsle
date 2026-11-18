@@ -54,8 +54,14 @@ impl Hub{
   if self.phase()=="ready"&&self.action=="apply"&&self.last_progress.elapsed()>Duration::from_secs(90){self.state=json!({"phase":"failed","message":"更新助手未响应，原程序保持不变。"});self.action.clear();changed=true;}
   changed
  }
- pub fn begin(&mut self,base:&Path,data:&Path,pipe:&str)->Result<(),String>{
-  if self.active(){return Err("已有更新任务正在进行".into())}if self.release["channel"].as_str()!=Some(self.channel()){return Err("更新渠道已改变，请重新检查更新".into())}if self.release["newer"]!=true{return Err("请先检查更新，再选择下载。".into())}
+ pub fn review(&self)->Result<Value,String>{
+  if self.phase()!="available" || self.release["newer"]!=true || self.release["channel"].as_str()!=Some(self.channel()) || self.release["version"].as_str().is_none(){return Err("当前没有可下载的更新，请重新检查。".into())}
+  Ok(json!({"success":true,"version":self.release["version"],"channel":self.channel(),"source":self.release["source"],"releaseNotes":self.release["releaseNotes"]}))
+ }
+ pub fn begin(&mut self,base:&Path,data:&Path,pipe:&str,confirmed:&Value)->Result<(),String>{
+  let review=self.review()?;
+  if confirmed["version"]!=review["version"] || confirmed["channel"]!=review["channel"]{return Err("更新版本或渠道已变化，请重新查看更新内容。".into())}
+  if self.rx.is_some(){return Err("正在刷新更新信息，请稍后重试。".into())}
   self.nonce=format!("{:?}",unsafe{windows::Win32::System::Com::CoCreateGuid()}.map_err(|e|e.to_string())?);self.job=self.nonce.clone();self.action.clear();self.error=None;self.speed=0.;self.speed_at=None;self.last_progress=Instant::now();
   lyric_backend::updates::launch_candidate(&self.release,base,data,pipe,&self.job,&self.nonce)?;
   self.state=json!({"phase":"downloading","version":self.release["version"],"receivedBytes":0,"totalBytes":null,"seq":0});Ok(())
@@ -98,7 +104,7 @@ impl Hub{
  }
  pub fn panel(&self)->crate::activities::Panel{
   let phase=self.phase();let version=self.state["version"].as_str().or_else(||self.release["version"].as_str()).unwrap_or("");
-  let(label,action)=match phase{"available"=>("发现新版本","下载更新"),"checking"=>("正在检查更新",""),"downloading"=>("正在下载更新","取消下载"),"switching"=>("正在切换更新源","取消下载"),"verifying"=>("正在校验更新包","取消"),"ready"=>("更新已就绪","重启并安装"),"applying"=>("正在安装更新",""),"restarting"=>("正在重启点屿",""),"failed"=>("更新未完成","重新检查"),"completed"=>("更新完成","关闭"),_=>("软件更新","")};
+  let(label,action)=match phase{"available"=>("发现新版本","查看更新"),"checking"=>("正在检查更新",""),"downloading"=>("正在下载更新","取消下载"),"switching"=>("正在切换更新源","取消下载"),"verifying"=>("正在校验更新包","取消"),"ready"=>("更新已就绪","重启并安装"),"applying"=>("正在安装更新",""),"restarting"=>("正在重启点屿",""),"failed"=>("更新未完成","重新检查"),"completed"=>("更新完成","关闭"),_=>("软件更新","")};
   let percent=self.state["percent"].as_u64();
   // Determinate only when both byte counters exist; verifying/switching/applying are genuinely
   // unknown-length stages and must animate instead of inventing a percentage.

@@ -202,6 +202,7 @@ impl Renderer {
                 &resources.image_cache,
                 render_target_config,
                 layer_config,
+                settings.defer_filter_pipeline,
             ),
             gradient_cache,
             encoded_paints: Vec::new(),
@@ -949,7 +950,7 @@ struct Programs {
     /// Filter bind group cache.
     filter_pair_bind_groups: HashMap<FilterPassBindings, FilterPairBindGroups>,
     /// Pipeline for applying filter effects.
-    filter_pipeline: RenderPipeline,
+    filter_pipeline: Option<RenderPipeline>,
     /// Layer-clear pipeline.
     clear_pipeline: RenderPipeline,
     /// Pipeline for clearing atlas regions.
@@ -1071,11 +1072,75 @@ impl GpuStrip {
 }
 
 impl Programs {
+    fn create_filter_pipeline(
+        device: &Device,
+        filter_bind_group_layout: &BindGroupLayout,
+        filter_input_bind_group_layouts: &[BindGroupLayout; 2],
+    ) -> RenderPipeline {
+        let filter_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Filter Shader"),
+            source: wgpu::ShaderSource::Wgsl(vello_sparse_shaders::wgsl::FILTER.into()),
+        });
+        let filter_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Filter Pipeline Layout"),
+                bind_group_layouts: &[
+                    Some(filter_bind_group_layout),
+                    Some(&filter_input_bind_group_layouts[0]),
+                    Some(&filter_input_bind_group_layouts[1]),
+                ],
+                immediate_size: 0,
+            });
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Filter Pipeline"),
+            layout: Some(&filter_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &filter_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: size_of::<FilterInstanceData>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &wgpu::vertex_attr_array![
+                        0 => Uint32,
+                        1 => Uint32,
+                        2 => Uint32,
+                        3 => Uint32,
+                        4 => Uint32,
+                        5 => Uint32,
+                        6 => Uint32,
+                        7 => Uint32,
+                        8 => Uint32,
+                    ],
+                }],
+                compilation_options: PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &filter_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    blend: None,
+                    write_mask: ColorWrites::ALL,
+                })],
+                compilation_options: PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            cache: None,
+            multiview_mask: None,
+        })
+    }
+
     fn new(
         device: &Device,
         image_cache: &ImageCache,
         render_target_config: &RenderTargetConfig,
         layer_config: LayersConfig,
+        defer_filter_pipeline: bool,
     ) -> Self {
         let strip_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1389,61 +1454,12 @@ impl Programs {
             }),
         ];
 
-        let filter_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Filter Shader"),
-            source: wgpu::ShaderSource::Wgsl(vello_sparse_shaders::wgsl::FILTER.into()),
-        });
-        let filter_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Filter Pipeline Layout"),
-                bind_group_layouts: &[
-                    Some(&filter_bind_group_layout),
-                    Some(&filter_input_bind_group_layouts[0]),
-                    Some(&filter_input_bind_group_layouts[1]),
-                ],
-                immediate_size: 0,
-            });
-        let filter_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Filter Pipeline"),
-            layout: Some(&filter_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &filter_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: size_of::<FilterInstanceData>() as u64,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &wgpu::vertex_attr_array![
-                        0 => Uint32,
-                        1 => Uint32,
-                        2 => Uint32,
-                        3 => Uint32,
-                        4 => Uint32,
-                        5 => Uint32,
-                        6 => Uint32,
-                        7 => Uint32,
-                        8 => Uint32,
-                    ],
-                }],
-                compilation_options: PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &filter_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    blend: None,
-                    write_mask: ColorWrites::ALL,
-                })],
-                compilation_options: PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            cache: None,
-            multiview_mask: None,
+        let filter_pipeline = (!defer_filter_pipeline).then(|| {
+            Self::create_filter_pipeline(
+                device,
+                &filter_bind_group_layout,
+                &filter_input_bind_group_layouts,
+            )
         });
 
         let blend_layer_bind_group_layout =
@@ -3001,6 +3017,13 @@ impl RendererContext<'_> {
     }
 
     fn filter_pass_inner(&mut self, plan: &FilterPassPlan, bindings: FilterPassBindings) {
+        let pipeline = self.programs.filter_pipeline.get_or_insert_with(|| {
+            Programs::create_filter_pipeline(
+                self.device,
+                &self.programs.filter_bind_group_layout,
+                &self.programs.filter_input_bind_group_layouts,
+            )
+        });
         let resources = &self.programs.resources;
         if !self
             .programs
@@ -3056,7 +3079,7 @@ impl RendererContext<'_> {
                 self.device,
                 self.encoder,
                 resources,
-                &self.programs.filter_pipeline,
+                pipeline,
                 instances,
                 &filter_pair_bind_groups.inputs[input.texture_parity.get_parity()],
                 &resources.filter_original_bind_group,

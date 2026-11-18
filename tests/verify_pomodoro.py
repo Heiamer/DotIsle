@@ -48,11 +48,12 @@ class Runtime:
             'NotificationSoundEnabled': False, 'DeviceSoundEnabled': False,
             'GestureTutorialSeen': True, 'OnlineSongInfo': False,
         }), encoding='utf-8')
-    def launch(self):
-        environment = dict(os.environ, LYRICISLAND_TEST_PIPE=self.pipe.split('\\')[-1])
+    def launch(self, *, args=(), env=None):
+        environment = dict(os.environ, **(env or {}))
+        environment['LYRICISLAND_TEST_PIPE'] = self.pipe.split('\\')[-1]
         self.log = (self.data / 'process.log').open('ab')
         self.process = subprocess.Popen(
-            [str(self.runtime / 'LyricIsland.exe'), '--data-dir', str(self.data), '--startup'],
+            [str(self.runtime / 'LyricIsland.exe'), '--data-dir', str(self.data), '--startup', *args],
             cwd=self.runtime, env=environment, stdout=self.log, stderr=self.log,
             creationflags=subprocess.CREATE_NO_WINDOW)
         deadline = time.monotonic() + 30

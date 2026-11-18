@@ -4,6 +4,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"dotisle/settings/island"
@@ -41,6 +42,8 @@ type App struct {
 	contentH       [7]float32 // measured page content height, drives the scroll bounds
 	Palette        Palette
 	Win            *mygo.Window
+	ShowCenter     func() // Restores the resident window or recreates it after idle release.
+	asyncRequests  atomic.Int32
 	overview       overviewState
 	layout         prefs.CenterLayout
 	layoutLoaded   bool
@@ -61,6 +64,7 @@ type App struct {
 	widgetEditor    *widgetEditorState
 	overviewEditor  *overviewEditorState
 	widgetExamples  *App
+	reminderFields  [2]leafEditField
 
 	// Open color picker dialog and the toast message (fresh for a few seconds).
 	picker         *pickerState
@@ -70,14 +74,18 @@ type App struct {
 	contentMounted bool
 
 	// Dialog switches owned by the page layer.
-	showQuickReminder bool
-	showRuleDialog    bool
-	ruleEditID        string
-	fontPicker        *fontPickerState
-	EnableCityPrompt  bool
-	centerVisible     bool
-	cityPromptAsked   bool
-	cityPrompt        *cityPromptState
+	showQuickReminder   bool
+	showRuleDialog      bool
+	ruleEditID          string
+	fontPicker          *fontPickerState
+	EnableCityPrompt    bool
+	centerVisible       bool
+	cityPromptAsked     bool
+	cityPrompt          *cityPromptState
+	updateNotes         *updateNotes
+	notesCheckedVersion string
+	updateReviewLoading bool
+	updateDownloading   bool
 
 	// Command palette (Ctrl+K).
 	paletteOpen     bool
@@ -160,12 +168,6 @@ func (a *App) applyPendingPage() {
 	a.lastPending = requestKey
 	a.navigationOpen = false
 	a.cancelOverviewGesture()
-	if a.Win != nil {
-		if a.Win.IsMinimized() {
-			a.Win.Restore()
-		}
-		a.Win.Show()
-	}
 	switch page {
 	case "timers":
 		a.Page = PageFocus
@@ -183,6 +185,8 @@ func (a *App) applyPendingPage() {
 		a.Page = PageSettings
 		a.SettingsTab = 128
 		a.IslandTab = 0
+	case "layout":
+		a.openSettings(TabLayoutEditor)
 	case "music", "lyrics":
 		a.Page = PageSettings
 		a.SettingsTab = 241
@@ -193,6 +197,9 @@ func (a *App) applyPendingPage() {
 		a.Page = PageSettings
 		a.SettingsTab = TabRoot
 	}
+	if a.ShowCenter != nil {
+		a.ShowCenter()
+	}
 	if request, ok := a.State["pendingCenterAction"].(map[string]any); ok {
 		id := stateString(request, "", "id")
 		switch stateString(request, "", "action") {
@@ -200,6 +207,8 @@ func (a *App) applyPendingPage() {
 			a.openTodoDialog(id)
 		case "widgetConfigure":
 			a.openWidgetEditor(id)
+		case "updateReview":
+			a.openUpdateReview()
 		}
 	}
 	a.command("pageSeen", map[string]any{"requestId": a.State["pendingRequestId"]})
@@ -249,11 +258,27 @@ func (a *App) playing() bool {
 	return stateBool(a.State, "isPlaying")
 }
 
-// Refresh notifies the window that state changed (called from the pump goroutine).
+// Refresh only queues a frame for a visible visit, never for the tray host.
 func (a *App) Refresh() {
-	if a.Win != nil {
+	if a.Win != nil && (a.centerVisible || a.ShowCenter == nil) {
 		a.Win.Invalidate()
 	}
+}
+
+// applyAsync completes a request on the UI thread even if the window was released.
+func (a *App) applyAsync(fn func()) {
+	mygo.RunOnMain(func() {
+		fn()
+		a.Refresh()
+	})
+}
+
+func (a *App) startAsync(fn func()) {
+	a.asyncRequests.Add(1)
+	go func() {
+		defer a.asyncRequests.Add(-1)
+		fn()
+	}()
 }
 
 func (a *App) settings() map[string]any {
@@ -337,6 +362,10 @@ func (a *App) View(c *ui.Context) {
 			logPanic(r)
 		}
 	}()
+	if a.musicEditor != nil && (!a.onLayoutEditor() || !a.Connected) {
+		a.musicEditor.Preview = nil
+		a.musicEditor.PreviewKey = layoutPreviewKey{}
+	}
 	a.loadOverview()
 	a.loadCenterLayout()
 	if a.Page != PageHome || a.overview.config.View != "cards" || a.overview.manage {

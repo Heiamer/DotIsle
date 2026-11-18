@@ -27,7 +27,7 @@ impl Overlay{
    // The overlay keeps its own full wgpu + Vello renderer. Hints are rare, so it
    // is retired after half a hidden minute instead of holding a second GPU
    // context alive for the rest of the session; the next hint rebuilds it.
-   if self.renderer.is_some()&&self.idle.elapsed()>=Duration::from_secs(30){self.renderer=None;}
+   if self.renderer.is_some()&&self.idle.elapsed()>=Duration::from_secs(30){self.renderer=None;self.theme.cover=None;}
    return Ok(())}let now=Instant::now();
   if now>=self.until&&self.target>0.{self.from=self.opacity;self.target=0.;self.began=now;}
   let t=if self.animate{(now.duration_since(self.began).as_secs_f64()/if self.target>0.{0.16}else{0.12}).min(1.)}else{1.};
