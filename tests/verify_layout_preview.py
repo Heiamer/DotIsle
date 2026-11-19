@@ -80,11 +80,15 @@ def run(runtime, output):
         except OSError as error:
             print(f'Control center screen capture unavailable: {error}')
 
-        # Move title and progress and change height. Applying must affect the actual
+        # Move title and progress, including a previously out-of-bounds placement.
+        # Applying must keep the preset frame and still affect the actual
         # HWND's presentation, not just save a JSON field or resize the preview.
         draft.update(enabled=True, gap=12, elements=[dict(element=1, x=100, y=128, width=180),
                                                      dict(element=6, x=24, y=288, width=340)])
         draft_geo, offscreen = capture(draft, 'draft-preview')
+        assert (draft_geo['width'], draft_geo['height']) == (builtin['width'], builtin['height']), (builtin, draft_geo)
+        seek = next(e for e in draft_geo['elements'] if e['id'] == 6)
+        assert seek['y'] < 288 and seek['y'] + seek['h'] < draft_geo['height'], seek
         title = next(e for e in draft_geo['elements'] if e['id'] == 1)
         assert abs(title['x'] - 100 * draft_geo['width'] / 400) < .01 and title['y'] == 128, title
         assert app.request('state')['settings']['MusicCustomLayout']['enabled'] is False
@@ -118,6 +122,10 @@ def run(runtime, output):
         restarted = app.launch()['settings']
         assert restarted['MusicCustomLayout'] == draft
         assert restarted['ProgressBarStyle'] == 'Normal'
+        for key in ('ProgressBarGlow', 'MusicLyricGlow'):
+            assert restarted[key] is True
+            update(key, False)
+        assert not any(app.request('state')['settings'][key] for key in ('ProgressBarGlow', 'MusicLyricGlow'))
         return dict(success=True, defaultBar='Normal', width=draft_geo['width'], height=draft_geo['height'],
                     appliedTitle=title, relocatedTitleMeanRgbDelta=rgb_delta, persistedAfterRestart=True,
                     editorWindowCapture=editor_capture)

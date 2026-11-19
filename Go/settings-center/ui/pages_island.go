@@ -58,21 +58,25 @@ func (a *App) islandFloat(key string, def float64) float64 {
 
 // islandHeading is the 21px section title.
 func (a *App) islandHeading(c *ui.Context, p *Palette, title string, x, y, w float32) float32 {
-	Label(c, title, x, y+4, 16, p.Scheme.OnSurface, true, w)
-	return y + 44
+	Label(c, title, x+16, y+3, 14, p.Scheme.OnSurfaceVariant, true, w-32)
+	return y + 31
 }
 
 // islandToggles is the toggle panel: rows of 76 DIP with the switch at the right.
 func (a *App) islandToggles(c *ui.Context, p *Palette, x, y, w float32, rows []islandToggleRow) float32 {
 	s := &p.Scheme
-	Panel(c, p, x, y, w, float32(len(rows))*76+12, s.Container)
+	settingCard(c, x, y, w, float32(len(rows))*settingToggleH, s.Container)
 	for i, row := range rows {
 		on := a.islandBool(row.key, row.def)
-		ToggleRow(c, p, row.key, x+24, y+6+float32(i)*76, w-48, row.title, row.detail, on, func() {
+		top := y + float32(i)*settingToggleH
+		if i != 0 {
+			settingSeparator(c, p, x+16, top, w-32)
+		}
+		settingToggleRow(c, p, row.key, row.title, row.detail, x+16, top, w-32, on, func() {
 			a.pushNative(row.key, !on)
 		})
 	}
-	return y + float32(len(rows))*76 + 28
+	return y + float32(len(rows))*settingToggleH + 16
 }
 
 type islandToggleRow struct {
@@ -83,7 +87,7 @@ type islandToggleRow struct {
 // islandChoices is the choice panel: title plus full-width chips.
 func (a *App) islandChoices(c *ui.Context, p *Palette, x, y, w float32, title, key, def string, options [][2]string) float32 {
 	s := &p.Scheme
-	Panel(c, p, x, y, w, 108, s.Container)
+	settingCard(c, x, y, w, 108, s.Container)
 	Label(c, title, x+24, y+15, 15, s.OnSurface, true, w-48)
 	selected := a.islandString(key, def)
 	labels := make([]string, len(options))
@@ -101,7 +105,7 @@ func (a *App) islandChoices(c *ui.Context, p *Palette, x, y, w float32, title, k
 // islandRange is the slider row: title, live value at the right, slider below.
 func (a *App) islandRange(c *ui.Context, p *Palette, x, y, w float32, title, key string, def, min, max float64, unit string) float32 {
 	s := &p.Scheme
-	Panel(c, p, x, y, w, 96, s.Container)
+	settingCard(c, x, y, w, 96, s.Container)
 	value := a.islandFloat(key, def)
 	Label(c, title, x+24, y+14, 15, s.OnSurface, false, w-160)
 	// While dragging, the live value mirrors the knob (settings_slider.rs trailing label).
@@ -127,7 +131,7 @@ func trimFloat(v float64) string {
 // islandColorRow is the fixed-color row: swatch circle + hex button.
 func (a *App) islandColorRow(c *ui.Context, p *Palette, x, y, w float32, title, key, def string) float32 {
 	s := &p.Scheme
-	Panel(c, p, x, y, w, 74, s.Container)
+	settingCard(c, x, y, w, 74, s.Container)
 	value := a.islandString(key, def)
 	Label(c, title, x+24, y+24, 15, s.OnSurface, false, w-240)
 	hex, ok := parseHexColor(value)
@@ -145,8 +149,8 @@ func (a *App) islandColorRow(c *ui.Context, p *Palette, x, y, w float32, title, 
 }
 
 // islandSettingsBody renders one island tab (island_settings.rs render).
-func (a *App) islandSettingsBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
-	switch a.IslandTab {
+func (a *App) islandSettingsBody(c *ui.Context, p *Palette, x, y, w float32, tab uint8) float32 {
+	switch tab {
 	case 0:
 		return a.islandTabSize(c, p, x, y, w)
 	case 1:
@@ -189,7 +193,7 @@ func (a *App) islandTabSize(c *ui.Context, p *Palette, x, y, w float32) float32 
 	if family != defaultIslandFont {
 		familyLabel = family
 	}
-	Panel(c, p, x, y, w, 150, p.Scheme.Container)
+	settingCard(c, x, y, w, 150, p.Scheme.Container)
 	Label(c, "灵动岛字体", x+24, y+14, 15, p.Scheme.OnSurface, true, 200)
 	Label(c, familyLabel, x+w-262, y+14, 12, p.Scheme.OnSurfaceVariant, false, 240)
 	ui.Box(c).Absolute().Left(x + 24).Top(y + 42).Width(w - 48).Height(40).
@@ -305,14 +309,14 @@ func (a *App) islandTabMaterial(c *ui.Context, p *Palette, x, y, w float32) floa
 // islandTabGestures is tab 130: 交互与系统提示.
 func (a *App) islandTabGestures(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	s := &p.Scheme
-	Panel(c, p, x, y, w, 104, s.PrimaryContainer)
+	settingCard(c, x, y, w, 104, s.PrimaryContainer)
 	Label(c, "认识你的灵动岛", x+24, y+19, 18, s.OnPrimaryContainer, true, w-230)
-	Label(c, "展开、切换、隐藏与托盘找回 · 交互式手势教程", x+24, y+54, 12, s.OnPrimaryContainer, false, w-230)
-	Button(c, p, "再看一次", x+w-174, y+29, 150, 46, "再看一次", "play_arrow", false, true, a.startGestureTutorial)
+	Label(c, "在实际灵动岛上练习展开、切换、隐藏与找回", x+24, y+54, 12, s.OnPrimaryContainer, false, w-230)
+	Button(c, p, "练习手势", x+w-174, y+29, 150, 46, "练习手势", "play_arrow", false, true, a.startGestureTutorial)
 	y += 128
 	y = a.islandHeading(c, p, "出现与退场", x, y, w)
 	on := a.islandBool("IslandKeepVisibleEnabled", false)
-	Panel(c, p, x, y, w, 88, s.Container)
+	settingCard(c, x, y, w, 88, s.Container)
 	ToggleRow(c, p, "IslandKeepVisibleEnabled", x+24, y+12, w-48, "灵动岛常驻", "空闲时循环显示你选择的内容。", on, func() {
 		a.pushNative("IslandKeepVisibleEnabled", !on)
 	})
@@ -392,7 +396,7 @@ var playerGroups = [][2]any{
 func (a *App) islandTabPlayers(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	s := &p.Scheme
 	y = a.islandHeading(c, p, "网易云进度拖动", x, y, w)
-	Panel(c, p, x, y, w, 104, s.PrimaryContainer)
+	settingCard(c, x, y, w, 104, s.PrimaryContainer)
 	Label(c, "正常启动 · 自动连接", x+24, y+19, 18, s.OnPrimaryContainer, true, w-48)
 	Label(c, "正常启动网易云即可自动接入，后台、最小化和托盘均可拖动进度。", x+24, y+55, 12, s.OnPrimaryContainer, false, w-48)
 	y += 128
@@ -400,7 +404,7 @@ func (a *App) islandTabPlayers(c *ui.Context, p *Palette, x, y, w float32) float
 	Label(c, "选择响应范围；默认响应所有播放器，浏览器媒体单独控制。", x, y, 12, s.OnSurfaceVariant, false, w-8)
 	y += 36
 	mode := a.islandString("PlayerResponseMode", "All")
-	Panel(c, p, x, y, w, 108, s.Container)
+	settingCard(c, x, y, w, 108, s.Container)
 	Label(c, "响应范围", x+24, y+15, 15, s.OnSurface, true, w-48)
 	half := (w - 48 - 8) / 2
 	Chip(c, p, "PlayerAll", x+24, y+52, half, 38, "所有播放器", mode == "All", func() {
@@ -478,6 +482,7 @@ func trimSpace(s string) string {
 // select through chips; the preview draws the current style.
 func (a *App) islandTabProgress(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	s := &p.Scheme
+	y = a.islandToggles(c, p, x, y, w, []islandToggleRow{{"进度条柔光", "只在已播放的进度周围显示柔光。", "ProgressBarGlow", true}})
 	y = a.islandHeading(c, p, "进度条样式", x, y, w)
 	barStyles := [][2]string{
 		{"标准", "Normal"}, {"波浪", "Wavy"}, {"圆角", "Rounded"}, {"纤细", "Thin"},
@@ -498,7 +503,7 @@ func (a *App) islandTabProgress(c *ui.Context, p *Palette, x, y, w float32) floa
 		y = a.styleChipGrid(c, p, x, y, w, thumbs, "ProgressBarThumb", "Pill")
 	}
 	// Live preview of the current bar style at full width.
-	Panel(c, p, x, y, w, 72, s.Container)
+	settingCard(c, x, y, w, 72, s.Container)
 	fraction := 0.38
 	bar := a.islandString("ProgressBarStyle", "Normal")
 	drawBarPreview(c, p, x+24, y+22, w-48, 28, bar, fraction)

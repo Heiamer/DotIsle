@@ -23,6 +23,8 @@ pub fn defaults() -> Value {
     defaults["ControlCenterMonetEnabled"] = json!(true);
     defaults["ControlCenterDynamicColorEnabled"] = json!(false);
     defaults["ControlCenterCustomColor"] = json!("#9ABFE8");
+    defaults["ProgressBarGlow"] = json!(true);
+    defaults["MusicLyricGlow"] = json!(true);
     defaults["ProgressBarStyle"] = json!("Normal");
     defaults["ProgressBarThumb"] = json!("Pill");
     defaults["ProgressBarThumbEnabled"] = json!(false);
@@ -59,6 +61,7 @@ pub fn defaults() -> Value {
     defaults["CapsuleCornerRadius"] = Value::Null;
     defaults["SwipeUpHide"] = json!(true);
     defaults["GestureTutorialSeen"] = json!(false);
+    defaults["GesturePracticeSeen"] = json!(false);
     defaults
 }
 /// The face the island actually paints with. `fontScope == "Center"` keeps the island on the
@@ -560,6 +563,7 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         "SwipeActivities",
         "SwipeUpHide",
         "GestureTutorialSeen",
+        "GesturePracticeSeen",
         "TodoRemindersEnabled",
         "TodoIslandEnabled",
         "AutoCompactWidth",
@@ -597,6 +601,8 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         "NotificationBlacklistEnabled",
         "NotificationWhitelistEnabled",
         "NotificationHistoryEnabled",
+        "ProgressBarGlow",
+        "MusicLyricGlow",
         "ProgressBarThumbEnabled",
         "ProgressBarThumbSpin",
         "BrowserMediaEnabled",

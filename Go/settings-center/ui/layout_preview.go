@@ -42,7 +42,7 @@ func (a *App) requestLayoutPreview(e *musicEditor) {
 		"IslandColorSource", "IslandDynamicSeedColor", "DynamicColorHighContrast", "ExpandedMonetEnabled",
 		"ExpandedCoverOverlay", "ExpandedTextColor", "ExpandedComponentColor", "LyricProgressColor",
 		"AcrylicCardFrost", "AcrylicCardOpacity", "Translation", "TranslationButton", "Motion",
-		"MusicExpandedLayout", "ProgressBarStyle", "ProgressBarThumb", "ProgressBarThumbEnabled",
+		"MusicExpandedLayout", "ProgressBarGlow", "MusicLyricGlow", "ProgressBarStyle", "ProgressBarThumb", "ProgressBarThumbEnabled",
 	} {
 		appearance = append(appearance, a.pref(key))
 	}

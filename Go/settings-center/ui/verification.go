@@ -89,8 +89,7 @@ func Verify(output string) (err error) {
 			if route.name == "gesture-tutorial" || route.name == "gesture-recovery" {
 				a.startGestureTutorial()
 				if route.name == "gesture-recovery" {
-					a.gestureTutorial.index = len(a.gestureTutorial.steps) - 1
-					a.gestureTutorial.demo = 1
+					a.gestureTutorial.step, a.gestureTutorial.index, a.gestureTutorial.total = "recover", 4, 5
 				}
 			}
 			view := a.View

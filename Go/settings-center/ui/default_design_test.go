@@ -49,6 +49,15 @@ func TestDefaultSidebarNavigation(t *testing.T) {
 			if a.Page != page || a.navigationOpen {
 				t.Fatalf("%d: sidebar did not navigate to %s", width, Pages[page])
 			}
+			if page == PageSettings {
+				if err := tt.Click("关闭设置"); err != nil {
+					t.Fatal(err)
+				}
+				tt.Frame()
+				if a.Page != PageNotifications {
+					t.Fatal("settings did not return to the current page")
+				}
+			}
 		}
 	}
 }

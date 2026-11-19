@@ -10,7 +10,7 @@ from benchmark_idle_reminders import sample
 from verify_pomodoro import Runtime
 
 
-def run(runtime, root, scenario, material, seconds):
+def run(runtime, root, scenario, material, seconds, *, lyric_glow=None):
     app = Runtime(runtime, root / f'{scenario}-{material}-{uuid.uuid4().hex}')
     is_music = scenario == 'music'
     try:
@@ -21,6 +21,8 @@ def run(runtime, root, scenario, material, seconds):
         settings.update(StartupSignatureEnabled=False, StartupGreetingEnabled=False,
                         WeatherAlertsEnabled=False, IslandMaterial=material, IslandSizeMode='Classic',
                         AllowedSources=['LyricIsland.Verify13'])
+        if is_music and lyric_glow is not None:
+            settings['MusicLyricGlow'] = lyric_glow
         path.write_text(json.dumps(settings), encoding='utf-8')
         env = {'DOTISLE_TRACE_GPU': '1'}
         if is_music:

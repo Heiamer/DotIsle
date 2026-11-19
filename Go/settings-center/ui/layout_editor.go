@@ -43,6 +43,8 @@ type musicElement struct {
 	X, Y, W, H float64
 }
 type musicEditor struct {
+	BaseLayout      string
+	FontSize        float64
 	Draft           musicLayout
 	Baseline        string
 	Undo, Redo      []string
@@ -70,8 +72,8 @@ type musicEditor struct {
 var nativeMusicLayout = desktop.Layout
 
 func layoutJSON(value any) string { raw, _ := json.Marshal(value); return string(raw) }
-func decodeLayout(value any) (musicLayout, []musicElement, float64, error) {
-	result, err := nativeMusicLayout(value)
+func decodeLayout(value any, base string, font float64) (musicLayout, []musicElement, float64, error) {
+	result, err := nativeMusicLayout(map[string]any{"draft": value, "baseLayout": base, "fontSize": font})
 	if err != nil {
 		return musicLayout{}, nil, 0, err
 	}
@@ -87,11 +89,11 @@ func decodeLayout(value any) (musicLayout, []musicElement, float64, error) {
 	return layout, elements, height, nil
 }
 func (e *musicEditor) refresh() {
-	key := layoutJSON(e.Draft)
+	key := layoutJSON([]any{e.Draft, e.BaseLayout, e.FontSize})
 	if key == e.Cache {
 		return
 	}
-	_, elements, height, err := decodeLayout(e.Draft)
+	_, elements, height, err := decodeLayout(e.Draft, e.BaseLayout, e.FontSize)
 	if err != nil {
 		e.Error = err.Error()
 		return
@@ -182,10 +184,23 @@ func (e *musicEditor) history(redo bool) {
 	*from = (*from)[:len(*from)-1]
 	e.restore(raw)
 }
+func (e *musicEditor) maxElementY(id int) float64 {
+	for _, element := range e.Geometry {
+		if element.ID == id {
+			h := element.H
+			if id == 6 {
+				h = h * 43 / 22
+			} // Leave room for the native seek activation chip.
+			return math.Max(12, e.Height-h-10)
+		}
+	}
+	return math.Max(12, e.Height-34)
+}
+
 func (e *musicEditor) place(id int, x, y float64, width *float64) {
 	e.Applied = false
 	x = math.Max(12, math.Min(388, math.Round(x/4)*4))
-	y = math.Max(12, math.Min(600, math.Round(y/4)*4))
+	y = math.Max(12, math.Min(e.maxElementY(id), math.Round(y/4)*4))
 	if width != nil {
 		v := math.Max(24, math.Min(376, math.Round(*width/4)*4))
 		width = &v
@@ -209,7 +224,7 @@ func (a *App) applyMusicLayout() {
 	if e == nil || e.Pending || !a.Connected || a.Win == nil {
 		return
 	}
-	_, _, _, err := decodeLayout(e.Draft)
+	_, _, _, err := decodeLayout(e.Draft, e.BaseLayout, e.FontSize)
 	if err != nil {
 		e.Error = err.Error()
 		return
@@ -241,7 +256,7 @@ func (a *App) applyMusicLayout() {
 // the inspector scrolls. No settings are appended below the preview.
 func (a *App) musicLayoutEditor(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	if a.musicEditor == nil {
-		draft, elements, height, err := decodeLayout(a.settings()["MusicCustomLayout"])
+		draft, elements, height, err := decodeLayout(a.settings()["MusicCustomLayout"], a.leafString("MusicExpandedLayout", "SideBySide"), a.leafFloat("FontSize", 14))
 		if err != nil {
 			Label(c, "布局编辑器加载失败："+err.Error(), x, y, 13, p.Scheme.Error, false, w)
 			return y + 60
@@ -256,16 +271,16 @@ func (a *App) musicLayoutEditor(c *ui.Context, p *Palette, x, y, w float32) floa
 				}
 			}
 		}
-		a.musicEditor = &musicEditor{Draft: draft, Baseline: layoutJSON(draft), Geometry: elements, Height: height, Cache: layoutJSON(draft), Selected: selected, DragID: -1}
+		a.musicEditor = &musicEditor{Draft: draft, Baseline: layoutJSON(draft), Geometry: elements, Height: height, Selected: selected, DragID: -1}
 	}
 	e, s := a.musicEditor, &p.Scheme
+	e.BaseLayout, e.FontSize = a.leafString("MusicExpandedLayout", "SideBySide"), a.leafFloat("FontSize", 14)
 	e.refresh()
 	a.requestLayoutPreview(e)
-	Button(c, p, "返回布局分类", x, y, 104, 36, "返回分类", "arrow_back", true, true, func() { a.openSettings(240) })
-	Label(c, "自定义布局", x+128, y+9, 13, s.OnSurface, true, 90)
-	Switch(c, p, "启用自定义布局", x+220, y+6, e.Draft.Enabled, func() { e.edit(func(l *musicLayout) { l.Enabled = !l.Enabled }, false) })
-	Button(c, p, "布局撤销", x+296, y, 68, 36, "撤销", "", true, len(e.Undo) > 0 && !e.Pending, func() { e.history(false) })
-	Button(c, p, "布局重做", x+372, y, 68, 36, "重做", "", true, len(e.Redo) > 0 && !e.Pending, func() { e.history(true) })
+	Label(c, "自定义布局", x, y+9, 13, s.OnSurface, true, 90)
+	Switch(c, p, "启用自定义布局", x+92, y+6, e.Draft.Enabled, func() { e.edit(func(l *musicLayout) { l.Enabled = !l.Enabled }, false) })
+	Button(c, p, "布局撤销", x+161, y, 62, 36, "撤销", "", true, len(e.Undo) > 0 && !e.Pending, func() { e.history(false) })
+	Button(c, p, "布局重做", x+231, y, 62, 36, "重做", "", true, len(e.Redo) > 0 && !e.Pending, func() { e.history(true) })
 	applyLabel := "应用到灵动岛"
 	if e.Applied && layoutJSON(e.Draft) == e.Baseline {
 		applyLabel = "已应用"
@@ -302,7 +317,7 @@ func (a *App) musicLayoutEditor(c *ui.Context, p *Palette, x, y, w float32) floa
 	}
 	Button(c, p, "布局还原已保存", x+16, y+panelH-48, (previewW-40)/2, 32, "还原已保存", "", true, !e.Pending && layoutJSON(e.Draft) != e.Baseline, e.restoreSaved)
 	Button(c, p, "布局恢复推荐", x+24+(previewW-40)/2, y+panelH-48, (previewW-40)/2, 32, "恢复推荐", "", true, !e.Pending, func() {
-		draft, _, _, err := decodeLayout(nil)
+		draft, _, _, err := decodeLayout(nil, e.BaseLayout, e.FontSize)
 		if err == nil {
 			draft.Enabled = true
 			e.edit(func(l *musicLayout) { *l = draft }, false)
@@ -408,7 +423,7 @@ func (a *App) layoutInspector(c *ui.Context, p *Palette, x, y, w float32) float3
 		y += 36
 		e.slider(c, p, "横向", x+4, y, w-8, selected.X, 12, 388, func(v float64) { e.place(selected.ID, v, selected.Y, nil) })
 		y += 68
-		e.slider(c, p, "纵向", x+4, y, w-8, selected.Y, 12, 600, func(v float64) { e.place(selected.ID, selected.X, v, nil) })
+		e.slider(c, p, "纵向", x+4, y, w-8, selected.Y, 12, e.maxElementY(selected.ID), func(v float64) { e.place(selected.ID, selected.X, v, nil) })
 		y += 68
 		if selected.Resizable {
 			e.slider(c, p, "宽度", x+4, y, w-8, selected.W, 24, 376, func(v float64) { e.place(selected.ID, selected.X, selected.Y, &v) })

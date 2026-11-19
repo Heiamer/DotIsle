@@ -10,6 +10,9 @@ use vello::{
     Glyph, Scene,
 };
 
+mod lyric_halo;
+pub use lyric_halo::LyricHalo;
+
 /// A read-only memory mapping of a font file. The multi-megabyte CJK fonts stay
 /// file-backed: the pages are shareable and the memory manager can evict them
 /// under pressure, instead of pinning a private heap copy for the whole session.
@@ -281,21 +284,15 @@ impl Text {
             false,
         );
     }
-    fn draw_style(
+    // Share ellipsis and fallback shaping between the crisp line and its halo.
+    fn fitted_layout_key(
         &mut self,
-        scene: &mut Scene,
         text: &str,
-        x: f64,
-        y: f64,
         size: f32,
-        argb: u32,
         weight: u16,
         max: f64,
         display: bool,
-    ) {
-        if text.is_empty() || max <= 0. {
-            return;
-        }
+    ) -> Option<(String, u32, u16, bool)> {
         let mut key = self.layout_key(text, size, weight, display);
         if self.cache[&key].width() as f64 > max {
             let chars = text.chars().collect::<Vec<_>>();
@@ -311,10 +308,30 @@ impl Text {
             }
             let fitted = format!("{}…", chars[..low].iter().collect::<String>());
             if self.measure_weighted(&fitted, size, weight) > max {
-                return;
+                return None;
             }
             key = self.layout_key(&fitted, size, weight, display);
         }
+        Some(key)
+    }
+    fn draw_style(
+        &mut self,
+        scene: &mut Scene,
+        text: &str,
+        x: f64,
+        y: f64,
+        size: f32,
+        argb: u32,
+        weight: u16,
+        max: f64,
+        display: bool,
+    ) {
+        if text.is_empty() || max <= 0. {
+            return;
+        }
+        let Some(key) = self.fitted_layout_key(text, size, weight, max, display) else {
+            return;
+        };
         let layout = &self.cache[&key];
         scene.push_clip_layer(Affine::IDENTITY, &rect(x, y - 2., max, size as f64 * 1.7));
         for line in layout.lines() {

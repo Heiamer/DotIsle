@@ -3,7 +3,7 @@ use crate::{
     layout::{Layout, Rect},
     motion::Frame,
 };
-use dotisle_render::draw::{Icon, Text};
+use dotisle_render::draw::{Icon, LyricHalo, Text};
 use std::{
     collections::HashMap,
     path::Path,
@@ -60,6 +60,7 @@ pub struct Renderer {
     gpu: crate::vello_surface::Surface,
     canvas: VScene,
     text: Text,
+    lyric_halo: LyricHalo,
     blurred_cover: Option<(u32, ImageData)>,
     cover: Option<ImageData>,
     previous_cover: Option<ImageData>,
@@ -102,6 +103,7 @@ impl Renderer {
             gpu,
             canvas: VScene::new(),
             text,
+            lyric_halo: LyricHalo::default(),
             color_motion: Default::default(),
             m3_cache: None,
             blurred_cover: None,
@@ -633,8 +635,10 @@ impl Renderer {
         );
     }
     fn music_lyric(&mut self, text: &str, r: Rect, size: f64, align: f64, ink: u32, s: &Scene<'_>) {
-        // 5.0.1: the old 400-weight lyric looked thin on frosted covers. Use the
-        // registered Medium face for the card and SemiBold for large immersive lyrics.
+        if text.trim().is_empty() || r.w <= 0. || r.h <= 0. {
+            return;
+        }
+        // Use the registered Medium face for the card and SemiBold for large immersive lyrics.
         let weight = if size >= 20. { 600 } else { 500 };
         let width = self
             .text
@@ -647,7 +651,14 @@ impl Renderer {
             1.
         };
         let y = r.y + 4. * (1. - phase).powi(3);
+        let glyph_box = vr(Rect::new(x, y, width, r.h));
         let boundary = x + width * s.highlight.clamp(0., 1.);
+        if s.lyric_glow && s.has_track && width > 0. && phase > 0.001 {
+            self.lyric_halo.draw(
+                &mut self.canvas, &mut self.text, text, glyph_box,
+                size as f32, weight, phase as f32,
+            );
+        }
         for (clip, c) in [
             (
                 Rect::new(r.x, r.y, (boundary - r.x).max(0.), r.h + 5.),
@@ -663,10 +674,10 @@ impl Renderer {
                 self.text.line_fixed(
                     &mut self.canvas,
                     text,
-                    vr(Rect::new(x, y, width, r.h)),
+                    glyph_box,
                     size as f32,
                     c,
-                    weight as u16,
+                    weight,
                     0.,
                 );
                 self.canvas.pop_layer();
@@ -1333,6 +1344,13 @@ impl Renderer {
         };
         let thumb = if s.pressed == 10 { 16. } else { 14. };
         if g.track.w > 0. {
+            let played = g.track.w * s.progress.clamp(0., 1.);
+            if s.progress_glow && played > 0.5 && !s.seek_offer {
+                let y = g.track.y + (g.track.h - 5.6) / 2.;
+                let glow = Rect::new(g.track.x, y, played, 5.6);
+                self.canvas.draw_blurred_rounded_rect(Affine::IDENTITY, vr(glow),
+                    color(0x66000000 | (s.component_color & 0xffffff)), 2.8, 5.);
+            }
             dotisle_render::progress::draw(
                 &mut self.canvas,
                 vr(g.track),
@@ -1478,6 +1496,14 @@ impl Renderer {
         }
     }
     fn tool_expanded(&mut self, s: &Scene<'_>, p: &crate::activities::Panel) {
+        if p.kind == crate::gesture_practice::KIND {
+            let w = s.layout.card.w;
+            let c = self.m3(s);
+            self.text_at(&p.title, Rect::new(20., 22., w - 40., 32.), 22., 600, 0xff000000 | c.on_surface, 0.);
+            self.text_at("请按控制中心提示操作", Rect::new(20., 68., w - 40., 24.), 13., 400, 0xff000000 | c.on_surface_variant, 0.);
+            if s.practice_move { self.m3_button(2, crate::gesture_practice::move_button(s.layout.card.h), "拖动移动", s, true); }
+            return;
+        }
         if p.kind == crate::resident::KIND {
             self.resident_expanded(s);
             return;
@@ -2126,6 +2152,7 @@ impl Renderer {
             self.canvas.pop_layer();
         }
         self.canvas.pop_layer();
+        self.lyric_halo.end_frame();
     }
     pub unsafe fn render_bottom_osd(
         &mut self,
@@ -2396,12 +2423,15 @@ pub struct Scene<'a> {
     pub progress_bar: dotisle_render::progress::BarStyle,
     pub progress_thumb: dotisle_render::progress::ThumbStyle,
     pub progress_thumb_spin: bool,
+    pub progress_glow: bool,
+    pub lyric_glow: bool,
     pub transport_theme: dotisle_render::transport::TransportTheme,
     pub hover: i32,
     pub pressed: i32,
     pub opacity: f32,
     pub transparent: bool,
     pub floating: bool,
+    pub practice_move: bool,
     pub favorite_enabled: bool,
     pub has_track: bool,
     pub layout_scale: f64,
@@ -2420,6 +2450,8 @@ pub(crate) fn cover_scenes<'a>(
 ) -> (Scene<'a>, Scene<'a>) {
     let mut expanded = *s;
     let mut compact = *s;
+    // The lyric effect belongs only to the expanded music card.
+    compact.lyric_glow = false;
     if let Some(palette) = palette {
         let accent = 0xff000000 | palette.accent;
         if s.expanded_cover_background {

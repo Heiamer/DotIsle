@@ -17,6 +17,9 @@ type cityPromptState struct {
 // Background widget startup must not ask for input until the center is shown.
 func (a *App) BeginCenterVisit() {
 	a.centerVisible = true
+	if a.tutorialRequired {
+		a.forceGestureTutorial()
+	}
 	a.cityPromptAsked = false
 	if a.cityPrompt == nil || !a.cityPrompt.saving {
 		a.cityPrompt = nil
@@ -26,6 +29,7 @@ func (a *App) BeginCenterVisit() {
 
 func (a *App) EndCenterVisit() {
 	a.centerVisible = false
+	a.cancelGestureTutorial()
 	a.signaturePending = false
 	a.signatureStart = time.Time{}
 	a.cancelOverviewGesture()

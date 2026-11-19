@@ -37,6 +37,7 @@ type App struct {
 	ConnErr        string
 	Page           int
 	SettingsTab    uint8
+	settingsPanel  settingsPanelState
 	IslandTab      uint8
 	Scroll         [7]ui.ScrollState
 	contentH       [7]float32 // measured page content height, drives the scroll bounds
@@ -57,14 +58,15 @@ type App struct {
 	workflowDraftError string
 
 	// Widgets page: per-kind size choices (model.widget_sizes), default medium.
-	widgetSizes     map[string]string
-	musicEditor     *musicEditor
-	gestureTutorial *gestureTutorial
-	curveDraft      *motionCurveDraft
-	widgetEditor    *widgetEditorState
-	overviewEditor  *overviewEditorState
-	widgetExamples  *App
-	reminderFields  [2]leafEditField
+	widgetSizes      map[string]string
+	musicEditor      *musicEditor
+	gestureTutorial  *gestureTutorial
+	tutorialRequired bool
+	curveDraft       *motionCurveDraft
+	widgetEditor     *widgetEditorState
+	overviewEditor   *overviewEditorState
+	widgetExamples   *App
+	reminderFields   [2]leafEditField
 
 	// Open color picker dialog and the toast message (fresh for a few seconds).
 	picker         *pickerState
@@ -104,7 +106,7 @@ type App struct {
 }
 
 // scrollY is the current page's scroll offset (gallery culling).
-func (a *App) scrollY() float32 { return a.Scroll[a.Page].Y }
+func (a *App) scrollY() float32 { return a.Scroll[a.centerPage()].Y }
 
 // traceEvent appends one debug line when DOTISLE_TRACE_UI is set.
 func traceEvent(format string, args ...any) {
@@ -170,32 +172,29 @@ func (a *App) applyPendingPage() {
 	a.cancelOverviewGesture()
 	switch page {
 	case "timers":
-		a.Page = PageFocus
+		a.navigate(PageFocus)
 	case "todos":
-		a.Page = PageTodos
+		a.navigate(PageTodos)
 	case "overview":
-		a.Page = PageHome
+		a.navigate(PageHome)
+	case "gestureTutorial":
+		a.forceGestureTutorial()
 	case "plugins":
-		a.Page = PagePlugins
+		a.navigate(PagePlugins)
 	case "widgets":
-		a.Page = PageWidgets
+		a.navigate(PageWidgets)
 	case "notifications":
-		a.Page = PageNotifications
+		a.navigate(PageNotifications)
 	case "island":
-		a.Page = PageSettings
-		a.SettingsTab = 128
-		a.IslandTab = 0
+		a.openSettings(TabIslandFirst)
 	case "layout":
 		a.openSettings(TabLayoutEditor)
 	case "music", "lyrics":
-		a.Page = PageSettings
-		a.SettingsTab = 241
+		a.openSettings(241)
 	case "about", "updates", "update":
-		a.Page = PageSettings
-		a.SettingsTab = 3
+		a.openSettings(3)
 	default:
-		a.Page = PageSettings
-		a.SettingsTab = TabRoot
+		a.openSettings(TabRoot)
 	}
 	if a.ShowCenter != nil {
 		a.ShowCenter()
@@ -229,6 +228,7 @@ func (a *App) ApplyPacket(state map[string]any, connected bool, connErr string) 
 			a.Prefs.Island = enabled
 		}
 		a.applyPendingPage()
+		a.syncGesturePractice(state)
 	}
 	a.Connected = connected
 	a.ConnErr = connErr
@@ -295,29 +295,39 @@ func (a *App) pref(key string) any { return a.settings()[key] }
 
 // navigate switches the top-level page (Action::Navigate).
 func (a *App) navigate(page int) {
+	if page == PageSettings {
+		a.openSettings(TabRoot)
+		return
+	}
 	traceEvent("navigate -> %d", page)
 	a.navigationOpen = false
 	a.cancelOverviewGesture()
+	if a.Page == PageSettings {
+		a.settingsPanel = settingsPanelState{}
+	}
 	a.Page = page
 }
 
-// openSettings routes to a settings tab (Action::SettingsTab), normalizing the
-// destination aliases exactly like settings_hub::destination.
+// The main window owns a single settings panel. Generic open requests bring
+// the existing panel back without losing its route, search or scroll position.
 func (a *App) openSettings(tab uint8) {
-	a.navigationOpen = false
+	a.navigationOpen, a.paletteOpen = false, false
 	a.cancelOverviewGesture()
-	switch tab {
-	case 243:
-		tab = 8
-	case 244:
-		tab = 4
-	case 245:
-		tab = 3
-	case 246:
-		tab = 9
+	if a.Page == PageSettings && tab == TabRoot {
+		return
 	}
-	a.Page = PageSettings
-	a.SettingsTab = tab
+	_, section := settingLocation(settingLeaf(tab))
+	tab = section.tab
+	if a.Page != PageSettings {
+		a.settingsPanel = settingsPanelState{returnPage: a.Page}
+	}
+	if a.Page != PageSettings || a.SettingsTab != tab {
+		a.settingsPanel.scroll, a.settingsPanel.bodyHeight = ui.ScrollState{}, 0
+	}
+	if a.settingsPanel.query != "" {
+		a.settingsPanel.query, a.settingsPanel.navScroll = "", ui.ScrollState{}
+	}
+	a.Page, a.SettingsTab = PageSettings, tab
 	if tab >= TabIslandFirst && tab <= TabIslandLast {
 		a.IslandTab = tab - TabIslandFirst
 	}
@@ -409,7 +419,7 @@ func (a *App) View(c *ui.Context) {
 		opaqueOpening := a.prepareOpening(c)
 		if !opaqueOpening {
 			page := ui.Box(c).Key("page-surface").Absolute().Left(0).Top(0).Width(w).Height(h)
-			if a.navigationOpen {
+			if a.navigationOpen || a.Page == PageSettings {
 				page.IgnoreInput(true).AccessHidden(true).Disabled(true).DimDisabled(false)
 			}
 			page.Children(func() {
@@ -421,14 +431,19 @@ func (a *App) View(c *ui.Context) {
 				a.paintBackground(c, w, h)
 				a.header(c, w, h)
 				a.content(c, w, h)
-				a.dialogViews(c, w, h)
-				a.paletteView(c, w, h)
-				a.overviewManager(c)
+				if a.Page != PageSettings {
+					a.paletteView(c, w, h)
+					a.overviewManager(c)
+				}
 			})
 		}
-		a.titlebar(c, w, h)
+		if a.Page != PageSettings {
+			a.titlebar(c, w, h)
+		}
 		if !opaqueOpening {
 			a.navigation(c, w, h)
+			a.settingsPanelView(c, w, h)
+			a.dialogViews(c, w, h)
 		}
 		a.opening(c, w, h)
 	})
@@ -485,14 +500,15 @@ func (a *App) captionButton(c *ui.Context, x float32, label, iconName string, cl
 func (a *App) header(c *ui.Context, w, h float32) {
 	s := &a.Palette.Scheme
 	x := a.sidebarWidth(w) + 32
-	title, desc := Pages[a.Page], pageDescription(a.Page)
-	if a.Page == PageHome {
+	page := a.centerPage()
+	title, desc := Pages[page], pageDescription(page)
+	if page == PageHome {
 		title, desc = "概览", "音乐、计时与待办事项"
 	}
 	Label(c, title, x, TitleY, 20, s.OnSurface, true, w-x-220)
 	Label(c, desc, x, SubtitleY, 13, s.OnSurfaceVariant, false, w-x-210)
 	searchX := w - 252
-	if a.Page == PageTodos {
+	if page == PageTodos {
 		searchX = w - 430
 		Button(c, &a.Palette, "新建待办", w-178, TodoActionY, 146, 40, "新建待办", "add", false, true, func() { a.openTodoDialog("") })
 	}
@@ -548,8 +564,9 @@ func (a *App) content(c *ui.Context, w, h float32) {
 	clipH = float64(clipBottom - clipTop)
 	side := a.sidebarWidth(w)
 	bodyW := w - side - 56
-	route := fmt.Sprintf("content-%d-%d", a.Page, a.SettingsTab)
-	if a.Page == PageHome {
+	base := a.centerPage()
+	route := fmt.Sprintf("content-%d", base)
+	if base == PageHome {
 		route += "-" + a.overview.config.View
 	}
 	body := ui.Box(c).Key(route).Absolute().Left(side + 28).Top(clipTop).Width(bodyW).Height(clipBottom - clipTop)
@@ -561,16 +578,16 @@ func (a *App) content(c *ui.Context, w, h float32) {
 	a.contentMounted = true
 	body.Clip()
 	body.Children(func() {
-		if a.Page == PageHome && a.overview.config.View == "scroll" {
+		if base == PageHome && a.overview.config.View == "scroll" {
 			a.overviewPage(c, 4, 9, bodyW-8)
 			return
 		}
-		scroller := ui.Scroll(c).Scrollbars(false).Fill().TrackScroll(&a.Scroll[a.Page])
+		scroller := ui.Scroll(c).Scrollbars(false).Fill().TrackScroll(&a.Scroll[base])
 		scroller.Children(func() {
-			page := ui.Box(c).FillWidth().Height(a.contentH[a.Page])
+			page := ui.Box(c).FillWidth().Height(a.contentH[base])
 			page.Children(func() {
-				if measured := a.pageBody(c, bodyW+64) + 20; measured != a.contentH[a.Page] {
-					a.contentH[a.Page] = measured
+				if measured := a.pageBody(c, bodyW+64, base) + 20; measured != a.contentH[base] {
+					a.contentH[base] = measured
 					c.AnimationFrame()
 				}
 			})
@@ -579,10 +596,10 @@ func (a *App) content(c *ui.Context, w, h float32) {
 }
 
 // pageBody measures each page so every action remains reachable in small windows.
-func (a *App) pageBody(c *ui.Context, w float32) float32 {
+func (a *App) pageBody(c *ui.Context, w float32, page int) float32 {
 	// Rust: x=36 in window coords (clip at 32), y = content_top + 9 - scroll.
 	x, y := float32(4), float32(9)
-	switch a.Page {
+	switch page {
 	case PageHome:
 		return a.overviewPage(c, x, y, w-72)
 	case PagePlugins:
@@ -595,8 +612,6 @@ func (a *App) pageBody(c *ui.Context, w float32) float32 {
 		return a.todosPage(c, x, y, w-72)
 	case PageNotifications:
 		return a.notificationsPage(c, x, y, w-72)
-	case PageSettings:
-		return a.settingsPage(c, x, y, w-72)
 	}
 	return 0
 }

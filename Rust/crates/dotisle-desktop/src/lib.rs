@@ -49,8 +49,11 @@ unsafe fn input<'a>(data:*const u8,len:usize)->Result<&'a [u8],()> {if data.is_n
  let result=std::panic::catch_unwind(||->Result<Vec<u8>,String>{
   let bytes=input(data,len).map_err(|_|"invalid buffer")?;
   let value:serde_json::Value=serde_json::from_slice(bytes).map_err(|e|e.to_string())?;
-  let layout=if value.is_null(){lyric_core::custom_layout::Layout::default()}else{lyric_core::custom_layout::Layout::from_value(&value)?};
-  let geometry=layout.geometry(400.,1.,14.);
+  let draft=value.get("draft").unwrap_or(&value);
+  let mix=lyric_core::music_layout::MusicLayout::from_setting(value["baseLayout"].as_str().unwrap_or("")).position();
+  let font=value["fontSize"].as_f64().unwrap_or(14.).clamp(11.,20.);
+  let layout=if draft.is_null(){lyric_core::custom_layout::Layout::default()}else{lyric_core::custom_layout::Layout::from_value(draft)?};
+  let geometry=layout.geometry(400.,1.,font,mix);
   let elements=lyric_core::custom_layout::elements(&geometry).into_iter().map(|(id,r)|serde_json::json!({"id":id,"label":lyric_core::custom_layout::element_label(id),"resizable":lyric_core::custom_layout::resizable(id),"x":r.x,"y":r.y,"w":r.w,"h":r.h})).collect::<Vec<_>>();
   serde_json::to_vec(&serde_json::json!({"layout":layout,"height":geometry.height,"elements":elements})).map_err(|e|e.to_string())
  });

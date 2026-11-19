@@ -37,7 +37,7 @@ func appVersion() string {
 			}
 		}
 	}
-	return "5.0.7"
+	return "5.0.8"
 }
 
 type record struct {

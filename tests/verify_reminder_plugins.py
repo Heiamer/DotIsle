@@ -51,9 +51,10 @@ def verify(runtime, report):
         while time.monotonic() - started < 80 and len(seen) < 2:
             state = app.request('state')
             alert = state['reminderPluginVisible']
-            if alert and alert not in seen:
+            # The alert is armed one tick before the native window fades in.
+            if alert and state['islandVisible'] and alert not in seen:
                 seen[alert] = round(time.monotonic() - started, 2)
-                assert seen[alert] >= 57 and state['islandVisible'], seen
+                assert seen[alert] >= 57, seen
                 expect(configure(alert, enabled=False))
             time.sleep(.20)
         assert set(seen) == {'sedentary', 'hydration'}, (seen, state['screenTime'], state['lastError'])

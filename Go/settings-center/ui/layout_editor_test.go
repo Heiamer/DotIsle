@@ -14,6 +14,7 @@ func editorFixture(t *testing.T) *App {
 	saved := nativeMusicLayout
 	t.Cleanup(func() { nativeMusicLayout = saved })
 	nativeMusicLayout = func(value any) (map[string]any, error) {
+		value = value.(map[string]any)["draft"]
 		layout := musicLayout{Version: 1, Modules: []musicSlot{{"header", true}, {"controls", true}}, CoverSize: 60, ShowCover: true, Controls: []int{4}}
 		if value != nil {
 			if err := json.Unmarshal([]byte(layoutJSON(value)), &layout); err != nil {

@@ -527,7 +527,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-desktop"
-version = "5.0.7"
+version = "5.0.8"
 dependencies = [
  "base64",
  "dotisle-domain",
@@ -561,7 +561,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-domain"
-version = "5.0.7"
+version = "5.0.8"
 dependencies = [
  "dotisle-module-api",
  "lyric-backend",
@@ -694,7 +694,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-render"
-version = "5.0.7"
+version = "5.0.8"
 dependencies = [
  "dotisle-scene",
  "fontique",
@@ -702,12 +702,13 @@ dependencies = [
  "parley",
  "pollster",
  "skrifa 0.44.0",
+ "swash",
  "windows 0.62.2",
 ]
 
 [[package]]
 name = "dotisle-scene"
-version = "5.0.7"
+version = "5.0.8"
 dependencies = [
  "glifo",
  "vello_common",
@@ -1526,7 +1527,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-archive"
-version = "5.0.7"
+version = "5.0.8"
 dependencies = [
  "flate2",
  "sha2",
@@ -1534,7 +1535,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-backend"
-version = "5.0.7"
+version = "5.0.8"
 dependencies = [
  "aes",
  "base64",
@@ -1553,7 +1554,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-bootstrap"
-version = "5.0.7"
+version = "5.0.8"
 dependencies = [
  "dotisle-module-api",
  "dotisle-render",
@@ -1569,7 +1570,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-core"
-version = "5.0.7"
+version = "5.0.8"
 dependencies = [
  "regex",
  "serde",
@@ -1580,7 +1581,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-native"
-version = "5.0.7"
+version = "5.0.8"
 dependencies = [
  "base64",
  "dotisle-domain",

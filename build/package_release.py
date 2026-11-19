@@ -22,6 +22,14 @@ def archive(directory,path,prefix,excluded=()):
         assert z.testzip() is None
         assert all('..' not in Path(p).parts and 'Data' not in Path(p).parts for p in z.namelist())
 
+def copy_runtime_assets(source, target):
+    # Keep archival branding and repository metadata in the source archive only.
+    source = source.resolve()
+    omitted = {'ShaderCache', '.gitattributes', 'LyricIsland-v2.ico', 'LyricIsland-v2.png'}
+    def ignore(directory, names):
+        return omitted.intersection(names) if Path(directory) == source else ()
+    shutil.copytree(source, target, ignore=ignore)
+
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument('--binary-dir',type=Path,required=True)
@@ -61,7 +69,7 @@ def main():
     shutil.copy2(center,runtime/'LyricIsland.Center.exe')
     for module in ['dotisle_core.dll', 'dotisle_desktop.dll', 'dotisle_focus.dll', 'dotisle_todos.dll', 'dotisle_music.dll', 'dotisle_lyrics.dll', 'dotisle_notifications.dll', 'dotisle_history.dll', 'dotisle_automation.dll', 'dotisle_devices.dll', 'dotisle_osd.dll', 'dotisle_sound.dll', 'dotisle_widgets.dll', 'dotisle_themes.dll', 'dotisle_glow.dll']:
         shutil.copy2(args.binary_dir/module,runtime/module)
-    shutil.copytree(root/'Assets',runtime/'Assets',ignore=shutil.ignore_patterns('ShaderCache'))
+    copy_runtime_assets(root/'Assets', runtime/'Assets')
     shutil.copytree(args.shader_cache,runtime/'Assets/ShaderCache/Hybrid29')
     shutil.copytree(root/'licenses',runtime/'licenses')
     # Read-only SQLite reader for the notification listener and legacy song_maps.db import.

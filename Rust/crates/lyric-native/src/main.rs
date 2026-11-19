@@ -27,6 +27,8 @@ mod banner;
 mod capsule_alert;
 mod device_data_preview;
 mod resident;
+mod gesture_practice;
+use gesture_practice::Step as PracticeStep;
 mod resident_preview;
 mod verification_code;
 mod volume;
@@ -285,6 +287,7 @@ struct App {
     pending_page: Option<String>,
     pending_request: u64,
     pending_center_action: Value,
+    practice: Option<gesture_practice::Practice>,
     updates: update_activity::Hub,
     update_return: String,
     update_until: Option<Instant>,
@@ -565,6 +568,7 @@ impl App {
             pending_page: None,
             pending_request: 0,
             pending_center_action: Value::Null,
+            practice: None,
             devices: devices::Hub::default(),
             timers,
             selected: "music".into(),
@@ -691,6 +695,10 @@ impl App {
             })
     }
     fn refresh_components(&mut self) {
+        if self.practice.is_some() {
+            self.practice_components();
+            return;
+        }
         if self.flag("IslandKeepVisibleEnabled", false)
             && !self.demo && self.snapshot["isPlaying"] != true && !self.active_tasks()
             && !(self.updates.selectable() && !self.update_card_deleted)
@@ -760,6 +768,7 @@ impl App {
         }
     }
     fn component_panel(&self, id: &str) -> Option<activities::Panel> {
+        if self.practice.is_some() { return gesture_practice::panel(id); }
         if id == "update" {
             Some(self.updates.panel())
         } else if id == "todos" {
@@ -855,12 +864,14 @@ impl App {
     }
     fn can_hide(&self, hit: i32) -> bool {
         self.flag("SwipeUpHide", true)
+            && (self.practice.is_none() || self.practice_step() == Some(PracticeStep::Hide))
             && !self.banner.visible()
             && self.dragging.is_none()
             && matches!(hit, 0 | 1 | 13 | 40..=42)
     }
     fn hide_by_gesture(&mut self) {
         self.user_hidden = true;
+        self.practice_event(PracticeStep::Hide);
         self.held = false;
         self.leave_at = None;
         self.hide_at = None;
@@ -874,6 +885,7 @@ impl App {
     }
     fn can_swipe(&self, hit: i32) -> bool {
         self.flag("SwipeActivities", true)
+            && (self.practice.is_none() || self.practice_step() == Some(PracticeStep::Swipe))
             && !self.banner.visible()
             && !self.alerts.visible()
             && self.components.len() > 1
@@ -901,7 +913,9 @@ impl App {
         };
         let offset = motion::rubber(swipe.dx, width);
         if direction != 0 {
+            let before = self.selected.clone();
             self.cycle_component(direction);
+            if self.selected != before { self.practice_event(PracticeStep::Swipe); }
             if self.flag("Animation", true) {
                 self.slide
                     .release(self.slide_direction * width + offset, swipe.velocity);
@@ -981,7 +995,7 @@ impl App {
         let scale = unsafe { GetDpiForWindow(self.hwnd).max(96) as f64 / 96. };
         let font = self.settings["FontSize"].as_f64().unwrap_or(12.5);
         let target = if self.music_custom.enabled {
-            self.music_custom.geometry(w, scale, font)
+            self.music_custom.geometry(w, scale, font, self.music_mix)
         } else {
             layout::music_geometry(w, layout, self.music_mix, scale, font)
         };
@@ -997,6 +1011,7 @@ impl App {
         }
     }
     fn card_height(&self) -> f64 {
+        if self.practice.is_some() { return 164.; }
         if self.selected == resident::ID { return self.resident.view.height(); }
         if let Some(p)=self.panel.as_ref().filter(|p|p.kind==4){return 70.+p.blocks.iter().map(|b|match b.kind.as_str(){"metric"=>56.,"progress"=>40.,"divider"=>12.,_=>28.}).sum::<f64>()}
         self.music_geometry().height
@@ -1041,18 +1056,6 @@ impl App {
         self.layout = Layout::new(base);
         self.layout.card.h = self.card_height();
         self.layout.host.h = self.layout.host.h.max(self.layout.card.h + 72.);
-        if self.music_custom.enabled {
-            self.layout.host.h = self.layout.host.h.max(
-                self.music_custom
-                    .geometry(
-                        self.layout.card.w,
-                        1.,
-                        self.settings["FontSize"].as_f64().unwrap_or(14.),
-                    )
-                    .height
-                    + 72.,
-            );
-        }
         if (self.compact_size.height_target < 30.) != self.mini() {
             self.compact_size = compact::Resize::new(base, if self.mini() { 14. } else { 40. });
         }
@@ -1068,8 +1071,10 @@ impl App {
         self.compact_key = String::new();
     }
     unsafe fn position(&mut self) -> Result<()> {
+        self.position_on(MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST))
+    }
+    unsafe fn position_on(&mut self, monitor: HMONITOR) -> Result<()> {
         self.rebuild_layout();
-        let monitor = MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST);
         let mut info = MONITORINFO {
             cbSize: std::mem::size_of::<MONITORINFO>() as u32,
             ..Default::default()
@@ -1187,8 +1192,11 @@ impl App {
         }
         if !self.banner.visible() && inside && !self.cursor_inside {
             self.leave_at = None;
-            if !self.suppress_hover_expand && !self.mini() && self.flag("HoverExpand", false) {
-                self.retarget(true)
+            if !self.suppress_hover_expand && !self.mini() && self.flag("HoverExpand", false)
+                && (self.practice.is_none() || self.practice_step() == Some(PracticeStep::HoverExpand)) {
+                let was_expanded = self.expanded;
+                self.retarget(true);
+                if !was_expanded && self.expanded { self.practice_event(PracticeStep::HoverExpand); }
             }
         }
         if !inside && self.cursor_inside && !self.held {
@@ -1948,7 +1956,7 @@ impl App {
                     .as_str()
                     .unwrap_or("")
                     .ends_with("|ProcessFallback");
-            let flag = self.flag("IslandKeepVisibleEnabled", false) || island_needed(
+            let flag = self.practice.is_some() || self.flag("IslandKeepVisibleEnabled", false) || island_needed(
                 valid,
                 self.snapshot["isPlaying"] == true,
                 self.flag("HideWhenPaused", true),
@@ -2018,7 +2026,7 @@ impl App {
                 .as_str()
                 .unwrap_or("")
                 .ends_with("|ProcessFallback");
-        self.flag("IslandKeepVisibleEnabled", false) || island_needed(
+        self.practice.is_some() || self.flag("IslandKeepVisibleEnabled", false) || island_needed(
             valid,
             self.snapshot["isPlaying"] == true,
             self.flag("HideWhenPaused", true),
@@ -2123,6 +2131,10 @@ impl App {
                 let x = (x - shape.x) / scale;
                 let y = (y - shape.y) / scale - self.frame.content_offset_y;
                 let w = self.layout.card.w;
+                if self.practice.is_some() {
+                    return if self.practice_step() == Some(PracticeStep::Move)
+                        && gesture_practice::move_button(self.layout.card.h).contains(x, y) { 2 } else { 0 };
+                }
                 if self.selected == resident::ID {
                     if layout::activity_close(w).contains(x, y) { return resident::COLLAPSE; }
                     return resident::buttons(w).into_iter().find(|(_, rect, _)| rect.contains(x, y))
@@ -2328,7 +2340,37 @@ impl App {
         self.manual_until = None;
         self.update_until = None;
     }
+    unsafe fn toggle_island_visibility(&mut self, from_tray: bool) {
+        if self.practice.is_some() && !(from_tray && self.user_hidden && self.practice_step() == Some(PracticeStep::Recover)) { return; }
+        self.dismiss_offset.set(0.);
+        let _ = self.position();
+        self.restore_hidden = false;
+        self.user_hidden = !self.user_hidden;
+        if !self.user_hidden {
+            self.manual_until = Some(Instant::now() + Duration::from_secs(6));
+            if from_tray { self.practice_event(PracticeStep::Recover); }
+        }
+        self.fade(if self.user_hidden { 0. } else { 1. });
+    }
     unsafe fn activate(&mut self, id: i32) {
+        if self.practice.is_some() && id != 2 {
+            if id == 0 {
+                match (self.practice_step(), self.expanded) {
+                    (Some(PracticeStep::ClickExpand), false) => {
+                        self.held = true;
+                        self.retarget(true);
+                        self.practice_event(PracticeStep::ClickExpand);
+                    }
+                    (Some(PracticeStep::ClickCollapse), true) => {
+                        self.held = false;
+                        self.retarget(false);
+                        self.practice_event(PracticeStep::ClickCollapse);
+                    }
+                    _ => {}
+                }
+            }
+            return;
+        }
         if id==60{
             let code=self.alerts.active.as_ref().and_then(|a|a.code.clone());
             if let Some(code)=code{
@@ -2893,6 +2935,8 @@ impl App {
                 dotisle_render::progress::ThumbStyle::None
             },
             progress_thumb_spin: self.flag("ProgressBarThumbSpin", false),
+            progress_glow: self.flag("ProgressBarGlow", true),
+            lyric_glow: self.flag("MusicLyricGlow", true),
             transport_theme: dotisle_render::transport::TransportTheme::from_setting(
                 self.settings["TransportTheme"].as_str().unwrap_or("Reef"),
             ),
@@ -2901,6 +2945,7 @@ impl App {
             opacity: self.opacity as f32,
             transparent: self.transparent,
             floating: !self.mini() && self.flag("Floating", false),
+            practice_move: self.practice_step() == Some(PracticeStep::Move),
             favorite_enabled: track["sourceApp"]
                 .as_str()
                 .is_some_and(|s| s.eq_ignore_ascii_case("Netease")),
@@ -2925,7 +2970,7 @@ impl App {
             s.music_mix = s.music_layout.position();
             let width = s.layout.card.w;
             let geometry = if draft.enabled {
-                let geometry = draft.geometry(width, s.layout_scale, s.font_size);
+                let geometry = draft.geometry(width, s.layout_scale, s.font_size, s.music_mix);
                 s.custom_geometry = Some(geometry);
                 s.transport_theme = dotisle_render::transport::TransportTheme::from_setting(&draft.transport_theme);
                 s.progress_bar = dotisle_render::progress::BarStyle::from_setting(&draft.bar_style);
@@ -3044,6 +3089,10 @@ impl App {
                 return;
             }
         }
+        if self.practice.is_some() {
+            if !preview { self.enqueue(Queued{notice,todo,chime}); }
+            return;
+        }
         if self.alerts.visible(){
             if preview{self.alerts=Default::default();}
             else{self.enqueue(Queued{notice,todo,chime});return;}
@@ -3142,7 +3191,7 @@ impl App {
             }
             return;
         }
-        if self.user_hidden && !preview {
+        if self.practice.is_some() || (self.user_hidden && !preview) {
             return;
         }
         let now = self.start.elapsed().as_secs_f64();
@@ -3264,6 +3313,7 @@ impl App {
         }
     }
     unsafe fn tick(&mut self) -> Result<()> {
+        self.practice_expiry();
         if self.module_updates.tick(){self.dirty=true;}
         self.reap_center();
         self.ensure_widget_host();
@@ -3292,7 +3342,7 @@ impl App {
         {
             self.dirty = true;
         }
-        if self.updates.reminder {
+        if self.updates.reminder && self.practice.is_none() {
             self.update_card_deleted = false;
             self.updates.reminder = false;
             if !self.flag("PauseNotifications", false) {
@@ -3500,7 +3550,7 @@ impl App {
                                 // A code is actionable for a few minutes: surface it even
                                 // after a swipe-up hide, then restore that hide when the
                                 // alert ends.
-                                if self.user_hidden&&!self.flag("PauseNotifications",false){
+                                if self.practice.is_none() && self.user_hidden&&!self.flag("PauseNotifications",false){
                                     self.restore_hidden=true;
                                     self.user_hidden=false;
                                     self.dismiss_offset.set(0.);
@@ -3509,7 +3559,7 @@ impl App {
                                     self.retarget(true);
                                     self.fade(1.);
                                 }
-                                if !self.user_hidden{
+                                if !self.user_hidden || self.practice.is_some(){
                                     self.alerts.enqueue(capsule_alert::Alert::verification(&notice.app_id,&notice.app_name,code));
                                 }
                             }
@@ -3661,8 +3711,10 @@ impl App {
                 .is_some_and(|t| t.elapsed() >= Duration::from_millis(1200))
         {
             self.leave_at = None;
-            if !self.held {
-                self.retarget(false)
+            if !self.held && (self.practice.is_none() || self.practice_step() == Some(PracticeStep::HoverCollapse)) {
+                let was_expanded = self.expanded;
+                self.retarget(false);
+                if was_expanded && !self.expanded { self.practice_event(PracticeStep::HoverCollapse); }
             }
         }
         let reduce = !self.flag("Animation", true);
@@ -3716,7 +3768,7 @@ impl App {
             self.dirty = true;
         }
         let left = GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0;
-        if !self.banner.visible() && left && !self.last_left && !inside && self.expanded {
+        if self.practice.is_none() && !self.banner.visible() && left && !self.last_left && !inside && self.expanded {
             self.held = false;
             self.retarget(false)
         }
@@ -3774,7 +3826,7 @@ impl App {
                 self.finish_transient();
             }
         }
-        if self.alerts.pending() && (self.user_hidden || self.flag("PauseNotifications", false)) {
+        if self.practice.is_none() && self.alerts.pending() && (self.user_hidden || self.flag("PauseNotifications", false)) {
             for kind in reminder_plugins::Kind::ALL { self.alerts.remove_pending(kind.alert_key()); }
         }
         if self.alerts.visible(){
@@ -3785,7 +3837,7 @@ impl App {
             self.alerts.tick(r,rad,self.start.elapsed().as_secs_f64(),self.flag("Animation",true));self.dirty=true;
             if !self.alerts.visible(){self.finish_transient();}
         }
-        if !self.banner.visible()&&!self.osd_banner.visible()&&!self.alerts.visible()
+        if self.practice.is_none() && !self.banner.visible()&&!self.osd_banner.visible()&&!self.alerts.visible()
             &&!self.user_hidden&&!self.session_locked&&!self.flag("PauseNotifications",false){
             let(r,rad)=self.shape();
             if self.alerts.pending(){self.ensure_renderer()?;}
@@ -3900,7 +3952,7 @@ impl App {
             self.poll_app_rules();
         }
         // One banner at a time; the next one starts once the previous is gone.
-        if !self.banner.visible() && !self.osd_banner.visible() && !self.alerts.visible() && !self.alerts.pending() && !self.user_hidden && !self.flag("PauseNotifications", false) {
+        if self.practice.is_none() && !self.banner.visible() && !self.osd_banner.visible() && !self.alerts.visible() && !self.alerts.pending() && !self.user_hidden && !self.flag("PauseNotifications", false) {
             if let Some(q) = self.queue.pop_front() {
                 self.show_notice(q.notice, false, q.todo, q.chime);
             }
@@ -3923,7 +3975,16 @@ impl App {
             } else {
                 self.dragging = None;
                 let _ = ReleaseCapture();
-                self.remember_position();
+                if self.practice.is_some() {
+                    let mut end = RECT::default();
+                    if GetWindowRect(self.hwnd, &mut end).is_ok()
+                        && (end.left.abs_diff(bounds.left) >= 12 || end.top.abs_diff(bounds.top) >= 12) {
+                        if self.practice_step() == Some(PracticeStep::Move) && !inside { self.leave_at = Some(Instant::now()); }
+                        self.practice_event(PracticeStep::Move);
+                    }
+                } else {
+                    self.remember_position();
+                }
             }
         }
         self.sync_input_region()?;
@@ -4065,6 +4126,7 @@ impl App {
                 state["verificationAlertVisible"] = json!(self.alerts.visible() && self.alerts.active.as_ref().is_some_and(|a|a.code.is_some()));
                 state["verificationCodeLength"] = json!(self.alerts.active.as_ref().and_then(|a|a.code.as_ref()).map(String::len));
                 state["residentIdle"] = json!(self.resident_idle());
+                if let Some(practice) = &self.practice { state["gesturePractice"] = practice.state(); }
                 if self.selected == resident::ID {
                     let view = &self.resident.view;
                     state["residentContent"] = json!({"page":view.page.name(),"text":view.label,"battery":view.battery,
@@ -4119,6 +4181,7 @@ impl App {
                     Err(e) => json!({"success":false,"message":e.to_string()}),
                 }
             }
+            "gesturePractice" => self.practice_request(&r["value"]),
             "updateChannel" => {
                 match self.updates.set_channel(r["value"].as_str().unwrap_or("")) {
                     Ok(()) => json!({"success":true,"message":"已切换更新渠道"}),
@@ -4590,6 +4653,7 @@ impl App {
                 }
             }
             "expand" => {
+                if self.practice.is_some() { return json!({"success":false,"message":"请按实操教程提示操作。"}); }
                 self.user_hidden = false;
                 self.held = true;
                 self.hide_at = None;
@@ -4602,14 +4666,8 @@ impl App {
                 json!({"success":true})
             }
             "toggleVisibility" => {
-                self.dismiss_offset.set(0.);
-                let _ = self.position();
-                self.restore_hidden = false;
-                self.user_hidden = !self.user_hidden;
-                if !self.user_hidden {
-                    self.manual_until = Some(Instant::now() + Duration::from_secs(6));
-                }
-                self.fade(if self.user_hidden { 0. } else { 1. });
+                if self.practice.is_some() { return json!({"success":false,"message":"请按实操教程提示操作。"}); }
+                unsafe { self.toggle_island_visibility(false); }
                 json!({"success":true})
             }
             "notificationPreview" => {
@@ -5264,7 +5322,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                             let _ = DestroyMenu(menu);
                             let command = match selected {
                                 1 => "expand",
-                                2 => "toggleVisibility",
+                                2 => "",
                                 3 => "settings",
                                 5 => "restart",
                                 6 => "toggleNotifications",
@@ -5282,6 +5340,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                                             .to_owned(),
                                     );
                                 }
+                            } else if selected == 2 {
+                                a.toggle_island_visibility(true);
                             } else if !command.is_empty() {
                                 a.request(json!({"version":1,"command":command}));
                             }
@@ -6511,10 +6571,9 @@ fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         if should_open_tutorial(
             app.demo,
             std::env::var_os("LYRICISLAND_TEST_PIPE").is_some(),
-            args.iter().any(|a| a == "--startup"),
-            app.flag("GestureTutorialSeen", false),
+            app.flag("GesturePracticeSeen", false),
         ) {
-            app.show_settings_page("overview");
+            app.show_settings_page("gestureTutorial");
         }
         app.greeting_pending = app.flag("StartupGreetingEnabled", true)
             && !app.demo
@@ -6634,16 +6693,17 @@ fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
 }
-fn should_open_tutorial(demo: bool, test: bool, startup: bool, seen: bool) -> bool {
-    !demo && !test && !startup && !seen
+fn should_open_tutorial(demo: bool, test: bool, seen: bool) -> bool {
+    !demo && !test && !seen
 }
 #[cfg(test)]
 mod login_tests {
     #[test]
-    fn login_never_opens_unseen_onboarding() {
-        assert!(!super::should_open_tutorial(false, false, true, false));
-        assert!(super::should_open_tutorial(false, false, false, false));
-        assert!(!super::should_open_tutorial(false, false, false, true));
+    fn practice_is_required_once_in_normal_launches() {
+        assert!(super::should_open_tutorial(false, false, false));
+        assert!(!super::should_open_tutorial(false, false, true));
+        assert!(!super::should_open_tutorial(true, false, false));
+        assert!(!super::should_open_tutorial(false, true, false));
     }
 }
 fn main() {
@@ -7790,6 +7850,23 @@ mod custom_composition_tests {
         }
     }
     #[test]
+    fn enabling_custom_layout_keeps_the_music_card_frame() {
+        let mut a = App::new(PathBuf::new(), PathBuf::new(), true);
+        for mix in [0., 1., 2., 3., 4.] {
+            for font in [11., 14., 20.] {
+                a.music_mix = mix;
+                a.settings["FontSize"] = json!(font);
+                a.music_custom.enabled = false;
+                a.rebuild_layout();
+                let original = (a.layout.card.w, a.layout.card.h, a.layout.host.h);
+                a.music_custom.enabled = true;
+                a.music_custom.set_element(36, 220., 600., None);
+                a.rebuild_layout();
+                assert_eq!(original, (a.layout.card.w, a.layout.card.h, a.layout.host.h));
+            }
+        }
+    }
+    #[test]
     fn custom_retarget_starts_at_the_presented_geometry_and_reduced_motion_is_immediate() {
         let mut a = App::new(PathBuf::new(), PathBuf::new(), true);
         let from = a.music_geometry();
@@ -7803,7 +7880,7 @@ mod custom_composition_tests {
         a.settings["Animation"] = json!(false);
         assert_eq!(
             a.music_geometry().buttons,
-            a.music_custom.geometry(a.layout.card.w, 1., 14.).buttons
+            a.music_custom.geometry(a.layout.card.w, 1., 14., a.music_mix).buttons
         );
     }
 }
