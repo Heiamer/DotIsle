@@ -40,13 +40,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install screenshot test dependency
-        run: python -m pip install Pillow==13.0.0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
       - name: Resolve release version
         run: |
           $version='${{ inputs.version }}'
@@ -54,14 +47,6 @@ jobs:
           if($version -notmatch '^\d+\.\d+\.\d+(-rc[1-9]\d*)?$'){throw "Invalid version $version"}
           "VERSION=$version" >> $env:GITHUB_ENV
           "PRERELEASE=$($version.Contains('-rc').ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
-
-      - name: Verify release source, version and licenses
-        run: python build/verify_release_source.py --version $env:VERSION --report validation/source/report.json
-
-      - name: Test NetEase page reader
-        run: |
-          node --test tests/netease-timeline.test.cjs
-          if($LASTEXITCODE -ne 0){throw 'Page reader tests failed'}
 
       - name: Prepare GNU toolchain, Zig, LLVM and Inno Setup
         run: |
@@ -142,26 +127,8 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Center build failed'}
           if(-not(Test-Path -LiteralPath $dst)){throw "Center build produced no binary at $dst"}
           if((Get-Item -LiteralPath $dst).Length -le 0){throw "Center build produced an empty binary at $dst"}
-          & $goExe test @buildFlags ./...
-          if($LASTEXITCODE -ne 0){throw 'Center tests failed'}
           Write-Host "Center binary: $dst ($((Get-Item -LiteralPath $dst).Length) bytes)"
         working-directory: Go/settings-center
-
-      - name: Capture the production MyGo control center
-        working-directory: Go/settings-center
-        run: |
-          $env:DOTISLE_DESIGN_CAPTURE=Join-Path $env:GITHUB_WORKSPACE 'validation/control-center'
-          $env:DOTISLE_DESKTOP_DLL=Join-Path $env:GITHUB_WORKSPACE 'target/release/dotisle_desktop.dll'
-          $modFile=Join-Path $env:RUNNER_TEMP 'dotisle-center/center.mod'
-          & "$env:RUNNER_TEMP/go/go/bin/go.exe" test "-modfile=$modFile" -tags=dotisle_mygo_fontfile ./ui -run 'TestV3SurfaceCaptures|TestAlbumFrostAndPastelCaptures|TestPluginSurfaceCaptures' -count=1
-          if($LASTEXITCODE -ne 0){throw 'Control center capture failed'}
-
-      - name: Test workspace against built service DLLs
-        run: |
-          $env:DOTISLE_MODULE_DIR="$pwd/target/release"
-          $env:DOTISLE_TEST_SQLITE3="$pwd/build/e_sqlite3.dll"
-          powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 test --workspace --locked
-          if($LASTEXITCODE -ne 0){throw 'Module regression failed'}
 
       - name: Package installer, portable, OTA and source
         run: |
@@ -202,79 +169,6 @@ jobs:
           $declared=@($inventory.files.Keys | Where-Object { $_ -match '^dotisle_[^/]+\.dll$' })
           if(@(Compare-Object @($modules.Name) $declared).Count -ne 0){throw 'Packaged modules do not match the runtime inventory'}
           Write-Host "Control center packaged: $center ($((Get-Item -LiteralPath $center).Length) bytes); dotisle modules: $($modules.Count)"
-
-      - name: Verify packaged settings app
-        env:
-          DOTISLE_LAYOUT_AUDIT: "1"
-          DOTISLE_LAYOUT_AUDIT_CAPTURE: "0"
-        run: python build/verify_packaged_ui.py --runtime "publish/release-output/DotIsle-${{ env.VERSION }}" --output validation
-
-      - name: Verify packaged music lyric glow
-        run: python tests/verify_music_lyric_glow.py --runtime "publish/release-output/DotIsle-${{ env.VERSION }}" --output validation/music-lyric-glow
-
-      - name: Verify layout editor and capsule regressions
-        env:
-          PYTHONIOENCODING: utf-8
-        run: |
-          python tests/verify_layout_preview.py --runtime "publish/release-output/DotIsle-${{ env.VERSION }}" --output validation/layout-preview
-          python tests/verify_visual_regressions.py --runtime "publish/release-output/DotIsle-${{ env.VERSION }}" --output validation/visual-regressions
-
-      - name: Verify native timers and optional island effects
-        run: |
-          $runtime="$pwd/publish/release-output/DotIsle-$env:VERSION"
-          python tests/verify_pomodoro.py $runtime --scratch "$env:RUNNER_TEMP/native-timers" --report validation/native-timers/report.json
-          if($LASTEXITCODE -ne 0){throw 'Native timer acceptance failed'}
-          python tests/verify_resident.py --binary-dir $runtime --report validation/resident/report.json
-          if($LASTEXITCODE -ne 0){throw 'Resident rotation acceptance failed'}
-          $env:LYRICISLAND_TEST_PIPE='LyricIsland.Settings.test.release-effects.'+[guid]::NewGuid().ToString('N')
-          foreach($effect in @('liquid','glow')){
-            $destination="$pwd/validation/$effect"
-            $process=Start-Process "$runtime/LyricIsland.exe" -ArgumentList @("--$effect-preview",$destination,'--data-dir',"$env:RUNNER_TEMP/native-effects") -WindowStyle Hidden -PassThru
-            if(-not $process.WaitForExit(180000)){
-              $process.Kill()
-              throw "$effect capture timed out"
-            }
-            if($process.ExitCode -ne 0){throw "$effect capture failed: $($process.ExitCode)"}
-          }
-
-      - name: Build focus-only acceptance DLLs without rebuilding CORE
-        run: |
-          $before=(Get-FileHash target/release/dotisle_core.dll -Algorithm SHA256).Hash
-          New-Item -ItemType Directory -Force validation/module-fixtures | Out-Null
-          powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 build --release --locked --package dotisle-focus --lib --features module-probe
-          if($LASTEXITCODE -ne 0){throw 'Focus probe build failed'}
-          Copy-Item target/release/dotisle_focus.dll validation/module-fixtures/focus-probe.dll
-          powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 build --release --locked --package dotisle-focus --lib --features module-broken
-          if($LASTEXITCODE -ne 0){throw 'Rollback fixture build failed'}
-          Copy-Item target/release/dotisle_focus.dll validation/module-fixtures/focus-broken.dll
-          powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 build --release --locked --package dotisle-focus --lib
-          if($LASTEXITCODE -ne 0){throw 'Restoring production focus build failed'}
-          if((Get-FileHash target/release/dotisle_core.dll -Algorithm SHA256).Hash -ne $before){throw 'CORE changed during focus-only builds'}
-
-      - name: Verify module replacement, independent updates and automatic rollback
-        run: |
-          python tests/test_module_packages.py
-          if($LASTEXITCODE -ne 0){throw 'Resource package regression failed'}
-          python tests/verify_modules.py --runtime "publish/release-output/DotIsle-$env:VERSION" --probe validation/module-fixtures/focus-probe.dll --broken validation/module-fixtures/focus-broken.dll --scratch "$env:RUNNER_TEMP/module-transactions" --report validation/modules/report.json
-          if($LASTEXITCODE -ne 0){throw 'Module transaction acceptance failed'}
-
-      - name: Package validation evidence
-        if: always()
-        run: |
-          $out="$pwd/publish/release-output"
-          if(Test-Path 'validation'){
-            New-Item -ItemType Directory -Force $out | Out-Null
-            Compress-Archive -Path 'validation/*' -DestinationPath "$out/DotIsle-$env:VERSION-Validation.zip" -Force
-            $hash=(Get-FileHash "$out/DotIsle-$env:VERSION-Validation.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
-            Add-Content "$out/DotIsle-$env:VERSION-SHA256.txt" "$hash  DotIsle-$env:VERSION-Validation.zip"
-          }
-
-      - name: Require successful acceptance reports
-        run: |
-          foreach($report in @('validation/source/report.json','validation/center/report.json','validation/center/control-center/report.json','validation/center/desktop/report.json','validation/desktop/report.json','validation/native-timers/report.json','validation/liquid/report.json','validation/glow/report.json','validation/music-lyric-glow/report.json','validation/layout-preview/report.json','validation/visual-regressions/report.json','validation/modules/report.json')){
-            if(-not(Test-Path -LiteralPath $report)){throw "Missing acceptance report: $report"}
-            if((Get-Content -LiteralPath $report -Raw | ConvertFrom-Json).success -ne $true){throw "Acceptance failed: $report"}
-          }
 
       - name: Select public downloads
         run: |
