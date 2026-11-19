@@ -62,10 +62,13 @@ func TestSettingsRoutesAreUniqueAndReachable(t *testing.T) {
 			seen[section.tab] = true
 		}
 	}
-	for tab := uint8(0); tab <= 9; tab++ {
+	for tab := uint8(0); tab <= 8; tab++ {
 		if !seen[tab] {
 			t.Fatalf("missing settings tab %d", tab)
 		}
+	}
+	if seen[9] {
+		t.Fatal("module management tab must stay hidden")
 	}
 	for tab := uint8(128); tab <= 135; tab++ {
 		if !seen[tab] {

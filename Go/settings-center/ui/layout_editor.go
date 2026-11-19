@@ -252,6 +252,35 @@ func (a *App) applyMusicLayout() {
 	})
 }
 
+func (a *App) seedCustomLayoutStyles(l *musicLayout) {
+	l.TransportTheme = a.leafString("TransportTheme", "Reef")
+	l.BarStyle = a.leafString("ProgressBarStyle", "Normal")
+	l.ThumbStyle = a.leafString("ProgressBarThumb", "Pill")
+	l.ThumbEnabled = a.leafBool("ProgressBarThumbEnabled", false)
+	l.ThumbSpin = a.leafBool("ProgressBarThumbSpin", false)
+}
+
+// untouchedFrame mirrors custom_layout::Layout::uses_preset_frame on the Go side.
+func (l *musicLayout) untouchedFrame() bool {
+	kinds := []string{"header", "lyrics", "translation", "status", "progress", "controls"}
+	controls := []int{2, 9, 16, 3, 4, 5, 6, 7}
+	if len(l.Elements) != 0 || l.Alignment != 0 || l.Gap != 8 || l.CoverSize != 56 ||
+		!l.ShowCover || len(l.Modules) != len(kinds) || len(l.Controls) != len(controls) {
+		return false
+	}
+	for i, slot := range l.Modules {
+		if slot.Kind != kinds[i] || !slot.Visible {
+			return false
+		}
+	}
+	for i, id := range l.Controls {
+		if id != controls[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // The editor is a bounded workbench: the preview stays on screen while only
 // the inspector scrolls. No settings are appended below the preview.
 func (a *App) musicLayoutEditor(c *ui.Context, p *Palette, x, y, w float32) float32 {
@@ -278,7 +307,14 @@ func (a *App) musicLayoutEditor(c *ui.Context, p *Palette, x, y, w float32) floa
 	e.refresh()
 	a.requestLayoutPreview(e)
 	Label(c, "自定义布局", x, y+9, 13, s.OnSurface, true, 90)
-	Switch(c, p, "启用自定义布局", x+92, y+6, e.Draft.Enabled, func() { e.edit(func(l *musicLayout) { l.Enabled = !l.Enabled }, false) })
+	Switch(c, p, "启用自定义布局", x+92, y+6, e.Draft.Enabled, func() {
+		e.edit(func(l *musicLayout) {
+			if !l.Enabled && l.untouchedFrame() {
+				a.seedCustomLayoutStyles(l)
+			}
+			l.Enabled = !l.Enabled
+		}, false)
+	})
 	Button(c, p, "布局撤销", x+161, y, 62, 36, "撤销", "", true, len(e.Undo) > 0 && !e.Pending, func() { e.history(false) })
 	Button(c, p, "布局重做", x+231, y, 62, 36, "重做", "", true, len(e.Redo) > 0 && !e.Pending, func() { e.history(true) })
 	applyLabel := "应用到灵动岛"
@@ -320,6 +356,9 @@ func (a *App) musicLayoutEditor(c *ui.Context, p *Palette, x, y, w float32) floa
 		draft, _, _, err := decodeLayout(nil, e.BaseLayout, e.FontSize)
 		if err == nil {
 			draft.Enabled = true
+			if draft.untouchedFrame() {
+				a.seedCustomLayoutStyles(&draft)
+			}
 			e.edit(func(l *musicLayout) { *l = draft }, false)
 		}
 	})

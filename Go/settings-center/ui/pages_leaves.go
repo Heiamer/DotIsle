@@ -917,8 +917,10 @@ func (a *App) soundSection(c *ui.Context, p *Palette, x, y, w float32, index int
 				Radius(16).Background(Col(s.SecondaryContainer))
 		}
 		cueID := cue[0]
-		rowHit := ui.ButtonBase(c).Absolute().Left(x + 8).Top(rowY).Width(w - 16 - 96).Height(52).
-			Label("选择音色" + cue[1]).Cursor(ui.CursorPointer)
+		// The hit layer spans the row like the selected background; the 试听 button
+		// is built after it, so it stays on top and keeps its own click target.
+		rowHit := ui.ButtonBase(c).Absolute().Left(x + 8).Top(rowY).Width(w - 16).Height(52).
+			Radius(16).Label("选择音色" + cue[1]).Cursor(ui.CursorPointer)
 		hoverLayer(&rowHit, ui.Transparent, rowInk, true)
 		if rowHit.Clicked() {
 			a.command("soundSelect", map[string]any{"category": prefix, "source": "Builtin", "kind": cueID})
@@ -1053,7 +1055,7 @@ func (a *App) focusPrefsBody(c *ui.Context, p *Palette, x, y, w float32) float32
 
 // The 15 internal modules (dotisle_module_api::MODULES): id, label.
 var leafModules = [15][2]string{
-	{"core", "CORE 核心"}, {"settings", "控制中心"}, {"focus", "计时与流程"},
+	{"core", "CORE 核心"}, {"desktop", "桌面组件渲染"}, {"focus", "计时与流程"},
 	{"todos", "待办与快捷提醒"}, {"music", "音乐与播放器"}, {"lyrics", "歌词检索与同步"},
 	{"notifications", "通知接收"}, {"history", "通知历史"}, {"automation", "应用提醒规则"},
 	{"devices", "设备连接提醒"}, {"osd", "系统状态提示"}, {"sound", "音效"},

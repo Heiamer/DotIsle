@@ -68,6 +68,10 @@ def run(runtime, output):
         assert draft['barStyle'] == 'Normal' and not draft['enabled']
         builtin, _ = capture(draft, 'built-in-preview')
         assert builtin['width'] != 400 and builtin['hasTrack'] and not builtin['glass']
+        # Turning custom layout on before touching anything must keep the current card.
+        pristine, _ = capture(dict(draft, enabled=True), 'pristine-preview')
+        assert pristine['elements'] == builtin['elements'], 'enabling custom layout reflowed the card'
+        assert (pristine['width'], pristine['height']) == (builtin['width'], builtin['height'])
         assert app.request('settings', {'page': 'layout'})['success']
         pid = wait(lambda: next((p['pid'] for p in children(app) if p['name'] == 'LyricIsland.Center.exe'), None), 'center child')
         hwnd = wait(lambda: center_window(pid), 'layout editor window')

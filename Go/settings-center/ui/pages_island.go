@@ -478,6 +478,13 @@ func trimSpace(s string) string {
 	return s[start:end]
 }
 
+// Keys must match dotisle_render::progress::ThumbStyle; the old Dot/Ring/
+// Rounded/Petal names were rejected by the native setting, so clicks did nothing.
+var leafProgressThumbs = [][2]string{
+	{"胶囊", "Pill"}, {"圆形", "Circle"}, {"方形", "Square"}, {"菱形", "Diamond"},
+	{"心形", "Heart"}, {"花朵", "Flower"}, {"贝壳", "Clam"}, {"云朵", "Puffy"},
+}
+
 // islandTabProgress is tab 133: 播放进度条. The 8 bar styles and 16 thumb styles
 // select through chips; the preview draws the current style.
 func (a *App) islandTabProgress(c *ui.Context, p *Palette, x, y, w float32) float32 {
@@ -496,17 +503,14 @@ func (a *App) islandTabProgress(c *ui.Context, p *Palette, x, y, w float32) floa
 	})
 	if thumbOn {
 		y = a.islandHeading(c, p, "滑块样式", x, y, w)
-		thumbs := [][2]string{
-			{"胶囊", "Pill"}, {"圆点", "Dot"}, {"圆环", "Ring"}, {"方圆", "Rounded"},
-			{"菱形", "Gem"}, {"心形", "Heart"}, {"贝壳", "Clam"}, {"花瓣", "Petal"},
-		}
-		y = a.styleChipGrid(c, p, x, y, w, thumbs, "ProgressBarThumb", "Pill")
+		y = a.styleChipGrid(c, p, x, y, w, leafProgressThumbs, "ProgressBarThumb", "Pill")
 	}
-	// Live preview of the current bar style at full width.
+	// Live preview of the current bar and thumb style at full width.
 	settingCard(c, x, y, w, 72, s.Container)
 	fraction := 0.38
 	bar := a.islandString("ProgressBarStyle", "Normal")
-	drawBarPreview(c, p, x+24, y+22, w-48, 28, bar, fraction)
+	thumb := a.islandString("ProgressBarThumb", "Pill")
+	drawBarPreview(c, p, x+24, y+22, w-48, 28, bar, fraction, thumbOn, thumb)
 	return y + 88
 }
 
@@ -524,8 +528,8 @@ func (a *App) styleChipGrid(c *ui.Context, p *Palette, x, y, w float32, styles [
 	return y + float32((len(styles)+3)/4)*50 + 16
 }
 
-// drawBarPreview paints the current bar style into a preview strip.
-func drawBarPreview(c *ui.Context, p *Palette, x, y, w, h float32, style string, fraction float64) {
+// drawBarPreview paints the current bar and thumb style into a preview strip.
+func drawBarPreview(c *ui.Context, p *Palette, x, y, w, h float32, style string, fraction float64, thumbOn bool, thumb string) {
 	s := &p.Scheme
 	mid := y + h/2 - 2.5
 	track := Col(s.OutlineVariant)
@@ -561,6 +565,32 @@ func drawBarPreview(c *ui.Context, p *Palette, x, y, w, h float32, style string,
 		ui.Box(c).Absolute().Left(x).Top(mid).Width(w).Height(5).Radius(2.5).Background(track)
 		ui.Box(c).Absolute().Left(x).Top(mid).Width(float32(float64(w) * fraction)).Height(5).Radius(2.5).Background(fill)
 	}
+	if !thumbOn {
+		return
+	}
+	// Keep the sample inside the strip; the island clamps its thumb the same way.
+	tx := x + float32(float64(w)*fraction)
+	tx = min(max(tx, x+10), x+w-10)
+	center := mid + 2.5
+	switch thumb {
+	case "Circle", "Puffy":
+		ui.Box(c).Absolute().Left(tx - 8).Top(center - 8).Width(16).Height(16).Radius(8).Background(fill)
+	case "Square":
+		ui.Box(c).Absolute().Left(tx - 7).Top(center - 7).Width(14).Height(14).Radius(3).Background(fill)
+	case "Diamond":
+		ui.Box(c).Absolute().Left(tx-7).Top(center-7).Width(14).Height(14).Radius(2).
+			TransformOrigin(0.5, 0.5).Rotate(45).Background(fill)
+	case "Heart":
+		ui.Icon(c, Symbol("favorite")).Absolute().Left(tx - 9).Top(center - 9).Width(18).Height(18).
+			TextColor(fill)
+	case "Flower":
+		ui.Box(c).Absolute().Left(tx-9).Top(center-9).Width(18).Height(18).Radius(9).
+			Background(fill).Border(3, Col(s.Container))
+	case "Clam":
+		ui.Box(c).Absolute().Left(tx - 10).Top(center - 6).Width(20).Height(12).Radius(6).Background(fill)
+	default: // Pill
+		ui.Box(c).Absolute().Left(tx - 3).Top(center - 10).Width(6).Height(20).Radius(3).Background(fill)
+	}
 }
 
 // islandTabTransport is tab 134: 播放按钮主题. Ten themes, each with a mini sample.
@@ -591,27 +621,53 @@ func (a *App) islandTabTransport(c *ui.Context, p *Palette, x, y, w float32) flo
 		}
 		card.Children(func() {
 			// Mini sample: accent play key plus two plain keys, per the theme fill.
-			playBg := Col(s.Primary)
-			if value == "Sand" || value == "Whitespace" || value == "Halo" {
-				playBg = ui.Transparent
+			playBg, playInk := Col(s.Primary), Col(s.OnPrimary)
+			playRadius, playBorder, playBorderW := float32(12), ui.Transparent, float32(0)
+			sideBg := ui.Transparent
+			sideRadius := float32(0)
+			switch value {
+			case "Ripple":
+				playRadius = 20
+			case "Sand":
+				playBg, playInk = ui.Transparent, Col(s.Primary)
+				playBorder, playBorderW = Col(s.Primary), 1.1
+			case "Mist":
+				playBg, playInk = AlphaCol(s.Primary, .20), Col(s.Primary)
+				playBorder, playBorderW = AlphaCol(s.Primary, .38), 1
+			case "Glaze":
+				playBg, playInk = AlphaCol(s.Primary, .30), Col(s.Primary)
+				playBorder, playBorderW = AlphaCol(s.Primary, .62), 1
+			case "InkIsle":
+				playBg, playInk = Col(s.OnSurface), Col(s.Surface)
+			case "Tide":
+				sideBg, sideRadius = AlphaCol(s.SecondaryContainer, .45), 14
+			case "Whitespace":
+				playBg, playInk = ui.Transparent, Col(s.Primary)
+			case "Halo":
+				playBg, playInk = ui.Transparent, Col(s.Primary)
+				playBorder, playBorderW = Col(s.Primary), 2.2
 			}
-			key := ui.Box(c).Absolute().Left(cw/2 - 62).Top(18).Width(124).Height(52)
-			key.Justify(ui.Center).AlignItems(ui.Center).Gap(14).Children(func() {
-				prev := ui.Box(c).Width(44).Height(44).Justify(ui.Center).AlignItems(ui.Center)
+			// Row, not the default column: a column stacks the three keys and pushes
+			// the play key onto the card's bottom edge.
+			key := ui.Box(c).Row().Absolute().Left(cw/2 - 62).Top(14).Width(124).Height(40)
+			key.Justify(ui.Center).AlignItems(ui.Center).Gap(8).Children(func() {
+				prev := ui.Box(c).Width(30).Height(30).Radius(sideRadius).Background(sideBg).
+					Justify(ui.Center).AlignItems(ui.Center)
 				prev.Children(func() {
-					ui.Icon(c, Symbol("skip_previous")).FontSize(22).TextColor(Col(s.OnSurface))
+					ui.Icon(c, TransportSymbol(value, "prev")).FontSize(18).TextColor(Col(s.OnSurface))
 				})
-				play := ui.Box(c).Width(44).Height(44).Justify(ui.Center).AlignItems(ui.Center).
-					Radius(22).Background(playBg).Border(1, Col(s.Primary))
+				play := ui.Box(c).Width(40).Height(40).Justify(ui.Center).AlignItems(ui.Center).
+					Radius(playRadius).Background(playBg).Border(playBorderW, playBorder)
 				play.Children(func() {
-					ui.Icon(c, Symbol("play_arrow")).FontSize(24).TextColor(Col(s.OnPrimary))
+					ui.Icon(c, TransportSymbol(value, "play")).FontSize(20).TextColor(playInk)
 				})
-				playNext := ui.Box(c).Width(44).Height(44).Justify(ui.Center).AlignItems(ui.Center)
+				playNext := ui.Box(c).Width(30).Height(30).Radius(sideRadius).Background(sideBg).
+					Justify(ui.Center).AlignItems(ui.Center)
 				playNext.Children(func() {
-					ui.Icon(c, Symbol("skip_next")).FontSize(22).TextColor(Col(s.OnSurface))
+					ui.Icon(c, TransportSymbol(value, "next")).FontSize(18).TextColor(Col(s.OnSurface))
 				})
 			})
-			Label(c, theme[0], 0, 76, 12, s.OnSurface, on, cw)
+			Label(c, theme[0], 0, 70, 12, s.OnSurface, on, cw)
 		})
 	}
 	return y + float32((len(themes)+2)/3)*120 + 16

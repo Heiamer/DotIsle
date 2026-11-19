@@ -269,6 +269,10 @@ impl Renderer {
     pub unsafe fn measure_line(&mut self, text: &str, size: f64) -> Result<f64> {
         Ok(self.text.measure(text, size as f32, false))
     }
+    /// Weight-aware width for text that is painted at a non-default weight.
+    pub unsafe fn measure_line_weighted(&mut self, text: &str, size: f64, weight: u16) -> Result<f64> {
+        Ok(self.text.measure_weighted(text, size as f32, weight))
+    }
     pub fn status_indicator(&mut self, _label: &str, dot: Rect, text: Rect) -> Rect {
         let center = text.y + text.h / 2.;
         Rect::new(dot.x, center - dot.h / 2., dot.w, dot.h)

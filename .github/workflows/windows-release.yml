@@ -9,7 +9,7 @@ on:
       version:
         description: Release version without the leading v
         required: true
-        default: "5.0.8"
+        default: "5.0.9"
       publish:
         description: Publish the release instead of leaving a draft
         type: boolean
@@ -212,6 +212,11 @@ jobs:
       - name: Verify packaged music lyric glow
         run: python tests/verify_music_lyric_glow.py --runtime "publish/release-output/DotIsle-${{ env.VERSION }}" --output validation/music-lyric-glow
 
+      - name: Verify layout editor and capsule regressions
+        run: |
+          python tests/verify_layout_preview.py --runtime "publish/release-output/DotIsle-${{ env.VERSION }}" --output validation/layout-preview
+          python tests/verify_visual_regressions.py --runtime "publish/release-output/DotIsle-${{ env.VERSION }}" --output validation/visual-regressions
+
       - name: Verify native timers and optional island effects
         run: |
           $runtime="$pwd/publish/release-output/DotIsle-$env:VERSION"
@@ -264,7 +269,7 @@ jobs:
 
       - name: Require successful acceptance reports
         run: |
-          foreach($report in @('validation/source/report.json','validation/center/report.json','validation/center/control-center/report.json','validation/center/desktop/report.json','validation/desktop/report.json','validation/native-timers/report.json','validation/liquid/report.json','validation/glow/report.json','validation/music-lyric-glow/report.json','validation/modules/report.json')){
+          foreach($report in @('validation/source/report.json','validation/center/report.json','validation/center/control-center/report.json','validation/center/desktop/report.json','validation/desktop/report.json','validation/native-timers/report.json','validation/liquid/report.json','validation/glow/report.json','validation/music-lyric-glow/report.json','validation/layout-preview/report.json','validation/visual-regressions/report.json','validation/modules/report.json')){
             if(-not(Test-Path -LiteralPath $report)){throw "Missing acceptance report: $report"}
             if((Get-Content -LiteralPath $report -Raw | ConvertFrom-Json).success -ne $true){throw "Acceptance failed: $report"}
           }

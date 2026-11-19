@@ -60,28 +60,38 @@ impl Layout {
   let mut p=self.elements.iter().find(|p|p.element==element).cloned().unwrap_or(Placement{element,x:12.,y:12.,width:None});p.x=x.clamp(12.,388.);p.y=y.clamp(12.,600.);if let Some(w)=width{if resizable(element){p.width=Some(w.clamp(24.,376.));}}
   self.elements.retain(|p|p.element!=element);self.elements.push(p);self.enabled=true;
  }
+ /// An untouched draft inherits the active preset frame: enabling custom layout
+ /// must not reflow the card before the user changes a module or alignment.
+ fn uses_preset_frame(&self)->bool{
+  self.alignment==0&&(self.gap-8.).abs()<1e-9&&(self.cover_size-56.).abs()<1e-9&&self.show_cover
+   &&self.modules.len()==Module::ALL.len()&&self.modules.iter().zip(Module::ALL).all(|(s,k)|s.kind==k&&s.visible)
+   &&self.controls.as_slice()==[2,9,16,3,4,5,6,7]
+ }
  pub fn geometry(&self,width:f64,scale:f64,font:f64,mix:f64)->MusicGeometry{
-  let mut g=music_geometry(width,MusicLayout::SideBySide,0.,scale,font);let zero=Rect::default();g.cover=zero;g.title=zero;g.artist=zero;g.lyric=zero;g.secondary=zero;g.status_dot=zero;g.status_text=zero;g.track=zero;g.elapsed=zero;g.total=zero;g.progress_hit=zero;g.seek_chip=zero;g.text_hit=zero;for(_,r)in &mut g.buttons{*r=zero;}
-  let mut y=18.;let align=self.alignment as f64/2.;g.align=align;g.split=0.;
-  for slot in self.modules.iter().filter(|s|s.visible){match slot.kind{
-   Module::Header=>{let size=if self.show_cover{self.cover_size}else{0.};let tx=if size>0.{size+36.}else{20.};let tw=(width-tx-20.).max(1.);if size>0.{g.cover=Rect::new(20.,y,size,size);}let h=size.max(48.);g.title=Rect::new(tx,y+(h-46.)/2.,tw,24.);g.artist=Rect::new(tx,g.title.y+28.,tw,18.);g.text_hit=Rect::new(tx,y,tw,h);y+=h;},
-   Module::Lyrics=>{let h=font+12.;g.lyric=Rect::new(20.,y,width-40.,h);y+=h;},
-   Module::Translation=>{g.secondary=Rect::new(20.,y,width-40.,18.);y+=18.;},
-   Module::Status=>{g.status_dot=Rect::new(20.,y+6.,4.,4.);g.status_text=Rect::new(30.,y,width-50.,16.);y+=16.;},
-   Module::Progress=>{g.track=Rect::new(20.,y+8.,width-40.,4.);g.progress_hit=Rect::new(16.,y,width-32.,22.);g.elapsed=Rect::new(20.,y+20.,70.,14.);g.total=Rect::new(width-90.,y+20.,70.,14.);g.seek_chip=Rect::new(width/2.-65.,y+19.,130.,24.);y+=46.;},
-   Module::Controls=>{let sizes=self.controls.iter().map(|id|if *id==4{40.}else{28.}).collect::<Vec<_>>();let total=sizes.iter().sum::<f64>()+12.*(sizes.len()-1)as f64;let mut bx=20.+(width-40.-total)*align;for(id,sz)in self.controls.iter().zip(sizes){if let Some((_,r))=g.buttons.iter_mut().find(|(n,_)|n==id){*r=Rect::new(bx,y+(44.-sz)/2.,sz,sz);}bx+=sz+12.;}y+=44.;},
-  }y+=self.gap;}
-  // The preset owns the outer frame. Fit the automatic module stack inside it
-  // before applying per-element positions, without cropping old placements.
+  let mut g=music_geometry(width,MusicLayout::SideBySide,mix,scale,font);
+  let preset_frame=self.uses_preset_frame();
   g.height=crate::music_layout::music_height(mix,font);
-  let used=y-self.gap-18.;
-  let fit=((g.height-36.)/used.max(1.)).min(1.);
-  let fit_rect=|r:&mut Rect|{if r.h>0.{r.y=18.+(r.y-18.)*fit;r.h*=fit;}};
-  for r in [&mut g.cover,&mut g.title,&mut g.artist,&mut g.lyric,&mut g.secondary,&mut g.status_dot,&mut g.status_text,&mut g.track,&mut g.elapsed,&mut g.total,&mut g.progress_hit,&mut g.seek_chip]{fit_rect(r);}
-  g.cover.w=g.cover.h;
-  for (_,r) in &mut g.buttons{fit_rect(r);}
+  if !preset_frame{
+   let zero=Rect::default();g.cover=zero;g.title=zero;g.artist=zero;g.lyric=zero;g.secondary=zero;g.status_dot=zero;g.status_text=zero;g.track=zero;g.elapsed=zero;g.total=zero;g.progress_hit=zero;g.seek_chip=zero;g.text_hit=zero;for(_,r)in &mut g.buttons{*r=zero;}
+   let mut y=18.;let align=self.alignment as f64/2.;g.align=align;g.split=0.;
+   for slot in self.modules.iter().filter(|s|s.visible){match slot.kind{
+    Module::Header=>{let size=if self.show_cover{self.cover_size}else{0.};let tx=if size>0.{size+36.}else{20.};let tw=(width-tx-20.).max(1.);if size>0.{g.cover=Rect::new(20.,y,size,size);}let h=size.max(48.);g.title=Rect::new(tx,y+(h-46.)/2.,tw,24.);g.artist=Rect::new(tx,g.title.y+28.,tw,18.);g.text_hit=Rect::new(tx,y,tw,h);y+=h;},
+    Module::Lyrics=>{let h=font+12.;g.lyric=Rect::new(20.,y,width-40.,h);y+=h;},
+    Module::Translation=>{g.secondary=Rect::new(20.,y,width-40.,18.);y+=18.;},
+    Module::Status=>{g.status_dot=Rect::new(20.,y+6.,4.,4.);g.status_text=Rect::new(30.,y,width-50.,16.);y+=16.;},
+    Module::Progress=>{g.track=Rect::new(20.,y+8.,width-40.,4.);g.progress_hit=Rect::new(16.,y,width-32.,22.);g.elapsed=Rect::new(20.,y+20.,70.,14.);g.total=Rect::new(width-90.,y+20.,70.,14.);g.seek_chip=Rect::new(width/2.-65.,y+19.,130.,24.);y+=46.;},
+    Module::Controls=>{let sizes=self.controls.iter().map(|id|if *id==4{40.}else{28.}).collect::<Vec<_>>();let total=sizes.iter().sum::<f64>()+12.*(sizes.len()-1)as f64;let mut bx=20.+(width-40.-total)*align;for(id,sz)in self.controls.iter().zip(sizes){if let Some((_,r))=g.buttons.iter_mut().find(|(n,_)|n==id){*r=Rect::new(bx,y+(44.-sz)/2.,sz,sz);}bx+=sz+12.;}y+=44.;},
+   }y+=self.gap;}
+   let used=y-self.gap-18.;
+   let fit=((g.height-36.)/used.max(1.)).min(1.);
+   let fit_rect=|r:&mut Rect|{if r.h>0.{r.y=18.+(r.y-18.)*fit;r.h*=fit;}};
+   for r in [&mut g.cover,&mut g.title,&mut g.artist,&mut g.lyric,&mut g.secondary,&mut g.status_dot,&mut g.status_text,&mut g.track,&mut g.elapsed,&mut g.total,&mut g.progress_hit,&mut g.seek_chip]{fit_rect(r);}
+   g.cover.w=g.cover.h;
+   for (_,r) in &mut g.buttons{fit_rect(r);}
+  }
   for p in &self.elements{position(&mut g,p,width);}
-  g.text_hit=Rect::new(g.title.x.min(g.artist.x),g.title.y.min(g.artist.y),(g.title.x+g.title.w).max(g.artist.x+g.artist.w)-g.title.x.min(g.artist.x),(g.title.y+g.title.h).max(g.artist.y+g.artist.h)-g.title.y.min(g.artist.y));g
+  if !preset_frame||!self.elements.is_empty(){g.text_hit=Rect::new(g.title.x.min(g.artist.x),g.title.y.min(g.artist.y),(g.title.x+g.title.w).max(g.artist.x+g.artist.w)-g.title.x.min(g.artist.x),(g.title.y+g.title.h).max(g.artist.y+g.artist.h)-g.title.y.min(g.artist.y));}
+  g
  }
 }
 #[cfg(test)]mod tests{use super::*;
@@ -91,6 +101,14 @@ impl Layout {
 }
 
 #[cfg(test)]mod canvas_tests{use super::*;
+ #[test]fn an_untouched_custom_layout_keeps_the_active_preset_frame(){
+  let eq=|a:Rect,b:Rect|a.x==b.x&&a.y==b.y&&a.w==b.w&&a.h==b.h;
+  for mix in [0.,1.,2.,3.,4.]{for font in [11.,14.,20.]{
+   let a=Layout::default().geometry(400.,1.,font,mix);
+   let b=music_geometry(400.,MusicLayout::SideBySide,mix,1.,font);
+   assert_eq!(a.height,b.height);assert!(eq(a.cover,b.cover));assert!(eq(a.title,b.title));assert!(eq(a.artist,b.artist));assert!(eq(a.lyric,b.lyric));assert!(eq(a.secondary,b.secondary));assert!(eq(a.status_text,b.status_text));assert!(eq(a.progress_hit,b.progress_hit));assert!(eq(a.text_hit,b.text_hit));assert!(eq(a.seek_chip,b.seek_chip));for i in 0..8{assert!(eq(a.buttons[i].1,b.buttons[i].1));}
+  }}
+ }
  #[test]fn legacy_layouts_open_without_positions_and_reject_invalid_placements(){let l=Layout::default();let v=serde_json::to_value(&l).unwrap();assert!(v.get("elements").is_none());assert!(Layout::from_value(&v).is_ok());let mut l=l;l.elements.push(Placement{element:255,x:20.,y:20.,width:None});assert!(l.validate().is_err());l.elements[0].element=0;l.elements[0].x=f64::NAN;assert!(l.validate().is_err());}
  #[test]fn moved_elements_and_seek_targets_share_native_geometry(){let mut l=Layout::default();l.set_element(0,300.,210.,None);l.set_element(6,40.,120.,Some(300.));l.set_element(36,220.,300.,None);assert!(l.validate().is_ok());for width in [400.,592.]{let g=l.geometry(width,1.5,14.,0.);let span=width/400.;assert_eq!(g.cover.x,300.*span);assert_eq!(g.cover.y,g.height-g.cover.h-10.);assert_eq!(g.progress_hit.x,40.*span);assert_eq!(g.track.x,g.progress_hit.x+4.);assert_eq!(g.progress_hit.w,300.*span);let play=g.buttons.iter().find(|(id,_)|*id==4).unwrap().1;assert_eq!(play.x,220.*span);assert_eq!(play.y,g.height-play.h-10.);assert_eq!(g.height,crate::music_layout::music_height(0.,14.));for(_,r)in elements(&g){assert!(r.x>=0.&&r.x+r.w<=width+0.01&&r.y+r.h<=g.height);}}assert_eq!(Layout::from_value(&serde_json::to_value(&l).unwrap()).unwrap(),l);}
  #[test]fn hidden_positioned_modules_never_reappear(){let mut l=Layout::default();l.set_element(6,40.,120.,Some(200.));l.modules.iter_mut().find(|s|s.kind==Module::Progress).unwrap().visible=false;let g=l.geometry(400.,1.,14.,0.);assert_eq!(g.track.w,0.);assert_eq!(g.progress_hit.w,0.);assert!(!elements(&g).iter().any(|(id,_)|*id==6));}

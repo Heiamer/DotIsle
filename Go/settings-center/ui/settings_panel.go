@@ -48,9 +48,6 @@ var settingsCategories = []settingCategory{
 	{"计时与待办", "timer", []settingSection{
 		{8, "计时与待办偏好", "设置锁屏暂停、到期提醒和待办默认颜色。", "专注 番茄钟 颜色"},
 	}},
-	{"模块管理", "folder", []settingSection{
-		{9, "模块管理", "查看运行模块及其状态。", "组件 模块 下载"},
-	}},
 	{"关于与更新", "download", []settingSection{
 		{3, "关于与更新", "查看版本、更新说明，管理更新源与渠道。", "检查更新 OTA 正式版 测试版 Gitee GitHub"},
 	}},

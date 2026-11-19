@@ -1,5 +1,6 @@
 """Exercise real idle/task residency in an isolated native instance."""
 import argparse
+import ctypes
 import json
 from pathlib import Path
 import time
@@ -9,6 +10,9 @@ from verify_pomodoro import Runtime
 
 
 def run(args):
+    # Park the real pointer away from the island: a hover keeps the preview banner
+    # open and would hide the idle residency this test measures.
+    ctypes.windll.user32.SetCursorPos(0, 0)
     report = {'success': False, 'checks': [], 'snapshots': {}}
     app = Runtime(args.binary_dir, args.report.parent / ('resident-data-' + uuid.uuid4().hex))
     def state_when(predicate, timeout=8):

@@ -162,3 +162,48 @@ func TestDefaultDesignCaptures(t *testing.T) {
 		}
 	}
 }
+
+// The module list must mirror dotisle_module_api::MODULES: the unified runtime
+// ships a desktop renderer module and no separate settings DLL.
+func TestModuleManagerListMatchesShippedModules(t *testing.T) {
+	have := map[string]bool{}
+	for _, module := range leafModules {
+		have[module[0]] = true
+	}
+	if have["settings"] {
+		t.Fatal("legacy dotisle_settings.dll must not be listed")
+	}
+	for _, id := range []string{"core", "desktop", "focus", "todos", "music", "lyrics",
+		"notifications", "history", "automation", "devices", "osd", "sound", "widgets",
+		"themes", "glow"} {
+		if !have[id] {
+			t.Fatalf("missing shipped module %s", id)
+		}
+	}
+}
+
+// Unknown thumb names are rejected by the native setting, so every chip key must
+// exist in dotisle_render::progress::ThumbStyle::ALL.
+func TestProgressThumbChipsUseNativeKeys(t *testing.T) {
+	valid := map[string]bool{"Pill": true, "Circle": true, "Square": true, "Diamond": true,
+		"Heart": true, "Flower": true, "Clam": true, "Puffy": true}
+	for _, thumb := range leafProgressThumbs {
+		if !valid[thumb[1]] {
+			t.Fatalf("%s is not a native thumb style", thumb[1])
+		}
+	}
+}
+
+// Module management is an internal surface and must not appear in the settings sidebar.
+func TestModuleManagementIsNotInSettingsSidebar(t *testing.T) {
+	for _, category := range settingsCategories {
+		if category.name == "模块管理" {
+			t.Fatal("module management category must stay hidden")
+		}
+		for _, section := range category.sections {
+			if section.tab == 9 {
+				t.Fatal("module management section must stay hidden")
+			}
+		}
+	}
+}

@@ -34,6 +34,33 @@ var assetDirectory = sync.OnceValue(func() string {
 
 func assetsRoot() string { return assetDirectory() }
 
+var transportSVGs = map[string]*ui.SVG{}
+
+// TransportSymbol loads the theme's own prev/play/next artwork. Reef keeps the
+// shipped Material Symbols, like the island; every other theme reads its SVGs
+// from the shared Assets folder so the preview matches the real control.
+func TransportSymbol(theme, name string) *ui.SVG {
+	fallback := map[string]string{"prev": "skip_previous", "play": "play_arrow", "next": "skip_next"}[name]
+	if theme == "Reef" {
+		return Symbol(fallback)
+	}
+	key := theme + "/" + name
+	if svg, ok := transportSVGs[key]; ok {
+		return svg
+	}
+	root := assetsRoot()
+	if root == "" {
+		return Symbol(fallback)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "TransportIcons", theme, name+".svg"))
+	if err != nil {
+		return Symbol(fallback)
+	}
+	svg := ui.MustParseSVG(raw)
+	transportSVGs[key] = svg
+	return svg
+}
+
 //go:embed assets/icons/*.svg
 var controlIcons embed.FS
 

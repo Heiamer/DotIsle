@@ -1673,7 +1673,9 @@ impl App {
                         .as_str()
                         .unwrap_or("HarmonyOS Sans SC"),
                 );
-                widest = r.measure_line(&self.lyric, font)?;
+                // The compact lyric paints at weight 500; measuring its default
+                // 400 face under-sized the capsule and left an ellipsis.
+                widest = r.measure_line_weighted(&self.lyric, font, if font >= 20. { 600 } else { 500 })?;
                 if double {
                     widest = widest.max(r.measure_line(&self.compact_secondary, secondary_size)?);
                 }
