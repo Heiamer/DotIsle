@@ -213,6 +213,8 @@ jobs:
         run: python tests/verify_music_lyric_glow.py --runtime "publish/release-output/DotIsle-${{ env.VERSION }}" --output validation/music-lyric-glow
 
       - name: Verify layout editor and capsule regressions
+        env:
+          PYTHONIOENCODING: utf-8
         run: |
           python tests/verify_layout_preview.py --runtime "publish/release-output/DotIsle-${{ env.VERSION }}" --output validation/layout-preview
           python tests/verify_visual_regressions.py --runtime "publish/release-output/DotIsle-${{ env.VERSION }}" --output validation/visual-regressions

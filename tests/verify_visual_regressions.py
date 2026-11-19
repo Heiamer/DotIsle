@@ -94,4 +94,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
     report = run(args.runtime.resolve(), args.output.resolve())
     (args.output / 'report.json').write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding='utf-8')
-    print(json.dumps(report, ensure_ascii=False))
+    print(json.dumps(report, ensure_ascii=True))
