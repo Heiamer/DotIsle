@@ -82,7 +82,24 @@ def run(runtime, out):
         assert state['settings']['MusicLyricGlow'] and state['settings']['ProgressBarGlow']
         assert state['expanded']
         presented('expanded-presented')
-        return {'success': True, 'compactUnchanged': True, 'independentProgressGlow': True, 'cases': cases}
+        # Regression: a seek that switches lines fades the new lyric in with a
+        # fractional-alpha halo. Encoding that image inside the fade used to panic
+        # and kill the island, so keep three line changes animating while it renders.
+        update('Animation', True)
+        for index, line in enumerate(['拖动进度之后歌词换成了这一句', '再换一句确认淡入仍然安全', '第三句用于确认岛没有退出'], 1):
+            assert app.request('testCompactFrame', {
+                'line': line, 'translation': f'第 {index} 次切换',
+                'index': index, 'position': 60. + index,
+            })['success']
+            time.sleep(.03)
+        time.sleep(.3)
+        state = app.request('state')
+        assert state['settings']['Animation'] and state['settings']['MusicLyricGlow'], state['settings']
+        assert state['expanded'] and not state['lastError'], state['lastError']
+        assert app.process.poll() is None
+        presented('lyric-fade')
+        return {'success': True, 'compactUnchanged': True, 'independentProgressGlow': True,
+                'lyricFadeSurvivesSeek': True, 'cases': cases}
     finally:
         app.stop()
 

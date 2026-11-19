@@ -34,6 +34,14 @@ def run(args):
         path.write_text(json.dumps(settings), encoding='utf-8')
         state = app.start(preserve_settings=True)
         assert not state['settings']['IslandKeepVisibleEnabled'] and 'IslandResidentEnabled' not in state['settings']
+        # Desktop players are outside this harness; ignore executable media sources for
+        # this isolated instance so idle residency stays measurable while the user plays music.
+        ignored = [item for item in (state['settings'].get('IgnoredSources') or []) if item.lower() != 'exe']
+        ignored.append('exe')
+        if state['isPlaying'] and state['player'] and state['player'] not in ignored:
+            ignored.append(state['player'])
+        reply = app.request('update', {'key': 'IgnoredSources', 'value': ignored})
+        assert reply['success'], reply
         state_when(lambda s: not s['islandVisible'])
         report['checks'].append('Default off: idle island stays hidden')
         for mode in ('Classic', 'Mini'):

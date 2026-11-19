@@ -9,7 +9,7 @@ use swash::{
     zeno::Vector,
     FontRef,
 };
-use vello::peniko::{Blob, ImageAlphaType, ImageBrush, ImageFormat};
+use vello::peniko::{Blob, ImageAlphaType, ImageBrush, ImageFormat, Mix};
 
 struct Row {
     text: String,
@@ -75,10 +75,17 @@ impl LyricHalo {
         row.used = true;
         if let Some((mask, pad)) = &row.mask {
             let pad = f64::from(*pad);
+            let x = rect.x0 - pad;
+            let y = rect.y0 - pad;
+            let bounds = Rect::new(x, y, x + mask.width as f64, y + mask.height as f64);
+            // Vello Hybrid rejects a fractional alpha on an image brush, so the fade-in
+            // runs as a layer and the brush stays fully opaque.
+            scene.push_layer(Mix::Normal, opacity.clamp(0., 1.), Affine::IDENTITY, &bounds);
             scene.draw_image(
-                &ImageBrush::new(mask.clone()).with_alpha(opacity),
-                Affine::translate((rect.x0 - pad, rect.y0 - pad)),
+                &ImageBrush::new(mask.clone()),
+                Affine::translate((x, y)),
             );
+            scene.pop_layer();
         }
     }
 

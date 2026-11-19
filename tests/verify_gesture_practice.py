@@ -11,8 +11,6 @@ from verify_pomodoro import Runtime
 from verify_unified_center import WindowCallback, stop, user, wait
 
 user.GetClassNameW.argtypes = [w.HWND, w.LPWSTR, ctypes.c_int]
-user.GetDpiForWindow.argtypes = [w.HWND]
-user.GetDpiForWindow.restype = w.UINT
 user.PostMessageW.argtypes = [w.HWND, w.UINT, w.WPARAM, w.LPARAM]
 user.PostMessageW.restype = w.BOOL
 
@@ -57,9 +55,10 @@ def run(runtime, output):
         time.sleep(.35)  # Let the native shape settle after the preceding click.
         r = app.request('state')['islandGeometry']['capsule']
         x, y = r['x'] + r['w'] / 2, r['y'] + r['h'] / 2
-        scale = max(96, user.GetDpiForWindow(hwnd)) / 96
+        # The island's message coordinates are its own layout pixels: this process is
+        # DPI-virtualised, so scaling by GetDpiForWindow() here misses the capsule.
         for msg, buttons, tx, ty in [(0x201, 1, x, y), (0x200, 1, x+dx, y+dy), (0x202, 0, x+dx, y+dy)]:
-            pos = (round(tx*scale) & 0xffff) | ((round(ty*scale) & 0xffff) << 16)
+            pos = (round(tx) & 0xffff) | ((round(ty) & 0xffff) << 16)
             assert user.PostMessageW(hwnd, msg, buttons, pos)
             time.sleep(.03)
 
