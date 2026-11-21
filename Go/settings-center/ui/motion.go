@@ -1,4 +1,4 @@
-﻿package ui
+package ui
 
 import (
 	"time"
@@ -106,4 +106,3 @@ func (a *App) opening(c *ui.Context, w, h float32) {
 	})
 	c.AnimationFrame()
 }
-

@@ -1,4 +1,4 @@
-﻿// Central glue for the dialog entries and native pickers: helpers used by the page
+// Central glue for the dialog entries and native pickers: helpers used by the page
 // files plus the render hook that shows whichever dialog flag is set.
 package ui
 
@@ -151,5 +151,3 @@ func (a *App) pushToast(msg string) {
 	a.toastAt = time.Now()
 	a.Refresh()
 }
-
-

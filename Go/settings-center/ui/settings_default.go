@@ -1,4 +1,4 @@
-﻿package ui
+package ui
 
 import (
 	"fmt"
@@ -185,4 +185,3 @@ func (a *App) aboutBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	ToggleRow(c, p, "自动检查更新", x+24, y+8, w-48, "自动检查更新", "后台检查，下载和安装由你确认", on, func() { a.pushNative("AutoCheckUpdatesEnabled", !on) })
 	return y + 104
 }
-

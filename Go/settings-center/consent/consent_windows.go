@@ -1,4 +1,4 @@
-﻿//go:build windows
+//go:build windows
 
 // Package consent gates all normal startup before any data workers run.
 package consent
@@ -129,4 +129,3 @@ func Ensure(data string) bool {
 	}
 	return true
 }
-

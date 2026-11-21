@@ -1,4 +1,4 @@
-﻿package ui
+package ui
 
 import (
 	"fmt"
@@ -112,4 +112,3 @@ func verifyDesign(output, data, cover string, coverage *[]map[string]any) error 
 	}
 	return nil
 }
-
