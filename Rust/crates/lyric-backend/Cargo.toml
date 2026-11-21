@@ -1,6 +1,6 @@
-[package]
+﻿[package]
 name = "lyric-backend"
-version = "5.0.9"
+version = "5.1.0"
 edition.workspace = true
 license.workspace = true
 
@@ -18,3 +18,4 @@ aes = "0.8"
 md-5 = "0.10"
 iced-x86 = { version = "=1.22.0", default-features = false, features = ["std", "decoder", "instr_info"] }
 windows = { version = "0.62", features = ["Foundation", "Media_Control", "Storage_Streams", "Win32_System_WinRT", "Win32_System_Com", "Win32_Foundation", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Diagnostics_Debug", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_HiDpi", "Win32_UI_Accessibility", "Win32_System_Variant", "Win32_System_Ole", "Win32_System_Registry", "Win32_Security", "Win32_System_Pipes", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_SystemInformation", "Win32_System_LibraryLoader"] }
+

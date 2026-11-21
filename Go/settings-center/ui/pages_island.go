@@ -507,10 +507,7 @@ func (a *App) islandTabProgress(c *ui.Context, p *Palette, x, y, w float32) floa
 	}
 	// Live preview of the current bar and thumb style at full width.
 	settingCard(c, x, y, w, 72, s.Container)
-	fraction := 0.38
-	bar := a.islandString("ProgressBarStyle", "Normal")
-	thumb := a.islandString("ProgressBarThumb", "Pill")
-	drawBarPreview(c, p, x+24, y+22, w-48, 28, bar, fraction, thumbOn, thumb)
+	a.drawProgressPreview(c, p, x+16, y+22, w-32, thumbOn)
 	return y + 88
 }
 
@@ -526,71 +523,6 @@ func (a *App) styleChipGrid(c *ui.Context, p *Palette, x, y, w float32, styles [
 			})
 	}
 	return y + float32((len(styles)+3)/4)*50 + 16
-}
-
-// drawBarPreview paints the current bar and thumb style into a preview strip.
-func drawBarPreview(c *ui.Context, p *Palette, x, y, w, h float32, style string, fraction float64, thumbOn bool, thumb string) {
-	s := &p.Scheme
-	mid := y + h/2 - 2.5
-	track := Col(s.OutlineVariant)
-	fill := Col(s.Primary)
-	switch style {
-	case "Thin":
-		ui.Box(c).Absolute().Left(x).Top(mid + 1.5).Width(w).Height(2).Background(track)
-		ui.Box(c).Absolute().Left(x).Top(mid + 1.5).Width(float32(float64(w) * fraction)).Height(2).Background(fill)
-	case "Thick":
-		ui.Box(c).Absolute().Left(x).Top(mid - 3).Width(w).Height(11).Radius(5.5).Background(track)
-		ui.Box(c).Absolute().Left(x).Top(mid - 3).Width(float32(float64(w) * fraction)).Height(11).Radius(5.5).Background(fill)
-	case "Segmented":
-		segments := 24
-		segW := (w - float32(segments-1)*4) / float32(segments)
-		for i := 0; i < segments; i++ {
-			col := track
-			if float64(i)/float64(segments) < fraction {
-				col = fill
-			}
-			ui.Box(c).Absolute().Left(x + float32(i)*(segW+4)).Top(mid).Width(segW).Height(5).Radius(2.5).Background(col)
-		}
-	case "Dots":
-		dots := 20
-		gap := w / float32(dots)
-		for i := 0; i < dots; i++ {
-			col := track
-			if float64(i)/float64(dots) < fraction {
-				col = fill
-			}
-			ui.Box(c).Absolute().Left(x + float32(i)*gap).Top(mid).Width(6).Height(6).Radius(3).Background(col)
-		}
-	default: // Wavy / Normal / Rounded / Gradient share the rounded track look
-		ui.Box(c).Absolute().Left(x).Top(mid).Width(w).Height(5).Radius(2.5).Background(track)
-		ui.Box(c).Absolute().Left(x).Top(mid).Width(float32(float64(w) * fraction)).Height(5).Radius(2.5).Background(fill)
-	}
-	if !thumbOn {
-		return
-	}
-	// Keep the sample inside the strip; the island clamps its thumb the same way.
-	tx := x + float32(float64(w)*fraction)
-	tx = min(max(tx, x+10), x+w-10)
-	center := mid + 2.5
-	switch thumb {
-	case "Circle", "Puffy":
-		ui.Box(c).Absolute().Left(tx - 8).Top(center - 8).Width(16).Height(16).Radius(8).Background(fill)
-	case "Square":
-		ui.Box(c).Absolute().Left(tx - 7).Top(center - 7).Width(14).Height(14).Radius(3).Background(fill)
-	case "Diamond":
-		ui.Box(c).Absolute().Left(tx-7).Top(center-7).Width(14).Height(14).Radius(2).
-			TransformOrigin(0.5, 0.5).Rotate(45).Background(fill)
-	case "Heart":
-		ui.Icon(c, Symbol("favorite")).Absolute().Left(tx - 9).Top(center - 9).Width(18).Height(18).
-			TextColor(fill)
-	case "Flower":
-		ui.Box(c).Absolute().Left(tx-9).Top(center-9).Width(18).Height(18).Radius(9).
-			Background(fill).Border(3, Col(s.Container))
-	case "Clam":
-		ui.Box(c).Absolute().Left(tx - 10).Top(center - 6).Width(20).Height(12).Radius(6).Background(fill)
-	default: // Pill
-		ui.Box(c).Absolute().Left(tx - 3).Top(center - 10).Width(6).Height(20).Radius(3).Background(fill)
-	}
 }
 
 // islandTabTransport is tab 134: 播放按钮主题. Ten themes, each with a mini sample.
@@ -667,7 +599,7 @@ func (a *App) islandTabTransport(c *ui.Context, p *Palette, x, y, w float32) flo
 					ui.Icon(c, TransportSymbol(value, "next")).FontSize(18).TextColor(Col(s.OnSurface))
 				})
 			})
-			Label(c, theme[0], 0, 70, 12, s.OnSurface, on, cw)
+			CenteredText(c, theme[0], 0, 66, cw, 24, 12, s.OnSurface, on)
 		})
 	}
 	return y + float32((len(themes)+2)/3)*120 + 16

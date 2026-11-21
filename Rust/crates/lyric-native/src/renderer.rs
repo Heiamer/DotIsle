@@ -541,6 +541,13 @@ impl Renderer {
         surface
     }
     fn material_surface(&mut self, r: Rect, radius: f64, s: crate::surface::Surface) {
+        self.material_surface_impl(r, radius, s, None);
+    }
+    fn material_surface_impl(&mut self, r: Rect, radius: f64, s: crate::surface::Surface, curve: Option<&BezPath>) {
+        if let Some(path) = curve {
+            self.canvas.push_clip_layer(Affine::IDENTITY, path);
+        }
+        let shape_radius = if curve.is_some() { 0. } else { radius };
         let p = s.paint(self.paint_palette);
         let gradient = Gradient::new_linear((r.x, r.y), (r.x, r.y + r.h))
             .with_stops([color(p.top), color(p.bottom)]);
@@ -549,7 +556,7 @@ impl Renderer {
             Affine::IDENTITY,
             &gradient,
             None,
-            &RoundedRect::from_rect(vr(r), radius),
+            &RoundedRect::from_rect(vr(r), shape_radius),
         );
         if p.cover_alpha > 0.001 {
             if let Some(image) = self.cover.clone() {
@@ -591,11 +598,11 @@ impl Renderer {
                     .as_ref()
                     .map(|(_, i)| i.clone())
                     .unwrap_or(image);
-                self.image(&image, r, radius, p.cover_alpha as f32);
+                self.image(&image, r, shape_radius, p.cover_alpha as f32);
                 let scrim = ((80. + 36. * (1. - p.amount)) as u32) << 24;
                 self.fill(
                     r,
-                    radius,
+                    shape_radius,
                     scrim
                         | crate::cover_color::mix(
                             0x10171a,
@@ -615,7 +622,7 @@ impl Renderer {
                 Affine::IDENTITY,
                 &frost,
                 None,
-                &RoundedRect::from_rect(vr(r), radius),
+                &RoundedRect::from_rect(vr(r), shape_radius),
             );
         }
         if self.glass_allowed
@@ -631,6 +638,12 @@ impl Renderer {
             }
         }
         let edge = Rect::new(r.x + 0.5, r.y + 0.5, r.w - 1., r.h - 1.);
+        if let Some(path) = curve {
+            self.canvas.pop_layer();
+            self.canvas.stroke(&Stroke::new(0.8), Affine::IDENTITY,
+                color(((24. * p.reflection) as u32) << 24 | 0xffffff), None, path);
+            return;
+        }
         self.outline(
             edge,
             (radius - 0.5).max(0.),
@@ -1348,26 +1361,8 @@ impl Renderer {
         };
         let thumb = if s.pressed == 10 { 16. } else { 14. };
         if g.track.w > 0. {
-            let played = g.track.w * s.progress.clamp(0., 1.);
-            if s.progress_glow && played > 0.5 && !s.seek_offer {
-                let y = g.track.y + (g.track.h - 5.6) / 2.;
-                let glow = Rect::new(g.track.x, y, played, 5.6);
-                self.canvas.draw_blurred_rounded_rect(Affine::IDENTITY, vr(glow),
-                    color(0x66000000 | (s.component_color & 0xffffff)), 2.8, 5.);
-            }
-            dotisle_render::progress::draw(
-                &mut self.canvas,
-                vr(g.track),
-                s.progress.clamp(0., 1.),
-                phase,
-                0.7,
-                thumb,
-                wave,
-                spin,
-                look,
-                s.progress_bar,
-                s.progress_thumb,
-            );
+            paint_playback_progress(&mut self.canvas, g.track, s.progress, phase, thumb, wave, spin,
+                look, s.progress_bar, s.progress_thumb, s.progress_glow && !s.seek_offer);
             self.text_line(&time(s.elapsed), g.elapsed, 9., 400, secondary);
             self.text_at(
                 &if s.duration > 0. {
@@ -1908,6 +1903,17 @@ impl Renderer {
         }
         Ok(png)
     }
+    pub fn capture_progress_frame(&self, width: u32, bar: dotisle_render::progress::BarStyle,
+        thumb: dotisle_render::progress::ThumbStyle, glow: bool, spin: bool, animate: bool,
+        ink: u32, rail: u32) -> Result<Vec<u8>> {
+        let mut canvas = VScene::new();
+        let track = Rect::new(8., 0., f64::from(width)-16., 28.);
+        let look = dotisle_render::progress::Look { fg: 0xff000000 | ink, track: 0xff000000 | rail, dot: 0x8a000000 | ink };
+        // A representative playing frame. The settings page does not poll the GPU to animate it.
+        paint_playback_progress(&mut canvas, track, 0.38, 0., 14., if animate {1.} else {0.},
+            if spin && animate {0.28} else {0.}, look, bar, thumb, glow);
+        self.gpu.capture_frame(&canvas, 1.5, (f64::from(width)*1.5).ceil() as u32, 42).map_err(err)
+    }
     fn paint_scene(&mut self, s: &Scene<'_>, present: bool) {
         self.paint_scene_inner(s, present, true);
     }
@@ -1972,19 +1978,18 @@ impl Renderer {
         } else {
             1.
         };
+        let curve = (p > 0. && s.alert.is_none() && s.notification.is_none() && s.osd.is_none())
+            .then(|| expanded_card_path(shape, radius, p));
         self.clip(s.layout.host, 0., s.opacity * transient_alpha as f32);
         self.clip(s.layout.host, 0., s.background_opacity);
-        self.canvas.draw_blurred_rounded_rect(
-            Affine::translate((0., 5.)),
-            vr(shape),
-            color(if s.mini && p < 0.01 {
-                0x0a000000
-            } else {
-                0x38000000
-            }),
-            radius,
-            22. / 3.,
-        );
+        let shadow = color(if s.mini && p < 0.01 { 0x0a000000 } else { 0x38000000 });
+        if let Some(path) = &curve {
+            self.canvas.push_gaussian_layer(Affine::IDENTITY, &vr(shape).inflate(28., 28.), 22. / 3.);
+            self.canvas.fill(Fill::NonZero, Affine::translate((0., 5.)), shadow, None, path);
+            self.canvas.pop_layer();
+        } else {
+            self.canvas.draw_blurred_rounded_rect(Affine::translate((0., 5.)), vr(shape), shadow, radius, 22. / 3.);
+        }
         if !s.mini && s.notification.is_none() && s.osd.is_none() && s.alert.is_none() {
             let accent = self.m3(s).primary;
             crate::island_glow::paint(&mut self.canvas, vr(shape), radius, accent, s.glow);
@@ -2000,7 +2005,7 @@ impl Renderer {
             }
         }
         if s.alert.is_some(){surface.mini=false;surface.compact=s.classic_capsule;}
-        self.material_surface(shape, radius, surface);
+        self.material_surface_impl(shape, radius, surface, curve.as_ref());
         self.paint_palette = saved_palette;
         self.canvas.pop_layer();
         let alpha = crate::motion::content_weights(s.frame).0 * music_alpha;
@@ -2043,7 +2048,11 @@ impl Renderer {
             let scale = (base.w / s.layout.card.w).min(base.h / s.layout.card.h);
             let tx = base.x + (base.w - s.layout.card.w * scale) / 2.;
             let ty = base.y + (base.h - s.layout.card.h * scale) / 2.;
-            self.clip(shape, radius, alpha as f32);
+            if let Some(path) = &curve {
+                self.canvas.push_layer(Mix::Normal, alpha as f32, Affine::IDENTITY, path);
+            } else {
+                self.clip(shape, radius, alpha as f32);
+            }
             if card_softness > 0. {
                 self.canvas.push_gaussian_layer(
                     Affine::IDENTITY,
@@ -2094,7 +2103,11 @@ impl Renderer {
                     Some(Affine::translate((s.switch_offset + s.swipe_offset, 0.))),
                 );
             });
-            self.clip(shape, radius, alpha as f32);
+            if let Some(path) = &curve {
+                self.canvas.push_layer(Mix::Normal, alpha as f32, Affine::IDENTITY, path);
+            } else {
+                self.clip(shape, radius, alpha as f32);
+            }
             if compact_softness > 0. {
                 self.canvas.push_gaussian_layer(
                     Affine::IDENTITY,
@@ -2475,3 +2488,49 @@ pub(crate) fn cover_scenes<'a>(
 include!("expressive.rs");
 
 include!("dynamic_painter.rs");
+
+fn paint_playback_progress(canvas: &mut VScene, track: Rect, fraction: f64, phase: f64, thumb_size: f64,
+    wave: f64, spin: f64, look: dotisle_render::progress::Look, bar: dotisle_render::progress::BarStyle,
+    thumb: dotisle_render::progress::ThumbStyle, glow: bool) {
+    let fraction = fraction.clamp(0., 1.);
+    let played = track.w * fraction;
+    if glow && played > 0.5 {
+        let y = track.y + (track.h - 5.6) / 2.;
+        canvas.draw_blurred_rounded_rect(Affine::IDENTITY, vr(Rect::new(track.x, y, played, 5.6)),
+            color(0x66000000 | (look.fg & 0xffffff)), 2.8, 5.);
+    }
+    dotisle_render::progress::draw(canvas, vr(track), fraction, phase, 0.7, thumb_size, wave, spin, look, bar, thumb);
+}
+
+// Start with the circular quarter-arc's two cubic halves and ease into the G2
+// contour. Matching endpoints/tangents keeps the opening morph interruption-free.
+fn expanded_card_path(r: Rect, radius: f64, reveal: f64) -> BezPath {
+    let t = reveal.clamp(0., 1.);
+    let t = t*t*(3.-2.*t);
+    let lerp = |a: f64, b: f64| a+(b-a)*t;
+    let k = 4./3. * (std::f64::consts::PI / 16.).tan();
+    let diagonal = std::f64::consts::FRAC_1_SQRT_2;
+    let mid = lerp(1.-diagonal, 0.20);
+    let outer = lerp(1.-k, 0.62);
+    let inner_x = lerp(1.-diagonal+k*diagonal, 0.40);
+    let inner_y = lerp(1.-diagonal-k*diagonal, 0.);
+    let a = (radius * lerp(1., 1.22)).max(0.).min(r.w/2.).min(r.h/2.);
+    let right = r.x+r.w;
+    let bottom = r.y+r.h;
+    let corner = |p: &mut BezPath, cx, cy, xx: f64, xy: f64, yx: f64, yy: f64| {
+        let point = |x, y| (cx+(xx*x+yx*y)*a, cy+(xy*x+yy*y)*a);
+        p.curve_to(point(outer,0.), point(inner_x,inner_y), point(mid,mid));
+        p.curve_to(point(inner_y,inner_x), point(0.,outer), point(0.,1.));
+    };
+    let mut path = BezPath::new();
+    path.move_to((right-a,r.y));
+    corner(&mut path,right,r.y,-1.,0.,0.,1.);
+    path.line_to((right,bottom-a));
+    corner(&mut path,right,bottom,0.,-1.,-1.,0.);
+    path.line_to((r.x+a,bottom));
+    corner(&mut path,r.x,bottom,1.,0.,0.,-1.);
+    path.line_to((r.x,r.y+a));
+    corner(&mut path,r.x,r.y,0.,1.,1.,0.);
+    path.close_path();
+    path
+}

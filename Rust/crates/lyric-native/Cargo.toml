@@ -1,7 +1,7 @@
-[package]
+﻿[package]
 autobins = false
 name = "lyric-native"
-version = "5.0.9"
+version = "5.1.0"
 edition.workspace = true
 license.workspace = true
 
@@ -48,3 +48,4 @@ windows = { version = "0.62", features = [
 name = "dotisle_core"
 path = "src/main.rs"
 crate-type = ["cdylib"]
+

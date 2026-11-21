@@ -1,7 +1,7 @@
-[package]
+﻿[package]
 autobins = false
 name = "dotisle-desktop"
-version = "5.0.9"
+version = "5.1.0"
 edition.workspace = true
 license.workspace = true
 
@@ -29,3 +29,4 @@ embed-manifest = "=1.5.1"
 name = "dotisle_desktop"
 path = "src/lib.rs"
 crate-type = ["cdylib"]
+

@@ -1,4 +1,4 @@
-// Central glue for the dialog entries and native pickers: helpers used by the page
+﻿// Central glue for the dialog entries and native pickers: helpers used by the page
 // files plus the render hook that shows whichever dialog flag is set.
 package ui
 
@@ -80,7 +80,6 @@ func (a *App) dialogViews(c *ui.Context, w, h float32) {
 	a.considerInstalledNotes()
 	if a.updateNotes != nil {
 		a.updateNotesView(c, w, h)
-		a.showToast(c)
 		return
 	}
 	a.maybePromptCity()
@@ -110,7 +109,6 @@ func (a *App) dialogViews(c *ui.Context, w, h float32) {
 		a.fontPickerView(c, w, h)
 	}
 	a.gestureTutorialView(c, w, h)
-	a.showToast(c)
 }
 
 // StartSignature marks the wordmark cover start (called once on window ready).
@@ -120,8 +118,10 @@ func (a *App) StartSignature() {
 	a.Refresh()
 }
 
-// showToast surfaces a fresh toast through MyGo's own toast lane.
-func (a *App) showToast(c *ui.Context) {
+// toastView draws the transient message in MyGo's overlay lane, with the
+// palette's own surface. The default toast paints the theme's inverse colour,
+// which showed up as a black block in the light control center after a save.
+func (a *App) toastView(c *ui.Context, p *Palette) {
 	if a.toast == "" {
 		return
 	}
@@ -130,6 +130,19 @@ func (a *App) showToast(c *ui.Context) {
 		return
 	}
 	c.Toast(a.toast)
+	s := &p.Scheme
+	ui.ToastViewportBase(c, func(viewport ui.Element, toasts []ui.Toast) {
+		viewport.Bottom(26).AlignItems(ui.Center).Gap(8)
+		for _, t := range toasts {
+			parts := ui.ToastBase(c, t)
+			box := parts.Root.Padding(10, 16).Radius(14).
+				Background(Col(s.Container)).Border(1, Col(s.OutlineVariant)).
+				Shadow(0, 6, 20, 0, ui.RGBA(0, 0, 0, 0.18))
+			box.Children(func() {
+				ui.Text(c, t.Title).Font(UIFont).FontSize(13).TextColor(Col(s.OnSurface))
+			})
+		}
+	})
 }
 
 // pushToast records a transient message for the next frame.
@@ -138,3 +151,5 @@ func (a *App) pushToast(msg string) {
 	a.toastAt = time.Now()
 	a.Refresh()
 }
+
+

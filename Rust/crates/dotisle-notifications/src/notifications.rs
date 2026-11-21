@@ -47,7 +47,7 @@ impl Listener {
                     match store.poll(&p){
                         Ok(notices)=>{state["access"]=json!("compatible");state["message"]=json!(if p.paused{"通知已暂停，恢复后只接收新消息"}else if p.blacklist_enabled{"通知接收已连接，屏蔽黑名单中的应用"}else if p.whitelist_enabled{"通知接收已连接，按白名单提醒新通知"}else{"通知接收已连接，提醒各应用的新通知"});
                             for notice in notices{if !apps_cache.as_array().is_some_and(|a|a.iter().any(|a|a["id"]==notice.app_id)){if apps_cache.as_array().is_none_or(|a|a.len()>=32){apps_cache=json!([]);}apps_cache.as_array_mut().unwrap().push(json!({"id":notice.app_id,"name":notice.app_name}));}if let Some(app)=crate::message_hints::identify(&notice.app_id,&notice.app_name){
-                                if app.content_only(){if p.should_show()&&(app!=crate::message_hints::App::WeChat||!wechat_state["ready"].as_bool().unwrap_or(false))&&!notice.body.trim().is_empty(){let _=tx.try_send(Event::Notice(content_notice(app,notice)));}continue}
+                                if app.content_only(){if p.should_show()&&app!=crate::message_hints::App::WeChat&&!notice.body.trim().is_empty(){let _=tx.try_send(Event::Notice(content_notice(app,notice)));}continue}
                                 if p.should_show()&&gate.accept(app,std::time::Instant::now(),false,crate::message_hints::foreground()==Some(app)){let mut hint:crate::message_hints::Hint=app.into();hint.icon=notice.icon;let _=tx.try_send(Event::MessageHint(hint));}
                             }else{let _=tx.try_send(Event::Notice(notice));}}
                             state["apps"]=apps_cache.clone();

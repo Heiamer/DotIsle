@@ -1,4 +1,4 @@
-"""Synthetic Feishu/DingTalk toast -> production read-only reader -> island."""
+﻿"""Synthetic Feishu/DingTalk toast -> production reader -> island; WeChat stays on its local database."""
 import argparse, json, os, sqlite3, time, uuid
 from pathlib import Path
 from verify_pomodoro import Runtime
@@ -12,8 +12,8 @@ def run(a):
     with sqlite3.connect(database) as db:
         db.executescript('CREATE TABLE NotificationHandler(RecordId INTEGER,PrimaryId TEXT);'
                         'CREATE TABLE Notification(Id INTEGER,HandlerId INTEGER,ArrivalTime INTEGER,Type TEXT,[Order] INTEGER,Payload BLOB);'
-                        "INSERT INTO NotificationHandler VALUES(1,'com.bytedance.Feishu'),(2,'DingTalk');")
-    os.environ['LYRICISLAND_NOTIFICATION_DB'] = str(database)
+                        "INSERT INTO NotificationHandler VALUES(1,'com.bytedance.Feishu'),(2,'DingTalk'),(3,'Tencent.WeChat');")
+    os.environ['LYRICISLAND_NOTIFICATION_DB'] = str(database.resolve())
     app = Runtime(a.binary_dir, root / 'data')
     report = dict(success=False, synthetic=True, actualChatRead=False, checks=[])
     serial = 0
@@ -25,7 +25,7 @@ def run(a):
             if predicate(state):
                 return state
             time.sleep(.1)
-        raise AssertionError('Synthetic message assertion timed out')
+        raise AssertionError(('Synthetic message assertion timed out', state.get('notificationState'), state.get('moduleErrors')))
 
     def insert(handler, body, title='合成发件人'):
         nonlocal serial
@@ -44,13 +44,23 @@ def run(a):
         path = app.data / 'settings.json'
         settings = json.loads(path.read_text(encoding='utf-8'))
         settings.update(NotificationsEnabled=True, PauseNotifications=False,
-                        NotificationWhitelistEnabled=True, NotificationAllowedApps=['飞书','钉钉'],
-                        WeChatMessageHintsEnabled=False, WeComMessageHintsEnabled=False,
+                        NotificationWhitelistEnabled=True, NotificationAllowedApps=['飞书','钉钉','微信'],
+                        WeChatMessageHintsEnabled=True, WeComMessageHintsEnabled=False,
                         StartupSignatureEnabled=False, StartupGreetingEnabled=False,
                         VerificationCodeEnabled=False, Animation=False)
         path.write_text(json.dumps(settings),encoding='utf-8')
         app.start(preserve_settings=True)
         wait(lambda s:s['notificationState']['access']=='compatible')
+        before = len(history())
+        wait(lambda s: ((s.get('notificationState',{}).get('messageHints') or {}).get('wechat') or {}).get('source') == 'local-wcdb')
+        insert(3, '有新消息')
+        time.sleep(.8)
+        assert app.request('state')['notificationContent'] is None, 'WeChat placeholder produced a banner'
+        insert(3, '微信系统通知验证')
+        time.sleep(.8)
+        assert app.request('state')['notificationContent'] is None, 'WeChat Windows toast bypassed the local conversation database'
+        assert len(history()) == before, 'WeChat body was stored in history'
+        report['checks'].append('WeChat: content comes only from the local conversation database; Windows toasts are ignored')
         for handler, app_id in ((1,'Feishu'),(2,'DingTalk')):
             before = len(history())
             for body in ('合成通知正文甲','另一条合成通知正文乙'):

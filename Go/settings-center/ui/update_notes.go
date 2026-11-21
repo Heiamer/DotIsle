@@ -160,7 +160,7 @@ func (a *App) updateNotesView(c *ui.Context, w, h float32) {
 			Label(c, title, 28, 24, 22, s.OnSurface, true, dw-100)
 			Label(c, meta, 28, 63, 13, s.OnSurfaceVariant, false, dw-56)
 			IconButton(c, p, "关闭更新内容", dw-66, 18, 40, 40, "close", false, !a.updateDownloading, func() { open = false })
-			ui.Scroll(c).Key("release-notes-body").Absolute().Left(28).Top(103).Width(dw - 56).Height(dh - 185).
+			ui.Scroll(c).Scrollbars(false).Key("release-notes-body").Absolute().Left(28).Top(103).Width(dw - 56).Height(dh - 185).
 				TrackScroll(&notes.scroll).Label("更新内容").Children(func() {
 				paragraphs := notes.paragraphs
 				if len(paragraphs) == 0 {

@@ -4194,6 +4194,22 @@ impl App {
                 self.updates.check(true);
                 json!({"success":true,"message":"正在检查双源更新…"})
             }
+            "playbackProgressPreview" => {
+                let value = &r["value"];
+                let width = value["width"].as_u64().unwrap_or(360).clamp(80, 1200) as u32;
+                let bar = dotisle_render::progress::BarStyle::from_setting(value["bar"].as_str().unwrap_or("Normal"));
+                let thumb = if value["thumbOn"].as_bool() == Some(true) {
+                    dotisle_render::progress::ThumbStyle::from_setting(value["thumb"].as_str().unwrap_or("Pill"))
+                } else { dotisle_render::progress::ThumbStyle::None };
+                let ink = value["ink"].as_u64().unwrap_or(0x28486a) as u32 & 0xffffff;
+                let rail = value["rail"].as_u64().unwrap_or(0xc5ceda) as u32 & 0xffffff;
+                match self.ensure_renderer().and_then(|_| self.renderer.as_ref().unwrap().capture_progress_frame(
+                    width, bar, thumb, value["glow"].as_bool() == Some(true), value["spin"].as_bool() == Some(true),
+                    value["animate"].as_bool() != Some(false), ink, rail)) {
+                    Ok(png) => json!({"success":true,"png":base64::engine::general_purpose::STANDARD.encode(png)}),
+                    Err(error) => json!({"success":false,"message":error.to_string()}),
+                }
+            },
             "musicLayoutPreview" => match self.music_layout_preview(&r["value"]) {
                 Ok(preview) => preview,
                 Err(message) => json!({"success":false,"message":message}),

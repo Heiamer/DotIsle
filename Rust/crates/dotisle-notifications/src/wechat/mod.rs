@@ -248,15 +248,32 @@ struct Shard {
     watermarks: HashMap<String, i64>,
     baseline: bool,
 }
+struct Thread {
+    username: String,
+    title: String,
+    hidden: bool,
+}
+#[derive(Default)]
+struct Filters {
+    muted: bool,
+    folded: bool,
+    blocked: bool,
+}
+// WeChat 4.x contact.flag bits used by the public contact.db layout:
+// 0x8 = blacklisted, 0x200 = notifications muted, 0x10000000 = folded chat.
+const FLAG_BLOCKED: i64 = 0x8;
+const FLAG_MUTED: i64 = 0x200;
+const FLAG_FOLDED: i64 = 0x1000_0000;
 struct Account {
     path: PathBuf,
     session: PathBuf,
     session_key: Key,
     session_stamp: Option<Stamp>,
-    titles: HashMap<String, String>,
+    threads: HashMap<String, Thread>,
     contact: Option<(PathBuf, Key)>,
     contact_stamp: Option<Stamp>,
     display_names: HashMap<String, String>,
+    filters: HashMap<String, Filters>,
     shards: Vec<Shard>,
     started: i64,
     last_discovery: Instant,
@@ -287,39 +304,61 @@ impl Account {
             session,
             session_key,
             session_stamp: None,
-            titles: HashMap::new(),
+            threads: HashMap::new(),
             contact,
             contact_stamp: None,
             display_names: HashMap::new(),
+            filters: HashMap::new(),
             shards,
             started: seconds(),
             last_discovery: Instant::now(),
         })
     }
     fn poll(&mut self, baseline: bool) -> Result<Vec<Notice>, String> {
-        if let Some((path, _)) = &self.contact {
+        if let Some((path, key)) = &self.contact {
             let stamp = sqlite::stamp(path);
             if self.contact_stamp.as_ref() != Some(&stamp) {
                 self.display_names.clear();
+                if let Ok(filters) = contact_filters(path, key.clone()) {
+                    self.filters = filters;
+                }
                 self.contact_stamp = Some(stamp);
             }
         }
         let ss = sqlite::stamp(&self.session);
         if self.session_stamp.as_ref() != Some(&ss) {
             let db = Snapshot::new(&self.session, self.session_key.clone())?;
-            let rows =
-                db.query("SELECT username,last_sender_display_name FROM SessionTable LIMIT 16384")?;
-            let mut titles = HashMap::new();
+            let columns = db
+                .query("PRAGMA table_info(\"SessionTable\")")?
+                .into_iter()
+                .map(|r| r.text(1))
+                .collect::<Vec<_>>();
+            let hidden = if columns.iter().any(|c| c == "is_hidden") {
+                "is_hidden"
+            } else {
+                "0"
+            };
+            let rows = db.query(&format!(
+                "SELECT username,last_sender_display_name,{hidden} FROM SessionTable LIMIT 16384"
+            ))?;
+            let mut threads = HashMap::new();
             for row in rows {
                 let user = row.text(0);
                 let title = row.text(1);
                 let hash = format!("{:x}", Md5::digest(user.as_bytes()));
-                titles.insert(format!("Msg_{hash}"), title);
+                threads.insert(
+                    format!("Msg_{hash}"),
+                    Thread {
+                        username: user,
+                        title,
+                        hidden: row.ints.get(2).copied().unwrap_or(0) != 0,
+                    },
+                );
             }
             if !db.stable() {
                 return Err("微信会话正在更新".into());
             }
-            self.titles = titles;
+            self.threads = threads;
             self.session_stamp = Some(ss);
         }
         // New shards use the original start time; their first incoming message is not baselined away.
@@ -358,6 +397,15 @@ impl Account {
                 if baseline && shard.baseline {
                     let max = db.query(&format!("SELECT MAX(local_id) FROM \"{table}\""))?;
                     watermarks.insert(table, max[0].ints[0]);
+                    continue;
+                }
+                // Hidden, muted, folded and blacklisted conversations advance their
+                // watermark without producing a banner, so unmuting never replays them.
+                if self.thread_blocked(&table) {
+                    let max = db.query(&format!("SELECT MAX(local_id) FROM \"{table}\""))?;
+                    let max = max.first().map(|r| r.ints[0]).unwrap_or(0);
+                    let watermark = *watermarks.get(&table).unwrap_or(&0);
+                    watermarks.insert(table, max.max(watermark));
                     continue;
                 }
                 let watermark = *watermarks.get(&table).unwrap_or(&0);
@@ -414,10 +462,10 @@ impl Account {
                         continue;
                     }
                     let fallback = self
-                        .titles
+                        .threads
                         .get(&table)
+                        .map(|t| t.title.clone())
                         .filter(|t| !t.trim().is_empty())
-                        .cloned()
                         .unwrap_or_else(|| sender.clone());
                     let title = sender_name(&self.contact, &mut self.display_names, sender)
                         .unwrap_or(fallback);
@@ -449,6 +497,72 @@ impl Account {
         }
         Ok(notices)
     }
+    fn thread_blocked(&self, table: &str) -> bool {
+        let Some(thread) = self.threads.get(table) else {
+            return false;
+        };
+        thread.hidden
+            || self
+                .filters
+                .get(&thread.username)
+                .is_some_and(|f| f.muted || f.folded || f.blocked)
+    }
+}
+fn contact_filters(path: &Path, key: Key) -> Result<HashMap<String, Filters>, String> {
+    let db = Snapshot::new(path, key)?;
+    let columns = db
+        .query("PRAGMA table_info(\"contact\")")?
+        .into_iter()
+        .map(|r| r.text(1))
+        .collect::<Vec<_>>();
+    if !columns.iter().any(|c| c == "username") || !columns.iter().any(|c| c == "flag") {
+        return Ok(HashMap::new());
+    }
+    let mut selected = vec!["username", "flag"];
+    if columns.iter().any(|c| c == "chat_room_notify") {
+        selected.push("chat_room_notify");
+    }
+    if columns.iter().any(|c| c == "local_type") {
+        selected.push("local_type");
+    }
+    let rows = db.query(&format!(
+        "SELECT {} FROM contact LIMIT 16384",
+        selected.join(",")
+    ))?;
+    let mut out = HashMap::new();
+    for row in rows {
+        let name = row.text(0);
+        if name.is_empty() {
+            continue;
+        }
+        let flag = row.ints.get(1).copied().unwrap_or(0);
+        let notify = selected
+            .iter()
+            .position(|c| *c == "chat_room_notify")
+            .and_then(|i| row.ints.get(i).copied());
+        let kind = selected
+            .iter()
+            .position(|c| *c == "local_type")
+            .and_then(|i| row.ints.get(i).copied());
+        let group = name.ends_with("@chatroom");
+        let muted = if group {
+            notify == Some(0)
+        } else {
+            kind.is_none_or(|kind| kind == 1) && flag & FLAG_MUTED != 0
+        };
+        out.insert(
+            name,
+            Filters {
+                muted,
+                folded: flag & FLAG_FOLDED != 0,
+                blocked: flag & FLAG_BLOCKED != 0,
+            },
+        );
+    }
+    if !db.stable() {
+        return Err("微信联系人正在更新".into());
+    }
+    Ok(out)
 }
 fn sender_name(
     contact: &Option<(PathBuf, Key)>,
@@ -637,6 +751,101 @@ mod tests {
         assert!(notices.iter().any(|n| n.body == "incoming"));
         assert!(notices.iter().any(|n| n.body == "first new chat"));
         assert!(a.poll(false).unwrap().is_empty());
+        drop(a);
+        std::fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+    #[test]
+    fn hidden_muted_folded_and_blocked_conversations_do_not_notify() {
+        if std::env::var_os("DOTISLE_TEST_SQLITE3").is_none() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!(
+            "dotisle-wcdb-filters-{}/wxid_self_abcd",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
+        let message = root.join("db_storage/message");
+        let session = root.join("db_storage/session/session.db");
+        let contact = root.join("db_storage/contact/contact.db");
+        std::fs::create_dir_all(&message).unwrap();
+        std::fs::create_dir_all(session.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(contact.parent().unwrap()).unwrap();
+        let path = message.join("message_0.db");
+        let table = |name: &str| format!("Msg_{:x}", Md5::digest(name.as_bytes()));
+        let specs = [
+            ("wxid_friend", "好友", 1i64, 0i64, 0i64),
+            ("wxid_muted", "免打扰", 0x201, 0, 0),
+            ("wxid_folded", "折叠", 0x1000_0001, 0, 0),
+            ("wxid_blocked", "黑名单", 9, 0, 0),
+            ("wxid_hidden", "隐藏", 1, 0, 1),
+            ("room@chatroom", "群聊", 2, 0, 0),
+        ];
+        let make = |id: i64, body: &str| {
+            let _ = std::fs::remove_file(&path);
+            let mut sql = String::from(
+                "CREATE TABLE Name2Id(user_name TEXT);INSERT INTO Name2Id(rowid,user_name) VALUES(5,'wxid_self'),(8,'wxid_friend');",
+            );
+            for (name, _title, _flag, _notify, _hidden) in specs {
+                let t = table(name);
+                sql.push_str(&format!("CREATE TABLE {t}(local_id INTEGER PRIMARY KEY,local_type INTEGER,message_content BLOB,real_sender_id INTEGER,create_time INTEGER);INSERT INTO {t} VALUES({id},1,'{body}-{name}',8,{});", seconds()));
+            }
+            sqlite::fixture(&path, &sql);
+        };
+        make(1, "old");
+        let _ = std::fs::remove_file(&session);
+        let mut sessions = String::from(
+            "CREATE TABLE SessionTable(username TEXT,last_sender_display_name TEXT,is_hidden INTEGER);",
+        );
+        for (name, title, _flag, _notify, hidden) in specs {
+            sessions.push_str(&format!(
+                "INSERT INTO SessionTable VALUES('{name}','{title}',{hidden});"
+            ));
+        }
+        sqlite::fixture(&session, &sessions);
+        let contacts = |mute_muted: bool| {
+            let _ = std::fs::remove_file(&contact);
+            let mut sql = String::from(
+                "CREATE TABLE contact(username TEXT,flag INTEGER,chat_room_notify INTEGER,local_type INTEGER);",
+            );
+            for (name, _title, flag, notify, _hidden) in specs {
+                let flag = if name == "wxid_muted" && !mute_muted {
+                    flag & !FLAG_MUTED
+                } else {
+                    flag
+                };
+                let kind = if name.ends_with("@chatroom") { 2 } else { 1 };
+                sql.push_str(&format!(
+                    "INSERT INTO contact VALUES('{name}',{flag},{notify},{kind});"
+                ));
+            }
+            sqlite::fixture(&contact, &sql);
+        };
+        contacts(true);
+        let candidates = [discovery::Candidate([7; 32], None)];
+        let mut a = Account::discover(root.clone(), &candidates).unwrap();
+        assert!(a.poll(true).unwrap().is_empty());
+        make(2, "new");
+        let notices = a.poll(false).unwrap();
+        assert_eq!(
+            notices.len(),
+            1,
+            "{:?}",
+            notices.iter().map(|n| n.body.clone()).collect::<Vec<_>>()
+        );
+        assert_eq!(notices[0].title, "好友");
+        assert_eq!(notices[0].body, "new-wxid_friend");
+        assert!(a.poll(false).unwrap().is_empty());
+        // Unmuting is picked up from contact.db without restarting the reader.
+        contacts(false);
+        make(3, "again");
+        let notices = a.poll(false).unwrap();
+        assert_eq!(notices.len(), 2);
+        assert!(notices
+            .iter()
+            .any(|n| n.title == "好友" && n.body == "again-wxid_friend"));
+        assert!(notices
+            .iter()
+            .any(|n| n.title == "免打扰" && n.body == "again-wxid_muted"));
         drop(a);
         std::fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }

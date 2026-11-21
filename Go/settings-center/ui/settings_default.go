@@ -1,4 +1,4 @@
-package ui
+﻿package ui
 
 import (
 	"fmt"
@@ -90,9 +90,9 @@ func updateChannelLocked(phase string) bool {
 // Channel state is acknowledged by the native updater, never guessed locally.
 func (a *App) aboutBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	s := &p.Scheme
-	version := stateString(a.State, "5.0.9", "bundleVersion")
-	if version == "5.0.9" {
-		version = stateString(a.State, "5.0.9", "version")
+	version := stateString(a.State, "5.1.0", "bundleVersion")
+	if version == "5.1.0" {
+		version = stateString(a.State, "5.1.0", "version")
 	}
 	u, _ := a.State["softwareUpdate"].(map[string]any)
 	phase := leafStr(u["phase"], "idle")
@@ -185,3 +185,4 @@ func (a *App) aboutBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	ToggleRow(c, p, "自动检查更新", x+24, y+8, w-48, "自动检查更新", "后台检查，下载和安装由你确认", on, func() { a.pushNative("AutoCheckUpdatesEnabled", !on) })
 	return y + 104
 }
+

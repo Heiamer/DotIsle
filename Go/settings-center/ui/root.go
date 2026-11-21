@@ -60,6 +60,7 @@ type App struct {
 	// Widgets page: per-kind size choices (model.widget_sizes), default medium.
 	widgetSizes      map[string]string
 	musicEditor      *musicEditor
+	progressPreview  progressPreviewState
 	gestureTutorial  *gestureTutorial
 	tutorialRequired bool
 	curveDraft       *motionCurveDraft
@@ -444,6 +445,7 @@ func (a *App) View(c *ui.Context) {
 			a.navigation(c, w, h)
 			a.settingsPanelView(c, w, h)
 			a.dialogViews(c, w, h)
+			a.toastView(c, &a.Palette)
 		}
 		a.opening(c, w, h)
 	})

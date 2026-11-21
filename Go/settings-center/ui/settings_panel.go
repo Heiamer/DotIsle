@@ -158,8 +158,8 @@ func (a *App) settingsPanelView(c *ui.Context, w, h float32) {
 				if len(group.sections) > 1 {
 					top = a.settingsSubcategories(c, &p, group.sections, section.tab, x, top, bodyW) + 10
 				}
-				ui.Scroll(c).Key("settings-body-"+strconv.Itoa(int(section.tab))).Absolute().Left(x-3).Top(top).
-					Width(bodyW+14).Height(ph-top-16).TrackScroll(&state.scroll).ScrollbarInsets(0, 1, 0, 0).
+				ui.Scroll(c).Key("settings-body-" + strconv.Itoa(int(section.tab))).Absolute().Left(x - 3).Top(top).
+					Width(bodyW + 14).Height(ph - top - 16).Scrollbars(false).TrackScroll(&state.scroll).
 					Label("设置选项").Children(func() {
 					ui.Box(c).Width(bodyW + 9).Height(state.bodyHeight).Children(func() {
 						height := a.settingsBody(c, &p, section.tab, 3, 5, bodyW) + 12
@@ -302,7 +302,9 @@ func (a *App) settingsBody(c *ui.Context, p *Palette, tab uint8, x, y, w float32
 
 // The settings surface uses inset groups rather than lifted dashboard cards.
 func settingCard(c *ui.Context, x, y, w, h float32, ink uint32) ui.Element {
-	return ui.Box(c).Absolute().Left(x).Top(y).Width(w).Height(h).Radius(15).Background(Col(ink))
+	return ui.Box(c).Absolute().Left(x).Top(y).Width(w).Height(h).Draw(func(pc *ui.Painter, r ui.Rect) {
+		pc.FillPath(continuousCardPath(r, 18), Col(ink))
+	})
 }
 
 func settingSeparator(c *ui.Context, p *Palette, x, y, w float32) {

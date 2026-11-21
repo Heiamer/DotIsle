@@ -1,4 +1,4 @@
-//go:build windows
+﻿//go:build windows
 
 // Package consent gates all normal startup before any data workers run.
 package consent
@@ -37,7 +37,7 @@ func appVersion() string {
 			}
 		}
 	}
-	return "5.0.9"
+	return "5.1.0"
 }
 
 type record struct {
@@ -129,3 +129,4 @@ func Ensure(data string) bool {
 	}
 	return true
 }
+

@@ -36,7 +36,7 @@ func TestMenuIsModalAndClosesForExternalRoutes(t *testing.T) {
 	}
 }
 
-func TestMenuStaysWhiteOnLeftAndLeavesRightUnchanged(t *testing.T) {
+func TestMenuFollowsThemeAndLeavesRightUnchanged(t *testing.T) {
 	RegisterFonts()
 	for _, theme := range []string{"Light", "Dark"} {
 		a := newTestApp(t)
@@ -60,13 +60,13 @@ func TestMenuStaysWhiteOnLeftAndLeavesRightUnchanged(t *testing.T) {
 			for y := int(label.Y); y < int(label.Y+label.H); y++ {
 				for x := int(label.X); x < int(label.X+label.W); x++ {
 					p := img.RGBAAt(x, y)
-					if p.R < 60 && p.G < 60 && p.B < 60 {
+					if (theme == "Light" && p.R < 60 && p.G < 60 && p.B < 60) || (theme == "Dark" && p.R > 195 && p.G > 195 && p.B > 195) {
 						ink++
 					}
 				}
 			}
 			if ink < 20 {
-				t.Fatalf("%s hover=%v: navigation text faded, dark pixels=%d rect=%v", theme, hover, ink, label)
+				t.Fatalf("%s hover=%v: navigation text faded, contrast pixels=%d rect=%v", theme, hover, ink, label)
 			}
 		}
 		tt.Advance(400 * time.Millisecond)
@@ -76,7 +76,7 @@ func TestMenuStaysWhiteOnLeftAndLeavesRightUnchanged(t *testing.T) {
 			t.Fatal("navigation covered the page", panel)
 		}
 		text, ok := tt.Find("组件")
-		if !ok || text.X > 64 {
+		if !ok || text.X > 72 {
 			t.Fatal("navigation text is not left aligned", text)
 		}
 		img := tt.Image()
@@ -91,8 +91,8 @@ func TestMenuStaysWhiteOnLeftAndLeavesRightUnchanged(t *testing.T) {
 			}
 		}
 		v := img.RGBAAt(15, 700)
-		if v.R < 200 || v.G < 200 || v.B < 200 {
-			t.Fatal("sidebar stopped using white frost", v)
+		if (theme == "Light" && (v.R < 200 || v.G < 200 || v.B < 200)) || (theme == "Dark" && (v.R > 70 || v.G > 70 || v.B > 70)) {
+			t.Fatal("sidebar stopped following the theme", v)
 		}
 		if err := tt.Click("收起导航"); err != nil {
 			t.Fatal(err)
