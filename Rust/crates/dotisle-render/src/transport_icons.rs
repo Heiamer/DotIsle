@@ -150,14 +150,15 @@ fn assets()->&'static HashMap<(&'static str,Glyph),Asset>{
     })
 }
 fn palette(theme:TransportTheme)->&'static str{match theme{TransportTheme::Reef=>"Reef",TransportTheme::Ripple=>"Ripple",TransportTheme::Sand=>"Sand",TransportTheme::Mist=>"Mist",TransportTheme::Glaze=>"Glaze",TransportTheme::InkIsle=>"InkIsle",TransportTheme::Tide=>"Tide",TransportTheme::Whitespace=>"Whitespace",TransportTheme::Halo=>"Halo",TransportTheme::Layered=>"Layered"}}
+#[allow(dead_code)]
 fn builtin(g:Glyph)->Icon{match g{Glyph::Shuffle=>Icon::Move,Glyph::Heart=>Icon::Heart,Glyph::Prev=>Icon::Prev,Glyph::Play=>Icon::Play,Glyph::Pause=>Icon::Pause,Glyph::Next=>Icon::Next,Glyph::Translate=>Icon::Translate,Glyph::Settings=>Icon::Settings,Glyph::Volume=>Icon::Volume}}
 fn color(argb:u32)->vello::peniko::Color{vello::peniko::Color::from_rgba8((argb>>16)as u8,(argb>>8)as u8,argb as u8,(argb>>24)as u8)}
 
 /// Paints a transport glyph inside the same square every theme uses. Reef keeps the shipped
 /// Material Symbols drawing; every other theme reads its own icon library.
 pub fn paint_icon(scene:&mut Scene,g:Glyph,theme:TransportTheme,r:Rect,argb:u32){
-    if theme==TransportTheme::Reef{draw::icon(scene,builtin(g),r.x0,r.y0,r.width(),argb&0xffffff);return}
-    let Some(asset)=assets().get(&(palette(theme),g))else{draw::icon(scene,builtin(g),r.x0,r.y0,r.width(),argb&0xffffff);return};
+    if theme==TransportTheme::Reef{crate::modern_icons::paint(scene,g,r,argb);return}
+    let Some(asset)=assets().get(&(palette(theme),g))else{crate::modern_icons::paint(scene,g,r,argb);return};
     let(x0,y0,w,h)=asset.view;
     let tr=Affine::translate((r.x0,r.y0))*Affine::scale(r.width()/24.)*Affine::scale_non_uniform(24./w,24./h)*Affine::translate((-x0,-y0));
     for part in &asset.parts{

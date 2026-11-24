@@ -527,14 +527,13 @@ dependencies = [
 
 [[package]]
 name = "dotisle-desktop"
-version = "5.0.5"
+version = "5.2.1"
 dependencies = [
  "base64",
  "dotisle-domain",
  "dotisle-module-api",
  "dotisle-render",
  "dotisle-scene",
- "embed-manifest",
  "image",
  "lyric-backend",
  "lyric-core",
@@ -561,7 +560,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-domain"
-version = "5.0.5"
+version = "5.2.1"
 dependencies = [
  "dotisle-module-api",
  "lyric-backend",
@@ -608,21 +607,16 @@ dependencies = [
 name = "dotisle-lyrics"
 version = "1.0.0"
 dependencies = [
- "aes",
  "base64",
  "cc",
  "dotisle-module-api",
  "encoding_rs",
  "flate2",
- "iced-x86",
- "lyric-archive",
  "lyric-core",
- "md-5",
  "regex",
  "roxmltree",
  "serde",
  "serde_json",
- "sha2",
  "windows 0.62.2",
 ]
 
@@ -688,7 +682,7 @@ dependencies = [
 
 [[package]]
 name = "dotisle-render"
-version = "5.0.5"
+version = "5.2.1"
 dependencies = [
  "dotisle-scene",
  "fontique",
@@ -696,12 +690,13 @@ dependencies = [
  "parley",
  "pollster",
  "skrifa 0.44.0",
+ "swash",
  "windows 0.62.2",
 ]
 
 [[package]]
 name = "dotisle-scene"
-version = "5.0.5"
+version = "5.2.1"
 dependencies = [
  "glifo",
  "vello_common",
@@ -774,12 +769,6 @@ name = "either"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
-
-[[package]]
-name = "embed-manifest"
-version = "1.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba92c8f4591bf29f89716b45e5f5f56577adbb81426e5620c6e994da7c88bb7a"
 
 [[package]]
 name = "ena"
@@ -1520,7 +1509,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-archive"
-version = "5.0.5"
+version = "5.2.1"
 dependencies = [
  "flate2",
  "sha2",
@@ -1528,7 +1517,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-backend"
-version = "5.0.5"
+version = "5.2.1"
 dependencies = [
  "aes",
  "base64",
@@ -1547,7 +1536,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-bootstrap"
-version = "5.0.5"
+version = "5.2.1"
 dependencies = [
  "dotisle-module-api",
  "dotisle-render",
@@ -1556,6 +1545,7 @@ dependencies = [
  "image",
  "lyric-archive",
  "regex",
+ "serde",
  "serde_json",
  "sha2",
  "windows 0.62.2",
@@ -1563,7 +1553,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-core"
-version = "5.0.5"
+version = "5.2.1"
 dependencies = [
  "regex",
  "serde",
@@ -1574,7 +1564,7 @@ dependencies = [
 
 [[package]]
 name = "lyric-native"
-version = "5.0.5"
+version = "5.2.1"
 dependencies = [
  "base64",
  "dotisle-domain",
@@ -1588,6 +1578,7 @@ dependencies = [
  "roxmltree",
  "serde",
  "serde_json",
+ "sha2",
  "windows 0.62.2",
  "windows-core 0.62.2",
 ]

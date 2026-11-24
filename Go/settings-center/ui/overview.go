@@ -133,9 +133,11 @@ func (a *App) overviewPage(c *ui.Context, x, y, w float32) float32 {
 	if a.overview.config.View == "scroll" {
 		selected = 1
 	}
-	Segmented(c, p, x, y, 224, []string{"卡片视图", "滚动视图"}, selected, func(index int) {
-		a.setOverviewView([]string{"cards", "scroll"}[index])
-	})
+	if a.overview.config.ScrollPlugin {
+		Segmented(c, p, x, y, 224, []string{"卡片视图", "滚动视图"}, selected, func(index int) {
+			a.setOverviewView([]string{"cards", "scroll"}[index])
+		})
+	}
 	if selected == 1 {
 		pages := a.scrollPages()
 		Label(c, "滚轮切换 · "+itoa(len(pages))+" 页", x+242, y+12, 12, s.OnSurfaceVariant, false, w-480)

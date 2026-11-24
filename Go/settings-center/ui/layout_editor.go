@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/egoist/mygo/ui"
 	"math"
+	"time"
 )
 
 type musicSlot struct {
@@ -42,6 +43,8 @@ type musicElement struct {
 	X, Y, W, H float64
 }
 type musicEditor struct {
+	BaseLayout      string
+	FontSize        float64
 	Draft           musicLayout
 	Baseline        string
 	Undo, Redo      []string
@@ -58,13 +61,19 @@ type musicEditor struct {
 	Scroll          ui.ScrollState
 	InspectorHeight float32
 	Sliders         map[string]*editorSliderState
+	Preview         *layoutPreviewFrame
+	PreviewLoad     bool
+	PreviewKey      layoutPreviewKey
+	PreviewAt       time.Time
+	PreviewError    string
+	Applied         bool
 }
 
 var nativeMusicLayout = desktop.Layout
 
 func layoutJSON(value any) string { raw, _ := json.Marshal(value); return string(raw) }
-func decodeLayout(value any) (musicLayout, []musicElement, float64, error) {
-	result, err := nativeMusicLayout(value)
+func decodeLayout(value any, base string, font float64) (musicLayout, []musicElement, float64, error) {
+	result, err := nativeMusicLayout(map[string]any{"draft": value, "baseLayout": base, "fontSize": font})
 	if err != nil {
 		return musicLayout{}, nil, 0, err
 	}
@@ -80,11 +89,11 @@ func decodeLayout(value any) (musicLayout, []musicElement, float64, error) {
 	return layout, elements, height, nil
 }
 func (e *musicEditor) refresh() {
-	key := layoutJSON(e.Draft)
+	key := layoutJSON([]any{e.Draft, e.BaseLayout, e.FontSize})
 	if key == e.Cache {
 		return
 	}
-	_, elements, height, err := decodeLayout(e.Draft)
+	_, elements, height, err := decodeLayout(e.Draft, e.BaseLayout, e.FontSize)
 	if err != nil {
 		e.Error = err.Error()
 		return
@@ -93,12 +102,19 @@ func (e *musicEditor) refresh() {
 	e.Error = ""
 }
 func (e *musicEditor) change(change func(*musicLayout)) {
+	e.edit(change, true)
+}
+func (e *musicEditor) edit(change func(*musicLayout), enable bool) {
 	if e.Pending {
 		return
 	}
 	before := layoutJSON(e.Draft)
 	change(&e.Draft)
 	if layoutJSON(e.Draft) != before {
+		if enable {
+			e.Draft.Enabled = true
+		}
+		e.Applied = false
 		e.record(before)
 		e.refresh()
 	}
@@ -125,7 +141,7 @@ func (e *musicEditor) restoreSaved() {
 		e.Error = err.Error()
 		return
 	}
-	e.change(func(l *musicLayout) { *l = restored })
+	e.edit(func(l *musicLayout) { *l = restored }, false)
 }
 func (e *musicEditor) drag(element musicElement, dx, dy float32, active bool) {
 	if e.Pending {
@@ -168,9 +184,23 @@ func (e *musicEditor) history(redo bool) {
 	*from = (*from)[:len(*from)-1]
 	e.restore(raw)
 }
+func (e *musicEditor) maxElementY(id int) float64 {
+	for _, element := range e.Geometry {
+		if element.ID == id {
+			h := element.H
+			if id == 6 {
+				h = h * 43 / 22
+			} // Leave room for the native seek activation chip.
+			return math.Max(12, e.Height-h-10)
+		}
+	}
+	return math.Max(12, e.Height-34)
+}
+
 func (e *musicEditor) place(id int, x, y float64, width *float64) {
+	e.Applied = false
 	x = math.Max(12, math.Min(388, math.Round(x/4)*4))
-	y = math.Max(12, math.Min(600, math.Round(y/4)*4))
+	y = math.Max(12, math.Min(e.maxElementY(id), math.Round(y/4)*4))
 	if width != nil {
 		v := math.Max(24, math.Min(376, math.Round(*width/4)*4))
 		width = &v
@@ -194,7 +224,7 @@ func (a *App) applyMusicLayout() {
 	if e == nil || e.Pending || !a.Connected || a.Win == nil {
 		return
 	}
-	_, _, _, err := decodeLayout(e.Draft)
+	_, _, _, err := decodeLayout(e.Draft, e.BaseLayout, e.FontSize)
 	if err != nil {
 		e.Error = err.Error()
 		return
@@ -203,9 +233,9 @@ func (a *App) applyMusicLayout() {
 	var value any
 	_ = json.Unmarshal([]byte(raw), &value)
 	e.Pending = true
-	go func() {
+	a.startAsync(func() {
 		reply, err := island.Request("update", map[string]any{"key": "MusicCustomLayout", "value": value})
-		a.Win.Update(func() {
+		a.applyAsync(func() {
 			e.Pending = false
 			if err != nil {
 				e.Error = err.Error()
@@ -217,16 +247,45 @@ func (a *App) applyMusicLayout() {
 			}
 			e.Baseline = raw
 			e.Error = ""
-			a.pushToast("灵动岛布局已应用")
+			e.Applied = true
 		})
-	}()
+	})
+}
+
+func (a *App) seedCustomLayoutStyles(l *musicLayout) {
+	l.TransportTheme = a.leafString("TransportTheme", "Reef")
+	l.BarStyle = a.leafString("ProgressBarStyle", "Normal")
+	l.ThumbStyle = a.leafString("ProgressBarThumb", "Pill")
+	l.ThumbEnabled = a.leafBool("ProgressBarThumbEnabled", false)
+	l.ThumbSpin = a.leafBool("ProgressBarThumbSpin", false)
+}
+
+// untouchedFrame mirrors custom_layout::Layout::uses_preset_frame on the Go side.
+func (l *musicLayout) untouchedFrame() bool {
+	kinds := []string{"header", "lyrics", "translation", "status", "progress", "controls"}
+	controls := []int{2, 9, 16, 3, 4, 5, 6, 7}
+	if len(l.Elements) != 0 || l.Alignment != 0 || l.Gap != 8 || l.CoverSize != 56 ||
+		!l.ShowCover || len(l.Modules) != len(kinds) || len(l.Controls) != len(controls) {
+		return false
+	}
+	for i, slot := range l.Modules {
+		if slot.Kind != kinds[i] || !slot.Visible {
+			return false
+		}
+	}
+	for i, id := range l.Controls {
+		if id != controls[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // The editor is a bounded workbench: the preview stays on screen while only
 // the inspector scrolls. No settings are appended below the preview.
 func (a *App) musicLayoutEditor(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	if a.musicEditor == nil {
-		draft, elements, height, err := decodeLayout(a.settings()["MusicCustomLayout"])
+		draft, elements, height, err := decodeLayout(a.settings()["MusicCustomLayout"], a.leafString("MusicExpandedLayout", "SideBySide"), a.leafFloat("FontSize", 14))
 		if err != nil {
 			Label(c, "布局编辑器加载失败："+err.Error(), x, y, 13, p.Scheme.Error, false, w)
 			return y + 60
@@ -241,23 +300,37 @@ func (a *App) musicLayoutEditor(c *ui.Context, p *Palette, x, y, w float32) floa
 				}
 			}
 		}
-		a.musicEditor = &musicEditor{Draft: draft, Baseline: layoutJSON(draft), Geometry: elements, Height: height, Cache: layoutJSON(draft), Selected: selected, DragID: -1}
+		a.musicEditor = &musicEditor{Draft: draft, Baseline: layoutJSON(draft), Geometry: elements, Height: height, Selected: selected, DragID: -1}
 	}
 	e, s := a.musicEditor, &p.Scheme
+	e.BaseLayout, e.FontSize = a.leafString("MusicExpandedLayout", "SideBySide"), a.leafFloat("FontSize", 14)
 	e.refresh()
-	Button(c, p, "返回布局分类", x, y, 104, 36, "返回分类", "arrow_back", true, true, func() { a.openSettings(240) })
-	Label(c, "自定义布局", x+128, y+9, 13, s.OnSurface, true, 90)
-	Switch(c, p, "启用自定义布局", x+220, y+6, e.Draft.Enabled, func() { e.change(func(l *musicLayout) { l.Enabled = !l.Enabled }) })
-	Button(c, p, "布局撤销", x+296, y, 68, 36, "撤销", "", true, len(e.Undo) > 0 && !e.Pending, func() { e.history(false) })
-	Button(c, p, "布局重做", x+372, y, 68, 36, "重做", "", true, len(e.Redo) > 0 && !e.Pending, func() { e.history(true) })
-	Button(c, p, "应用灵动岛布局", x+w-136, y, 136, 36, "应用到灵动岛", "check", false, a.Connected && !e.Pending && layoutJSON(e.Draft) != e.Baseline, a.applyMusicLayout)
+	a.requestLayoutPreview(e)
+	Label(c, "自定义布局", x, y+9, 13, s.OnSurface, true, 90)
+	Switch(c, p, "启用自定义布局", x+92, y+6, e.Draft.Enabled, func() {
+		e.edit(func(l *musicLayout) {
+			if !l.Enabled && l.untouchedFrame() {
+				a.seedCustomLayoutStyles(l)
+			}
+			l.Enabled = !l.Enabled
+		}, false)
+	})
+	Button(c, p, "布局撤销", x+161, y, 62, 36, "撤销", "", true, len(e.Undo) > 0 && !e.Pending, func() { e.history(false) })
+	Button(c, p, "布局重做", x+231, y, 62, 36, "重做", "", true, len(e.Redo) > 0 && !e.Pending, func() { e.history(true) })
+	applyLabel := "应用到灵动岛"
+	if e.Applied && layoutJSON(e.Draft) == e.Baseline {
+		applyLabel = "已应用"
+	}
+	Button(c, p, "应用灵动岛布局", x+w-136, y, 136, 36, applyLabel, "check", false, a.Connected && !e.Pending && layoutJSON(e.Draft) != e.Baseline, a.applyMusicLayout)
 	y += 52
 	panelH := max(float32(400), float32(clipH)-y-24)
 	previewW := min(float32(480), (w-16)*.46)
 	rightX, rightW := x+previewW+16, w-previewW-16
 	Panel(c, p, x, y, previewW, panelH, s.Container).Label("布局预览面板")
 	Label(c, "实时预览", x+20, y+18, 15, s.OnSurface, true, previewW-130)
-	Label(c, fmt.Sprintf("400 × %.0f", e.Height), x+previewW-108, y+20, 12, s.OnSurfaceVariant, false, 92)
+	if e.Preview != nil {
+		Label(c, fmt.Sprintf("%.0f × %.0f", e.Preview.Width, e.Preview.Height), x+previewW-108, y+20, 12, s.OnSurfaceVariant, false, 92)
+	}
 	stageY, stageH := y+56, panelH-140
 	ui.Box(c).Absolute().Left(x + 16).Top(stageY).Width(previewW - 32).Height(stageH).Radius(16).Background(Col(s.High)).IgnoreInput(true).
 		Draw(func(pc *ui.Painter, r ui.Rect) {
@@ -272,34 +345,16 @@ func (a *App) musicLayoutEditor(c *ui.Context, p *Palette, x, y, w float32) floa
 			}
 			pc.StrokePath(&grid, 1, AlphaCol(s.OnSurface, .035))
 		})
-	scale := min((previewW-64)/400, (stageH-40)/float32(max(e.Height, 1)))
-	canvasW, canvasH := 400*scale, float32(e.Height)*scale
-	canvas := ui.Box(c).Key("music-layout-canvas").Absolute().Left(x+(previewW-canvasW)/2).Top(stageY+(stageH-canvasH)/2).
-		Width(400).Height(float32(e.Height)).TransformOrigin(0, 0).Scale(scale, scale).Radius(26).Background(Col(s.Container)).Label("灵动岛布局实时预览")
-	canvas.Children(func() {
-		for _, element := range e.Geometry {
-			node := ui.ButtonBase(c).Key(fmt.Sprintf("music-layout-%d", element.ID)).Absolute().Left(float32(element.X)).Top(float32(element.Y)).Width(float32(element.W)).Height(float32(element.H)).Label("布局元素" + element.Label).Radius(5)
-			if e.Selected == element.ID {
-				node.Border(1.5, Col(s.Primary)).Background(AlphaCol(s.Primary, .1))
-			}
-			if !e.Pending {
-				if node.Pressed() {
-					e.Selected = element.ID
-					e.Tab = 0
-					e.Scroll = ui.ScrollState{}
-				}
-				dx, dy, dragged := node.Dragged()
-				e.drag(element, dx, dy, dragged || node.Pressed())
-			}
-			node.Children(func() { a.layoutElementPreview(c, p, element) })
-		}
-	})
-	Label(c, "拖动元素调整位置 · 4 px 吸附", x+20, y+panelH-70, 12, s.OnSurfaceVariant, false, previewW-40)
+	a.drawLayoutPreview(c, p, e, x, stageY, previewW, stageH)
 	Button(c, p, "布局还原已保存", x+16, y+panelH-48, (previewW-40)/2, 32, "还原已保存", "", true, !e.Pending && layoutJSON(e.Draft) != e.Baseline, e.restoreSaved)
 	Button(c, p, "布局恢复推荐", x+24+(previewW-40)/2, y+panelH-48, (previewW-40)/2, 32, "恢复推荐", "", true, !e.Pending, func() {
-		draft, _, _, err := decodeLayout(nil)
+		draft, _, _, err := decodeLayout(nil, e.BaseLayout, e.FontSize)
 		if err == nil {
-			e.change(func(l *musicLayout) { *l = draft })
+			draft.Enabled = true
+			if draft.untouchedFrame() {
+				a.seedCustomLayoutStyles(&draft)
+			}
+			e.edit(func(l *musicLayout) { *l = draft }, false)
 		}
 	})
 	Panel(c, p, rightX, y, rightW, panelH, s.Container).Label("布局调整面板")
@@ -357,10 +412,16 @@ func (e *musicEditor) slider(c *ui.Context, p *Palette, label string, x, y, w fl
 	}
 	if held && st.Value != value {
 		set(st.Value)
+		e.Draft.Enabled = true
+		e.Applied = false
 		e.refresh()
 	}
 	if !held && st.Held {
-		set(st.Value)
+		if st.Value != value {
+			set(st.Value)
+			e.Draft.Enabled = true
+			e.Applied = false
+		}
 		e.refresh()
 		if layoutJSON(e.Draft) != st.Before {
 			e.record(st.Before)
@@ -381,7 +442,8 @@ func (a *App) layoutInspector(c *ui.Context, p *Palette, x, y, w float32) float3
 	switch e.Tab {
 	case 0:
 		selected := musicElement{ID: -1}
-		for _, v := range e.Geometry {
+		elements := e.editorElements()
+		for _, v := range elements {
 			if v.ID == e.Selected {
 				selected = v
 				break
@@ -395,7 +457,7 @@ func (a *App) layoutInspector(c *ui.Context, p *Palette, x, y, w float32) float3
 		y += 36
 		e.slider(c, p, "横向", x+4, y, w-8, selected.X, 12, 388, func(v float64) { e.place(selected.ID, v, selected.Y, nil) })
 		y += 68
-		e.slider(c, p, "纵向", x+4, y, w-8, selected.Y, 12, 600, func(v float64) { e.place(selected.ID, selected.X, v, nil) })
+		e.slider(c, p, "纵向", x+4, y, w-8, selected.Y, 12, e.maxElementY(selected.ID), func(v float64) { e.place(selected.ID, selected.X, v, nil) })
 		y += 68
 		if selected.Resizable {
 			e.slider(c, p, "宽度", x+4, y, w-8, selected.W, 24, 376, func(v float64) { e.place(selected.ID, selected.X, selected.Y, &v) })
@@ -405,11 +467,11 @@ func (a *App) layoutInspector(c *ui.Context, p *Palette, x, y, w float32) float3
 		Label(c, "选择元素", x+4, y+6, 13, s.OnSurface, true, w-8)
 		y += 34
 		cw := (w - 8) / 2
-		for i, element := range e.Geometry {
+		for i, element := range elements {
 			id := element.ID
 			Chip(c, p, "选择布局元素"+element.Label, x+float32(i%2)*(cw+8), y+float32(i/2)*36, cw, 30, element.Label, e.Selected == id, func() { e.Selected = id })
 		}
-		y += float32((len(e.Geometry)+1)/2)*36 + 18
+		y += float32((len(elements)+1)/2)*36 + 18
 
 	case 1:
 		y = leafChoices(c, p, x, y, w, "内容对齐", [][2]string{{"靠左", "0"}, {"居中", "1"}, {"靠右", "2"}}, itoa(e.Draft.Alignment), func(v string) { e.change(func(l *musicLayout) { l.Alignment = intValue(v) }) })
@@ -516,57 +578,4 @@ func intValue(s string) int {
 		return 2
 	}
 	return 0
-}
-func (a *App) layoutElementPreview(c *ui.Context, p *Palette, e musicElement) {
-	s := &p.Scheme
-	w, h := float32(e.W), float32(e.H)
-	if e.ID == 0 {
-		if bmp := a.coverBitmap(); bmp != nil {
-			ui.Image(c, bmp).Absolute().Fill().Fit(ui.Cover).Radius(10)
-		} else {
-			Icon(c, "music_note", (w-24)/2, (h-24)/2, 24, s.OnSurfaceVariant)
-		}
-		return
-	}
-	text, size := e.Label, float32(11)
-	switch e.ID {
-	case 1:
-		text, size = a.trackTitle(), 16
-	case 2:
-		text, size = a.trackArtist(), 10
-	case 3:
-		text, size = stateString(a.lyricFrame(), "当前歌词", "currentLine"), 16
-	case 4:
-		text, size = stateString(a.lyricFrame(), "翻译与下一句", "currentTranslation"), 10
-	case 5:
-		text = "正在播放"
-	case 6:
-		drawBarPreview(c, p, 4, 0, w-8, h, a.musicEditor.Draft.BarStyle, .38)
-		return
-	case 7:
-		text = "1:06"
-	case 8:
-		text = "4:00"
-	}
-	if e.ID >= 32 {
-		icons := map[int]string{34: "shuffle", 41: "favorite", 48: "volume_up", 35: "skip_previous", 36: "play_arrow", 37: "skip_next", 38: "translate", 39: "settings"}
-		Icon(c, icons[e.ID], (w-20)/2, (h-20)/2, 20, s.OnSurface)
-		return
-	}
-	align := ui.Start
-	if a.musicEditor.Draft.Alignment == 1 {
-		align = ui.Center
-	} else if a.musicEditor.Draft.Alignment == 2 {
-		align = ui.End
-	}
-	// Timestamp columns stay anchored to opposite ends of the progress bar.
-	if e.ID == 7 {
-		align = ui.Start
-	} else if e.ID == 8 {
-		align = ui.End
-	}
-	ui.Box(c).Absolute().Width(w).Height(h).Justify(ui.Center).IgnoreInput(true).Children(func() {
-		line := textLine(c, text, size, s.OnSurface, e.ID == 1)
-		line.FillWidth().TextAlign(align).SingleLine().IgnoreInput(true)
-	})
 }

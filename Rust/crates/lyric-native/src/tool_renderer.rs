@@ -240,10 +240,7 @@ impl Renderer {
                 } else {
                     "设置"
                 };
-                let glass = self.reading_glass;
-                if id == 30 {
-                    self.reading_glass = false;
-                }
+
                 let result = self.text_family(
                     label,
                     Rect::new(r.x, r.y + 7., r.w, 18.),
@@ -259,7 +256,6 @@ impl Renderer {
                     DWRITE_TEXT_ALIGNMENT_CENTER,
                     Some(18.),
                 );
-                self.reading_glass = glass;
                 result?;
             }
         }
@@ -276,16 +272,13 @@ impl Renderer {
         }
     }
     unsafe fn expanded_view(&mut self, s: &Scene<'_>) -> Result<()> {
-        self.reading_glass = s.material == Material::Glass;
-        let result = if s.mini {
+        if s.mini {
             self.mini_expanded(s)
         } else if let Some(p) = s.panel {
             self.tool_expanded(s, p)
         } else {
             self.expanded_content(s)
-        };
-        self.reading_glass = false;
-        result
+        }
     }
     unsafe fn satellite(&mut self, s: &Scene<'_>) -> Result<()> {
         let r = s.layout.satellite();

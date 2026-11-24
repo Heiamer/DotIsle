@@ -41,11 +41,18 @@ func widgetCircle(c *ui.Context, x, y, size float32, fraction float64, ink, trac
 
 func widgetTextAction(c *ui.Context, p *Palette, label, text string, x, y, w float32, action func()) {
 	button := ui.ButtonBase(c).Absolute().Left(x).Top(y).Width(w).Height(32).Radius(10).Label(label).Cursor(ui.CursorPointer)
-	hoverLayer(&button, ui.Transparent, p.Scheme.Primary, true)
+	ink := p.Scheme.OnSurfaceVariant
+	if button.Hovered() {
+		ink = p.Scheme.OnSurface
+	}
+	if p.HighContrast {
+		ink = p.Scheme.Primary
+	}
+	hoverLayer(&button, ui.Transparent, p.Scheme.OnSurface, true)
 	if button.Clicked() {
 		action()
 	}
-	button.Children(func() { Label(c, text, 0, 6, 12, p.Scheme.Primary, true, w-4) })
+	button.Children(func() { Label(c, text, 0, 6, 12, ink, true, w-4) })
 }
 
 func widgetCheck(c *ui.Context, p *Palette, label string, x, y float32, action func()) {

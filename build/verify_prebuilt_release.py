@@ -6,6 +6,8 @@ from pathlib import Path
 import re
 import zipfile
 
+from portable_archive import require_smaller, verify_portable
+
 REPORTS = (
     'source/report.json', 'center/report.json', 'center/control-center/report.json',
     'center/desktop/report.json',
@@ -44,7 +46,7 @@ def verify(directory, version, source_commit, manifest_sha256):
         require(asset_name(name) and name not in entries and name != manifest.name, 'Unsafe or duplicate asset name')
         require((directory / name).is_file() and digest(directory / name) == expected.lower(), f'Asset checksum mismatch: {name}')
         entries[name] = expected.lower()
-    required = {f'{prefix}-{suffix}' for suffix in ('Setup.exe', 'Portable.zip', 'Source.zip', 'Validation.zip', 'Notes.md', 'Verification.json')}
+    required = {f'{prefix}-{suffix}' for suffix in ('Setup.exe', 'Portable.7z', 'Source.zip', 'Validation.zip', 'Notes.md', 'Verification.json')}
     required.update({f'LyricIsland-{version}-{suffix}' for suffix in ('Portable.zip', 'SHA256.txt', 'Modules.json')})
     require(required <= entries.keys(), f'Missing required assets: {sorted(required - entries.keys())}')
     require({p.name for p in directory.iterdir()} == set(entries) | {manifest.name}, 'Unexpected or unlisted release assets')
@@ -60,14 +62,23 @@ def verify(directory, version, source_commit, manifest_sha256):
             require(report.get('success') is True, f'Acceptance failed: {relative}')
     with zipfile.ZipFile(directory / f'{prefix}-Source.zip') as archive:
         require(archive.comment.decode('ascii') == source_commit, 'Source archive does not match the verified commit')
-    with zipfile.ZipFile(directory / f'{prefix}-Portable.zip') as archive:
-        runtime = {}
+    legacy = f'LyricIsland-{version}'
+    portable = directory / f'{prefix}-Portable.7z'
+    require_smaller(portable, directory / f'{prefix}-Setup.exe')
+    with zipfile.ZipFile(directory / f'{legacy}-Portable.zip') as archive:
+        runtime_files = {}
         for item in archive.infolist():
             parts = item.filename.split('/')
-            if len(parts) == 2 and parts[0] == prefix and Path(parts[1]).suffix.lower() in ('.exe', '.dll'):
-                require(parts[1] not in runtime, 'Duplicate runtime binary')
-                with archive.open(item) as stream:
-                    runtime[parts[1]] = hashlib.file_digest(stream, 'sha256').hexdigest()
+            require(len(parts) > 1 and parts[0] == legacy and
+                    all(part not in ('', '.', '..', 'Data') and ':' not in part and chr(92) not in part for part in parts),
+                    'Unsafe OTA runtime path')
+            relative = '/'.join(parts[1:])
+            require(relative not in runtime_files, 'Duplicate OTA runtime file')
+            with archive.open(item) as stream:
+                runtime_files[relative] = hashlib.file_digest(stream, 'sha256').hexdigest()
+        verify_portable(portable, prefix, runtime_files)
+        runtime = {name: digest for name, digest in runtime_files.items()
+                   if '/' not in name and Path(name).suffix.lower() in ('.exe', '.dll')}
         require(runtime and runtime == evidence.get('runtimeSha256'), 'Portable runtime differs from the locally accepted binaries')
         require(sum(name.startswith('dotisle_') and name.endswith('.dll') for name in runtime) == 15, 'Expected 15 service DLLs')
         require({'LyricIsland.exe', 'LyricIsland.Center.exe', 'LyricIsland.Updater.exe'} <= runtime.keys(), 'Missing a runtime executable')

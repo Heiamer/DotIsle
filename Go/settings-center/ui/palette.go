@@ -47,9 +47,8 @@ func (a *App) paletteView(c *ui.Context, w, h float32) {
 			matches := a.paletteMatches()
 			ph := float32(68 + max(1, min(5, len(matches)))*40)
 			panel := ui.Box(c).Key("search-card").Absolute().Left(px).Top(py).Width(pw).Height(ph).Label("搜索卡片")
-			overlayStyle(&panel, &a.Palette)
+			opticalOverlayStyle(c, &panel, &a.Palette, 20, false, a.opticalFlowAngle(315))
 			elevationStyle(&panel, &a.Palette, elevationPopover)
-			panel.Radius(22)
 			popoverMotion(c, &a.Palette, &panel)
 			_ = panel.Clicked()
 			panel.Children(func() {
@@ -102,9 +101,22 @@ func (a *App) paletteView(c *ui.Context, w, h float32) {
 						Width(pw - 16).Height(38).Radius(12).Label("搜索结果 " + Pages[page]).Cursor(ui.CursorPointer)
 					base := ui.Transparent
 					if index+start == a.paletteSelected {
-						base = Col(s.High)
+						if a.Palette.HighContrast {
+							base = Col(s.High)
+						} else if a.Palette.Dark {
+							base = AlphaCol(0xFFFFFF, 0.09)
+						} else {
+							base = AlphaCol(0x111827, 0.055)
+						}
 					}
 					row.Background(base)
+					if index+start == a.paletteSelected && !a.Palette.HighContrast {
+						if a.Palette.Dark {
+							row.Border(1, AlphaCol(0xFFFFFF, 0.12))
+						} else {
+							row.Border(1, AlphaCol(0x111827, 0.06))
+						}
+					}
 					hoverLayer(&row, base, s.OnSurface, true)
 					if row.Clicked() {
 						a.paletteOpen = false

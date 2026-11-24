@@ -1,54 +1,10 @@
-//! Compatible .NET cache/config persistence and native SQLite mapping lookup.
-use std::{ffi::{c_char,c_void,CStr,CString},path::{Path,PathBuf},sync::Arc,time::Duration};
-
-use serde_json::{Value,json};
+//! Cached resolved lyrics and read-only legacy SQLite song mapping.
+use std::{ffi::{c_char,c_void,CStr,CString},path::PathBuf,sync::Arc};
 use lyric_core::{cache::Cache,models::*,identity::normalized};
-
-pub fn duration_from_text(s:&str)->Option<Duration>{
-    let parts=s.split(':').collect::<Vec<_>>();if parts.len()!=3{return None}
-    let (days,hours)=parts[0].split_once('.').map(|(d,h)|Some((d.parse::<u64>().ok()?,h.parse::<u64>().ok()?))).unwrap_or_else(||Some((0,parts[0].parse::<u64>().ok()?)))?;
-    let mins=parts[1].parse::<u64>().ok()?;let seconds=parts[2].parse::<f64>().ok()?;
-    let total=(days*86400+hours*3600+mins*60) as f64+seconds;
-    if !total.is_finite()||total<0.||total>u64::MAX as f64{return None}Some(Duration::from_secs_f64(total))
-}
-fn duration_text(v:&Value)->Option<String>{
-    let sec=v.get("secs")?.as_u64()?;let nano=v.get("nanos")?.as_u64()?;
-    let day=sec/86400;Some(format!("{}{:02}:{:02}:{:02}.{:07}",if day>0{format!("{day}.")}else{String::new()},sec%86400/3600,sec%3600/60,sec%60,nano/100))
-}
-fn is_time(key:&str)->bool{matches!(key,"startTime"|"endTime"|"duration"|"timestamp"|"relativeOffset")}
-pub fn from_managed(v:Value)->Value{
-    match v{
-        Value::Array(a)=>Value::Array(a.into_iter().map(from_managed).collect()),
-        Value::Object(m)=>Value::Object(m.into_iter().map(|(key,value)|{
-            let mut chars=key.chars();let key=chars.next().map(|c|format!("{}{}",c.to_ascii_lowercase(),chars.as_str())).unwrap_or_default();
-            let value=if key=="diagnostics"{value}else if is_time(&key)&&value.is_string(){duration_from_text(value.as_str().unwrap()).map(|d|json!({"secs":d.as_secs(),"nanos":d.subsec_nanos()})).unwrap_or(value)}else{from_managed(value)};
-            (key,value)
-        }).collect()),
-        v=>v
-    }
-}
-pub fn to_managed(v:Value,pascal:bool)->Value{
-    match v{
-        Value::Array(a)=>Value::Array(a.into_iter().map(|v|to_managed(v,pascal)).collect()),
-        Value::Object(m)=>Value::Object(m.into_iter().map(|(key,value)|{
-            let value=if key=="diagnostics"{value}else if is_time(&key)&&value.is_object(){duration_text(&value).map(Value::String).unwrap_or(value)}else{to_managed(value,pascal)};
-            let key=if pascal{let mut c=key.chars();c.next().map(|s|format!("{}{}",s.to_ascii_uppercase(),c.as_str())).unwrap_or_default()}else{key};(key,value)
-        }).collect()),v=>v
-    }
-}
 pub struct FinalCache(pub Arc<Cache>);
 impl FinalCache{
  pub fn get(&self,key:&str)->Option<Selection>{self.0.get::<Selection>(key).filter(|r|r.content.usable())}
  pub fn put(&self,key:&str,value:&Selection){if value.content.usable(){self.0.put(key,value)}}
-}
-pub fn atomic_write(path:&Path,data:&[u8])->Result<(),String>{
-    let parent=path.parent().ok_or("missing parent")?;std::fs::create_dir_all(parent).map_err(|e|e.to_string())?;
-    let temporary=path.with_extension(format!("{}.tmp",std::process::id()));
-    let result=(||{use std::io::Write;let mut f=std::fs::File::create(&temporary)?;f.write_all(data)?;f.sync_all()?;drop(f);
-        use windows::Win32::Storage::FileSystem::{MoveFileExW,MOVEFILE_REPLACE_EXISTING,MOVEFILE_WRITE_THROUGH};
-        use windows::core::PCWSTR;let s=temporary.as_os_str().to_string_lossy().encode_utf16().chain(Some(0)).collect::<Vec<_>>();let d=path.as_os_str().to_string_lossy().encode_utf16().chain(Some(0)).collect::<Vec<_>>();
-        unsafe{MoveFileExW(PCWSTR(s.as_ptr()),PCWSTR(d.as_ptr()),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH).map_err(|e|std::io::Error::other(e.to_string()))}
-    })();if result.is_err(){let _=std::fs::remove_file(temporary);}result.map_err(|e:std::io::Error|e.to_string())
 }
 
 // Dynamically use the already distributed SQLite library; no managed EF runtime.
@@ -98,4 +54,3 @@ impl MappingDb{
     }
 }
 use std::ptr::null_mut;
-#[cfg(test)]mod tests{use super::*;#[test]fn managed_time_and_enums_roundtrip(){let v=json!({"StartTime":"00:01:23.1234567","EndTime":null,"Format":4,"TimingKind":2,"Diagnostics":{"KeepCase":"v"}});let r=from_managed(v.clone());assert_eq!(r["startTime"]["secs"],83);assert_eq!(to_managed(r,true),v);assert_eq!(duration_from_text("1.02:03:04").unwrap().as_secs(),93784);}}

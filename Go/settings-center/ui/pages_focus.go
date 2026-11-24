@@ -524,12 +524,9 @@ func (a *App) timerAction(id, action string) {
 // sendTimerCreate sends timerCreate and selects the created timer from the reply
 // (apply_native_reply: self.selected = reply["id"]).
 func (a *App) sendTimerCreate(payload map[string]any) {
-	go func() {
+	a.startAsync(func() {
 		reply, err := island.Request("timerCreate", payload)
-		if a.Win == nil {
-			return
-		}
-		a.Win.Update(func() {
+		a.applyAsync(func() {
 			if a.applyCommandReply("timerCreate", reply, err) {
 				return
 			}
@@ -540,7 +537,7 @@ func (a *App) sendTimerCreate(payload map[string]any) {
 			}
 			a.Refresh()
 		})
-	}()
+	})
 }
 
 // ---- the page ----
@@ -650,8 +647,8 @@ func (a *App) timerList(c *ui.Context, p *Palette, timers []goTimer, ly, w float
 	ly += 60
 	for i := range timers {
 		t := &timers[i]
-		Panel(c, p, 0, ly, w, 88, s.Container)
-		sel := ui.ButtonBase(c).Absolute().Left(0).Top(ly).Width(w - 132).Height(88).
+		appleWidgetSurface(c, p, overviewRect{"", 0, ly, w, 86})
+		sel := ui.ButtonBase(c).Absolute().Left(0).Top(ly).Width(w - 132).Height(86).
 			Label("选择" + t.Name).Cursor(ui.CursorPointer)
 		hoverLayer(&sel, ui.Transparent, s.OnSurface, true)
 		if sel.Clicked() {
@@ -672,19 +669,19 @@ func (a *App) timerList(c *ui.Context, p *Palette, timers []goTimer, ly, w float
 		if t.Running {
 			running = s.Primary
 		}
-		ui.Box(c).Absolute().Left(16).Top(ly + 20).Width(4).Height(48).
-			Radius(2).Background(Col(running))
-		Label(c, t.Name, 36, ly+15, 16, s.OnSurface, true, w-340)
-		Label(c, t.subtitle(), 36, ly+49, 12, s.OnSurfaceVariant, false, w-340)
-		Label(c, t.clock(), w-300, ly+25, 26, s.Primary, true, 160)
+		ui.Box(c).Absolute().Left(18).Top(ly + 21).Width(4).Height(44).
+			Radius(2).Background(Col(running)).IgnoreInput(true)
+		Label(c, t.Name, 36, ly+16, 15.5, s.OnSurface, true, w-340)
+		Label(c, t.subtitle(), 36, ly+48, 12, s.OnSurfaceVariant, false, w-340)
+		Label(c, t.clock(), w-300, ly+25, 25, s.Primary, true, 160)
 		playIcon := "play_arrow"
 		if t.Running {
 			playIcon = "pause"
 		}
-		IconButton(c, p, "切换计时状态", w-120, ly+22, 44, 44, playIcon, false, true, func() {
+		IconButton(c, p, "切换计时状态", w-120, ly+21, 44, 44, playIcon, false, true, func() {
 			a.timerAction(t.ID, t.primaryAction())
 		})
-		IconButton(c, p, "移除计时器", w-64, ly+22, 44, 44, "delete", false, true, func() {
+		IconButton(c, p, "移除计时器", w-64, ly+21, 44, 44, "delete", false, true, func() {
 			a.timerAction(t.ID, "delete")
 		})
 		ly += 100

@@ -73,6 +73,19 @@ func (a *App) pickModuleDLL(id string) {
 // dialogViews renders whichever modal the page layer requested. Call from the root
 // after the page content so dialogs paint on top.
 func (a *App) dialogViews(c *ui.Context, w, h float32) {
+	if a.gestureTutorial != nil && a.gestureTutorial.mandatory {
+		a.gestureTutorialView(c, w, h)
+		return
+	}
+	if a.wechatWarning != nil {
+		a.wechatWarningView(c, w, h)
+		return
+	}
+	a.considerInstalledNotes()
+	if a.updateNotes != nil {
+		a.updateNotesView(c, w, h)
+		return
+	}
 	a.maybePromptCity()
 	if a.cityPrompt != nil {
 		a.cityPromptView(c)
@@ -100,7 +113,6 @@ func (a *App) dialogViews(c *ui.Context, w, h float32) {
 		a.fontPickerView(c, w, h)
 	}
 	a.gestureTutorialView(c, w, h)
-	a.showToast(c)
 }
 
 // StartSignature marks the wordmark cover start (called once on window ready).
@@ -110,16 +122,34 @@ func (a *App) StartSignature() {
 	a.Refresh()
 }
 
-// showToast surfaces a fresh toast through MyGo's own toast lane.
-func (a *App) showToast(c *ui.Context) {
-	if a.toast == "" {
-		return
+// toastView draws the transient message in MyGo's overlay lane, with the
+// palette's own surface. The default toast paints the theme's inverse colour,
+// which showed up as a black block in the light control center after a save.
+// The viewport is built even when the message just expired: MyGo keeps a
+// toast for four seconds, and handing it back to the default look in that
+// last second showed the black block again.
+func (a *App) toastView(c *ui.Context, p *Palette) {
+	if a.toast != "" {
+		if time.Since(a.toastAt) > 3*time.Second {
+			c.CloseToast(a.toast)
+			a.toast = ""
+		} else {
+			c.Toast(a.toast)
+		}
 	}
-	if time.Since(a.toastAt) > 3*time.Second {
-		a.toast = ""
-		return
-	}
-	c.Toast(a.toast)
+	s := &p.Scheme
+	ui.ToastViewportBase(c, func(viewport ui.Element, toasts []ui.Toast) {
+		viewport.Bottom(26).AlignItems(ui.Center).Gap(8)
+		for _, t := range toasts {
+			parts := ui.ToastBase(c, t)
+			box := parts.Root.Padding(10, 16).Radius(14).
+				Background(Col(s.Container)).Border(1, Col(s.OutlineVariant)).
+				Shadow(0, 6, 20, 0, ui.RGBA(0, 0, 0, 0.18))
+			box.Children(func() {
+				ui.Text(c, t.Title).Font(UIFont).FontSize(13).TextColor(Col(s.OnSurface))
+			})
+		}
+	})
 }
 
 // pushToast records a transient message for the next frame.

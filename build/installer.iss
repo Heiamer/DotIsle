@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "5.0.5"
+  #define AppVersion "5.2.1"
 #endif
 #ifndef AppId
   #define AppId "DotIsle"
@@ -26,7 +26,9 @@ UninstallDisplayName=点屿 DotIsle
 SetupIconFile=..\Assets\LyricIsland-v3.ico
 OutputDir={#OutputDir}
 OutputBaseFilename={#OutputBase}
-Compression=lzma2/max
+; One solid 64 MiB dictionary keeps repeated font and runtime data in reach.
+Compression=lzma2/ultra64
+LZMANumBlockThreads=1
 SolidCompression=yes
 CloseApplications=yes
 CloseApplicationsFilter=LyricIsland.exe,LyricIsland.Center.exe,LyricIsland.Settings.exe,LyricIsland.Updater.exe

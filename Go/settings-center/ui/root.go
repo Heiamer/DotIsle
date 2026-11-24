@@ -4,6 +4,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"dotisle/settings/island"
@@ -36,11 +37,14 @@ type App struct {
 	ConnErr        string
 	Page           int
 	SettingsTab    uint8
+	settingsPanel  settingsPanelState
 	IslandTab      uint8
 	Scroll         [7]ui.ScrollState
 	contentH       [7]float32 // measured page content height, drives the scroll bounds
 	Palette        Palette
 	Win            *mygo.Window
+	ShowCenter     func() // Restores the resident window or recreates it after idle release.
+	asyncRequests  atomic.Int32
 	overview       overviewState
 	layout         prefs.CenterLayout
 	layoutLoaded   bool
@@ -54,30 +58,39 @@ type App struct {
 	workflowDraftError string
 
 	// Widgets page: per-kind size choices (model.widget_sizes), default medium.
-	widgetSizes     map[string]string
-	musicEditor     *musicEditor
-	gestureTutorial *gestureTutorial
-	curveDraft      *motionCurveDraft
-	widgetEditor    *widgetEditorState
-	overviewEditor  *overviewEditorState
-	widgetExamples  *App
+	widgetSizes      map[string]string
+	musicEditor      *musicEditor
+	progressPreview  progressPreviewState
+	gestureTutorial  *gestureTutorial
+	tutorialRequired bool
+	curveDraft       *motionCurveDraft
+	widgetEditor     *widgetEditorState
+	overviewEditor   *overviewEditorState
+	widgetExamples   *App
+	reminderFields   [2]leafEditField
 
 	// Open color picker dialog and the toast message (fresh for a few seconds).
 	picker         *pickerState
 	toast          string
 	toastAt        time.Time
+	onCommand      func(name string, value any) // 仅用于无窗口单元测试拦截设置变更指令
 	frameNow       time.Time
 	contentMounted bool
 
 	// Dialog switches owned by the page layer.
-	showQuickReminder bool
-	showRuleDialog    bool
-	ruleEditID        string
-	fontPicker        *fontPickerState
-	EnableCityPrompt  bool
-	centerVisible     bool
-	cityPromptAsked   bool
-	cityPrompt        *cityPromptState
+	showQuickReminder   bool
+	showRuleDialog      bool
+	ruleEditID          string
+	fontPicker          *fontPickerState
+	EnableCityPrompt    bool
+	centerVisible       bool
+	cityPromptAsked     bool
+	cityPrompt          *cityPromptState
+	wechatWarning       *wechatWarning
+	updateNotes         *updateNotes
+	notesCheckedVersion string
+	updateReviewLoading bool
+	updateDownloading   bool
 
 	// Command palette (Ctrl+K).
 	paletteOpen     bool
@@ -87,16 +100,23 @@ type App struct {
 	// Opening wordmark cover (brand_signature), started when the window shows.
 	signatureStart          time.Time
 	signaturePending        bool
+	openingCanvas           *ui.Canvas
+	openingLightValid       bool
+	openingLightDark        bool
+	openingLightBase        uint32
+	openingLightAccent      uint32
+	openingLightProg        float32
 	startupSettingsLoaded   bool
 	startupSignatureEnabled bool
 	backdropWindow          uintptr
 	backdropDark            bool
 	backdropChecked         bool
 	backdropMica            bool
+	lightField              lightFieldState
 }
 
 // scrollY is the current page's scroll offset (gallery culling).
-func (a *App) scrollY() float32 { return a.Scroll[a.Page].Y }
+func (a *App) scrollY() float32 { return a.Scroll[a.centerPage()].Y }
 
 // traceEvent appends one debug line when DOTISLE_TRACE_UI is set.
 func traceEvent(format string, args ...any) {
@@ -160,38 +180,34 @@ func (a *App) applyPendingPage() {
 	a.lastPending = requestKey
 	a.navigationOpen = false
 	a.cancelOverviewGesture()
-	if a.Win != nil {
-		if a.Win.IsMinimized() {
-			a.Win.Restore()
-		}
-		a.Win.Show()
-	}
 	switch page {
 	case "timers":
-		a.Page = PageFocus
+		a.navigate(PageFocus)
 	case "todos":
-		a.Page = PageTodos
+		a.navigate(PageTodos)
 	case "overview":
-		a.Page = PageHome
+		a.navigate(PageHome)
+	case "gestureTutorial":
+		a.forceGestureTutorial()
 	case "plugins":
-		a.Page = PagePlugins
+		a.navigate(PagePlugins)
 	case "widgets":
-		a.Page = PageWidgets
+		a.navigate(PageWidgets)
 	case "notifications":
-		a.Page = PageNotifications
+		a.navigate(PageNotifications)
 	case "island":
-		a.Page = PageSettings
-		a.SettingsTab = 128
-		a.IslandTab = 0
+		a.openSettings(TabIslandFirst)
+	case "layout":
+		a.openSettings(TabLayoutEditor)
 	case "music", "lyrics":
-		a.Page = PageSettings
-		a.SettingsTab = 241
+		a.openSettings(241)
 	case "about", "updates", "update":
-		a.Page = PageSettings
-		a.SettingsTab = 3
+		a.openSettings(3)
 	default:
-		a.Page = PageSettings
-		a.SettingsTab = TabRoot
+		a.openSettings(TabRoot)
+	}
+	if a.ShowCenter != nil {
+		a.ShowCenter()
 	}
 	if request, ok := a.State["pendingCenterAction"].(map[string]any); ok {
 		id := stateString(request, "", "id")
@@ -200,6 +216,8 @@ func (a *App) applyPendingPage() {
 			a.openTodoDialog(id)
 		case "widgetConfigure":
 			a.openWidgetEditor(id)
+		case "updateReview":
+			a.openUpdateReview()
 		}
 	}
 	a.command("pageSeen", map[string]any{"requestId": a.State["pendingRequestId"]})
@@ -220,6 +238,7 @@ func (a *App) ApplyPacket(state map[string]any, connected bool, connErr string) 
 			a.Prefs.Island = enabled
 		}
 		a.applyPendingPage()
+		a.syncGesturePractice(state)
 	}
 	a.Connected = connected
 	a.ConnErr = connErr
@@ -249,11 +268,27 @@ func (a *App) playing() bool {
 	return stateBool(a.State, "isPlaying")
 }
 
-// Refresh notifies the window that state changed (called from the pump goroutine).
+// Refresh only queues a frame for a visible visit, never for the tray host.
 func (a *App) Refresh() {
-	if a.Win != nil {
+	if a.Win != nil && (a.centerVisible || a.ShowCenter == nil) {
 		a.Win.Invalidate()
 	}
+}
+
+// applyAsync completes a request on the UI thread even if the window was released.
+func (a *App) applyAsync(fn func()) {
+	mygo.RunOnMain(func() {
+		fn()
+		a.Refresh()
+	})
+}
+
+func (a *App) startAsync(fn func()) {
+	a.asyncRequests.Add(1)
+	go func() {
+		defer a.asyncRequests.Add(-1)
+		fn()
+	}()
 }
 
 func (a *App) settings() map[string]any {
@@ -270,29 +305,39 @@ func (a *App) pref(key string) any { return a.settings()[key] }
 
 // navigate switches the top-level page (Action::Navigate).
 func (a *App) navigate(page int) {
+	if page == PageSettings {
+		a.openSettings(TabRoot)
+		return
+	}
 	traceEvent("navigate -> %d", page)
 	a.navigationOpen = false
 	a.cancelOverviewGesture()
+	if a.Page == PageSettings {
+		a.settingsPanel = settingsPanelState{}
+	}
 	a.Page = page
 }
 
-// openSettings routes to a settings tab (Action::SettingsTab), normalizing the
-// destination aliases exactly like settings_hub::destination.
+// The main window owns a single settings panel. Generic open requests bring
+// the existing panel back without losing its route, search or scroll position.
 func (a *App) openSettings(tab uint8) {
-	a.navigationOpen = false
+	a.navigationOpen, a.paletteOpen = false, false
 	a.cancelOverviewGesture()
-	switch tab {
-	case 243:
-		tab = 8
-	case 244:
-		tab = 4
-	case 245:
-		tab = 3
-	case 246:
-		tab = 9
+	if a.Page == PageSettings && tab == TabRoot {
+		return
 	}
-	a.Page = PageSettings
-	a.SettingsTab = tab
+	_, section := settingLocation(settingLeaf(tab))
+	tab = section.tab
+	if a.Page != PageSettings {
+		a.settingsPanel = settingsPanelState{returnPage: a.Page}
+	}
+	if a.Page != PageSettings || a.SettingsTab != tab {
+		a.settingsPanel.scroll, a.settingsPanel.bodyHeight = ui.ScrollState{}, 0
+	}
+	if a.settingsPanel.query != "" {
+		a.settingsPanel.query, a.settingsPanel.navScroll = "", ui.ScrollState{}
+	}
+	a.Page, a.SettingsTab = PageSettings, tab
 	if tab >= TabIslandFirst && tab <= TabIslandLast {
 		a.IslandTab = tab - TabIslandFirst
 	}
@@ -337,6 +382,10 @@ func (a *App) View(c *ui.Context) {
 			logPanic(r)
 		}
 	}()
+	if a.musicEditor != nil && (!a.onLayoutEditor() || !a.Connected) {
+		a.musicEditor.Preview = nil
+		a.musicEditor.PreviewKey = layoutPreviewKey{}
+	}
 	a.loadOverview()
 	a.loadCenterLayout()
 	if a.Page != PageHome || a.overview.config.View != "cards" || a.overview.manage {
@@ -380,44 +429,86 @@ func (a *App) View(c *ui.Context) {
 		opaqueOpening := a.prepareOpening(c)
 		if !opaqueOpening {
 			page := ui.Box(c).Key("page-surface").Absolute().Left(0).Top(0).Width(w).Height(h)
-			if a.navigationOpen {
+			if a.navigationOpen || a.Page == PageSettings {
 				page.IgnoreInput(true).AccessHidden(true).Disabled(true).DimDisabled(false)
 			}
 			page.Children(func() {
-				if !a.materialActive(c) {
+				if !a.materialActive(c) || opticalReduced(c, &a.Palette) {
 					ui.Box(c).Fill().Background(Col(s.Surface)).IgnoreInput(true)
-				} else if a.leafBool("ControlCenterDynamicColorEnabled", false) {
-					ui.Box(c).Absolute().Fill().Background(AlphaCol(s.Surface, .78)).IgnoreInput(true)
+				}
+				a.paintLightField(c, w, h)
+				if a.materialActive(c) && a.leafBool("ControlCenterDynamicColorEnabled", false) {
+					ui.Box(c).Absolute().Fill().Background(AlphaCol(s.Surface, .42)).IgnoreInput(true)
 				}
 				a.paintBackground(c, w, h)
 				a.header(c, w, h)
 				a.content(c, w, h)
-				a.dialogViews(c, w, h)
-				a.paletteView(c, w, h)
-				a.overviewManager(c)
+				if a.Page != PageSettings {
+					a.paletteView(c, w, h)
+					a.overviewManager(c)
+				}
 			})
 		}
-		a.titlebar(c, w, h)
+		if a.Page != PageSettings {
+			a.titlebar(c, w, h)
+		}
 		if !opaqueOpening {
 			a.navigation(c, w, h)
+			a.settingsPanelView(c, w, h)
+			a.dialogViews(c, w, h)
+			a.toastView(c, &a.Palette)
 		}
 		a.opening(c, w, h)
 	})
 }
 
-// titlebar is the 56px strip: drag area plus the caption buttons at the right
-// (views.rs caption_button: 46×56 hit, 12px optical box, 1.4px stroke).
+func (a *App) titleGlassButton(c *ui.Context, label string, x, y, w, h float32, iconName string, onClick func()) {
+	s := &a.Palette.Scheme
+	e := ui.ButtonBase(c).Absolute().Left(x).Top(y).Width(w).Height(h).
+		Justify(ui.Center).AlignItems(ui.Center).Label(label).Cursor(ui.CursorPointer)
+	if !a.Palette.HighContrast {
+		bg := AlphaCol(0xFFFFFF, 0.62)
+		border := AlphaCol(0x1E293B, 0.11)
+		rim := AlphaCol(0xFFFFFF, 0.96)
+		if a.Palette.Dark {
+			bg = AlphaCol(0xFFFFFF, 0.07)
+			border = AlphaCol(0xFFFFFF, 0.11)
+			rim = AlphaCol(0xFFFFFF, 0.14)
+		}
+		if e.Hovered() {
+			if a.Palette.Dark {
+				bg = AlphaCol(0xFFFFFF, 0.13)
+			} else {
+				bg = AlphaCol(0xFFFFFF, 0.84)
+			}
+		}
+		e.Background(bg).Radius(12).Border(1, border).
+			BorderConicGradient(opticalFresnelConic(a.Palette.Dark)).
+			InsetShadow(0, 1, 0, 0, rim)
+		elevationStyle(&e, &a.Palette, elevationControl)
+	} else {
+		e.Background(Col(s.Container)).Radius(12).Border(1, Col(s.Outline))
+	}
+	pressMotion(c, &a.Palette, &e, true)
+	if onClick != nil && e.Clicked() {
+		onClick()
+	}
+	e.Children(func() {
+		ui.Icon(c, Symbol(iconName)).FontSize(18).TextColor(Col(s.OnSurface))
+	})
+}
+
+// titlebar is the 52px drag strip plus optical glass navigation & caption controls.
 func (a *App) titlebar(c *ui.Context, w, h float32) {
 	s := &a.Palette.Scheme
 	side := a.sidebarWidth(w)
 	bar := ui.Box(c).Absolute().Left(side).Top(0).Width(w - side).Height(TitlebarH).DragWindow()
-	if !a.materialActive(c) {
+	if opticalReduced(c, &a.Palette) {
 		bar.Background(Col(s.Surface))
 	}
-	IconButton(c, &a.Palette, "打开导航", 12, 8, 36, 36, "menu", false, true, func() { a.ToggleNavigation() })
+	a.titleGlassButton(c, "打开导航", 12, 8, 36, 36, "menu", func() { a.ToggleNavigation() })
 	themeX := w - 142
-	IconButton(c, &a.Palette, "切换明暗主题", themeX, 8, 34, 34,
-		darkModeIcon(a.Palette.Dark), false, true, a.toggleDark)
+	a.titleGlassButton(c, "切换明暗主题", themeX, 8, 34, 34, darkModeIcon(a.Palette.Dark), a.toggleDark)
 	a.captionButton(c, w-92, "最小化窗口", "minimize", false, func() {
 		if a.Win != nil {
 			a.Win.Minimize()
@@ -430,7 +521,7 @@ func (a *App) titlebar(c *ui.Context, w, h float32) {
 	})
 }
 
-// captionButton draws one 46×56 window control with a 12px optical glyph.
+// captionButton draws one 46×52 window control with glass hover highlight.
 func (a *App) captionButton(c *ui.Context, x float32, label, iconName string, close bool, onClick func()) {
 	s := &a.Palette.Scheme
 	e := ui.ButtonBase(c).Absolute().Left(x).Top(0).Width(46).Height(TitlebarH).
@@ -438,10 +529,14 @@ func (a *App) captionButton(c *ui.Context, x float32, label, iconName string, cl
 	fg := Col(s.OnSurfaceVariant)
 	if e.Hovered() {
 		if close {
-			e.Background(Col(0xC42B1C))
+			e.Background(AlphaCol(0xE11D48, 0.88))
 			fg = Col(0xFFFFFF)
+		} else if a.Palette.Dark {
+			e.Background(AlphaCol(0xFFFFFF, 0.09))
+			fg = Col(s.OnSurface)
 		} else {
-			e.Background(Col(s.High))
+			e.Background(AlphaCol(0x111827, 0.05))
+			fg = Col(s.OnSurface)
 		}
 	}
 	if onClick != nil && e.Clicked() {
@@ -452,32 +547,62 @@ func (a *App) captionButton(c *ui.Context, x float32, label, iconName string, cl
 	})
 }
 
-// header is the page title (34px bold at y=64) and description (13px at y=110).
+// header is the minimalist architectural page title and floating search bar.
 func (a *App) header(c *ui.Context, w, h float32) {
 	s := &a.Palette.Scheme
 	x := a.sidebarWidth(w) + 32
-	title, desc := Pages[a.Page], pageDescription(a.Page)
-	if a.Page == PageHome {
+	page := a.centerPage()
+	title, desc := Pages[page], pageDescription(page)
+	if page == PageHome {
 		title, desc = "概览", "音乐、计时与待办事项"
 	}
-	Label(c, title, x, TitleY, 20, s.OnSurface, true, w-x-220)
-	Label(c, desc, x, SubtitleY, 13, s.OnSurfaceVariant, false, w-x-210)
+	Label(c, title, x, TitleY-3, 24, s.OnSurface, true, w-x-220)
+	Label(c, desc, x, SubtitleY+2, 13, s.OnSurfaceVariant, false, w-x-210)
 	searchX := w - 252
-	if a.Page == PageTodos {
+	if page == PageTodos {
 		searchX = w - 430
 		Button(c, &a.Palette, "新建待办", w-178, TodoActionY, 146, 40, "新建待办", "add", false, true, func() { a.openTodoDialog("") })
 	}
 	search := ui.ButtonBase(c).Absolute().Left(searchX).Top(TodoActionY).Width(220).Height(40).
-		Radius(FieldRadius).Background(Col(s.Container)).
 		Label("搜索与跳转").Cursor(ui.CursorPointer).Hidden(a.paletteOpen)
-	surfaceStyle(&search, &a.Palette, s.Container, FieldRadius)
-	hoverLayer(&search, Col(s.Container), s.OnSurface, true)
+	if !a.Palette.HighContrast {
+		bg := AlphaCol(0xFFFFFF, 0.62)
+		rim := AlphaCol(0xFFFFFF, 0.96)
+		if a.Palette.Dark {
+			bg = AlphaCol(0xFFFFFF, 0.07)
+			rim = AlphaCol(0xFFFFFF, 0.12)
+		}
+		if search.Hovered() {
+			if a.Palette.Dark {
+				bg = AlphaCol(0xFFFFFF, 0.11)
+			} else {
+				bg = AlphaCol(0xFFFFFF, 0.84)
+			}
+		}
+		search.Background(bg).Radius(14).Border(1, AlphaCol(0xFFFFFF, 0.82)).
+			BorderConicGradient(opticalFresnelConic(a.Palette.Dark)).
+			InsetShadow(0, 1, 0, 0, rim)
+		elevationStyle(&search, &a.Palette, elevationControl)
+	} else {
+		surfaceStyle(&search, &a.Palette, s.Container, FieldRadius)
+	}
 	if search.Clicked() {
 		a.togglePalette()
 	}
 	search.Children(func() {
-		Icon(c, "search", 14, 11, 18, s.OnSurfaceVariant)
-		Label(c, "搜索...", 42, 12, 13, s.OnSurfaceVariant, false, 100)
+		Icon(c, "search", 14, 11, 17, s.OnSurfaceVariant)
+		Label(c, "搜索...", 40, 11, 13, s.OnSurfaceVariant, false, 100)
+		if !opticalReduced(c, &a.Palette) {
+			kbdBg := AlphaCol(0x111827, 0.045)
+			kbdBorder := AlphaCol(0x111827, 0.06)
+			if a.Palette.Dark {
+				kbdBg = AlphaCol(0xFFFFFF, 0.07)
+				kbdBorder = AlphaCol(0xFFFFFF, 0.10)
+			}
+			ui.Box(c).Absolute().Left(154).Top(9).Width(52).Height(22).Radius(7).
+				Background(kbdBg).Border(1, kbdBorder).IgnoreInput(true)
+			CenteredText(c, "Ctrl K", 154, 9, 52, 22, 11, s.OnSurfaceVariant, false).IgnoreInput(true)
+		}
 	})
 }
 
@@ -519,8 +644,9 @@ func (a *App) content(c *ui.Context, w, h float32) {
 	clipH = float64(clipBottom - clipTop)
 	side := a.sidebarWidth(w)
 	bodyW := w - side - 56
-	route := fmt.Sprintf("content-%d-%d", a.Page, a.SettingsTab)
-	if a.Page == PageHome {
+	base := a.centerPage()
+	route := fmt.Sprintf("content-%d", base)
+	if base == PageHome {
 		route += "-" + a.overview.config.View
 	}
 	body := ui.Box(c).Key(route).Absolute().Left(side + 28).Top(clipTop).Width(bodyW).Height(clipBottom - clipTop)
@@ -528,20 +654,21 @@ func (a *App) content(c *ui.Context, w, h float32) {
 	if a.contentMounted {
 		initial = 0
 	}
-	entranceMotion(c, &a.Palette, &body, 12, motionPage, initial)
+	progress := appTweenValue(c, body, "entrance", initial, 1, motionPage, a.Palette.ReducedMotion)
+	body.Translate(0, 12*(1-progress))
 	a.contentMounted = true
 	body.Clip()
 	body.Children(func() {
-		if a.Page == PageHome && a.overview.config.View == "scroll" {
+		if base == PageHome && a.overview.config.View == "scroll" {
 			a.overviewPage(c, 4, 9, bodyW-8)
 			return
 		}
-		scroller := ui.Scroll(c).Scrollbars(false).Fill().TrackScroll(&a.Scroll[a.Page])
+		scroller := ui.Scroll(c).Scrollbars(false).Fill().TrackScroll(&a.Scroll[base])
 		scroller.Children(func() {
-			page := ui.Box(c).FillWidth().Height(a.contentH[a.Page])
+			page := ui.Box(c).FillWidth().Height(a.contentH[base])
 			page.Children(func() {
-				if measured := a.pageBody(c, bodyW+64) + 20; measured != a.contentH[a.Page] {
-					a.contentH[a.Page] = measured
+				if measured := a.pageBody(c, bodyW+64, base) + 20; measured != a.contentH[base] {
+					a.contentH[base] = measured
 					c.AnimationFrame()
 				}
 			})
@@ -550,10 +677,10 @@ func (a *App) content(c *ui.Context, w, h float32) {
 }
 
 // pageBody measures each page so every action remains reachable in small windows.
-func (a *App) pageBody(c *ui.Context, w float32) float32 {
+func (a *App) pageBody(c *ui.Context, w float32, page int) float32 {
 	// Rust: x=36 in window coords (clip at 32), y = content_top + 9 - scroll.
 	x, y := float32(4), float32(9)
-	switch a.Page {
+	switch page {
 	case PageHome:
 		return a.overviewPage(c, x, y, w-72)
 	case PagePlugins:
@@ -566,8 +693,6 @@ func (a *App) pageBody(c *ui.Context, w float32) float32 {
 		return a.todosPage(c, x, y, w-72)
 	case PageNotifications:
 		return a.notificationsPage(c, x, y, w-72)
-	case PageSettings:
-		return a.settingsPage(c, x, y, w-72)
 	}
 	return 0
 }

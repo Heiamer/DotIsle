@@ -10,7 +10,7 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-var materialOptions = [2][2]string{{"亚克力", "Acrylic"}, {"玻璃", "Glass"}}
+var materialOptions = [2][2]string{{"曜光玻璃", "LightField"}, {"亚克力", "Acrylic"}}
 
 // islandSetting reads one island setting with its default. Motion/Spring keys are
 // flat wire names but live nested in the state map (settings.json stores a Motion
@@ -58,21 +58,25 @@ func (a *App) islandFloat(key string, def float64) float64 {
 
 // islandHeading is the 21px section title.
 func (a *App) islandHeading(c *ui.Context, p *Palette, title string, x, y, w float32) float32 {
-	Label(c, title, x, y+4, 16, p.Scheme.OnSurface, true, w)
-	return y + 44
+	Label(c, title, x+16, y+3, 14, p.Scheme.OnSurfaceVariant, true, w-32)
+	return y + 31
 }
 
 // islandToggles is the toggle panel: rows of 76 DIP with the switch at the right.
 func (a *App) islandToggles(c *ui.Context, p *Palette, x, y, w float32, rows []islandToggleRow) float32 {
 	s := &p.Scheme
-	Panel(c, p, x, y, w, float32(len(rows))*76+12, s.Container)
+	settingCard(c, x, y, w, float32(len(rows))*settingToggleH, s.Container)
 	for i, row := range rows {
 		on := a.islandBool(row.key, row.def)
-		ToggleRow(c, p, row.key, x+24, y+6+float32(i)*76, w-48, row.title, row.detail, on, func() {
+		top := y + float32(i)*settingToggleH
+		if i != 0 {
+			settingSeparator(c, p, x+16, top, w-32)
+		}
+		settingToggleRow(c, p, row.key, row.title, row.detail, x+16, top, w-32, on, func() {
 			a.pushNative(row.key, !on)
 		})
 	}
-	return y + float32(len(rows))*76 + 28
+	return y + float32(len(rows))*settingToggleH + 16
 }
 
 type islandToggleRow struct {
@@ -83,7 +87,7 @@ type islandToggleRow struct {
 // islandChoices is the choice panel: title plus full-width chips.
 func (a *App) islandChoices(c *ui.Context, p *Palette, x, y, w float32, title, key, def string, options [][2]string) float32 {
 	s := &p.Scheme
-	Panel(c, p, x, y, w, 108, s.Container)
+	settingCard(c, x, y, w, 108, s.Container)
 	Label(c, title, x+24, y+15, 15, s.OnSurface, true, w-48)
 	selected := a.islandString(key, def)
 	labels := make([]string, len(options))
@@ -94,14 +98,14 @@ func (a *App) islandChoices(c *ui.Context, p *Palette, x, y, w float32, title, k
 			index = i
 		}
 	}
-	Segmented(c, p, x+24, y+52, w-48, labels, index, func(i int) { a.pushNative(key, options[i][1]) })
+	SegmentedKeyed(c, p, key, x+24, y+52, w-48, labels, index, func(i int) { a.pushNative(key, options[i][1]) })
 	return y + 124
 }
 
 // islandRange is the slider row: title, live value at the right, slider below.
 func (a *App) islandRange(c *ui.Context, p *Palette, x, y, w float32, title, key string, def, min, max float64, unit string) float32 {
 	s := &p.Scheme
-	Panel(c, p, x, y, w, 96, s.Container)
+	settingCard(c, x, y, w, 96, s.Container)
 	value := a.islandFloat(key, def)
 	Label(c, title, x+24, y+14, 15, s.OnSurface, false, w-160)
 	// While dragging, the live value mirrors the knob (settings_slider.rs trailing label).
@@ -127,7 +131,7 @@ func trimFloat(v float64) string {
 // islandColorRow is the fixed-color row: swatch circle + hex button.
 func (a *App) islandColorRow(c *ui.Context, p *Palette, x, y, w float32, title, key, def string) float32 {
 	s := &p.Scheme
-	Panel(c, p, x, y, w, 74, s.Container)
+	settingCard(c, x, y, w, 74, s.Container)
 	value := a.islandString(key, def)
 	Label(c, title, x+24, y+24, 15, s.OnSurface, false, w-240)
 	hex, ok := parseHexColor(value)
@@ -145,8 +149,8 @@ func (a *App) islandColorRow(c *ui.Context, p *Palette, x, y, w float32, title, 
 }
 
 // islandSettingsBody renders one island tab (island_settings.rs render).
-func (a *App) islandSettingsBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
-	switch a.IslandTab {
+func (a *App) islandSettingsBody(c *ui.Context, p *Palette, x, y, w float32, tab uint8) float32 {
+	switch tab {
 	case 0:
 		return a.islandTabSize(c, p, x, y, w)
 	case 1:
@@ -189,7 +193,7 @@ func (a *App) islandTabSize(c *ui.Context, p *Palette, x, y, w float32) float32 
 	if family != defaultIslandFont {
 		familyLabel = family
 	}
-	Panel(c, p, x, y, w, 150, p.Scheme.Container)
+	settingCard(c, x, y, w, 150, p.Scheme.Container)
 	Label(c, "灵动岛字体", x+24, y+14, 15, p.Scheme.OnSurface, true, 200)
 	Label(c, familyLabel, x+w-262, y+14, 12, p.Scheme.OnSurfaceVariant, false, 240)
 	ui.Box(c).Absolute().Left(x + 24).Top(y + 42).Width(w - 48).Height(40).
@@ -216,20 +220,23 @@ func (a *App) islandTabSize(c *ui.Context, p *Palette, x, y, w float32) float32 
 	return y
 }
 
-// musicLayoutChoices draws the three layout preview cards (music_layout_choices).
+// musicLayoutChoices draws the three redesigned layout preview cards.
 func (a *App) musicLayoutChoices(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	s := &p.Scheme
 	options := [][3]string{
-		{"并排", "SideBySide", "封面与歌词并排"},
-		{"分离", "Separated", "信息与歌词上下分区"},
-		{"歌词居中", "LyricFocus", "居中的独立歌词区"},
+		{"光屿画廊", "SideBySide", "左翼大唱片与中缝曜光"},
+		{"流光分栏", "Separated", "电影顶眉与宽幕歌词"},
+		{"星幕歌词", "LyricFocus", "极简中轴居中大歌词"},
 	}
 	selected := a.islandString("MusicExpandedLayout", "SideBySide")
+	if selected == "FluidCloud" {
+		selected = "SideBySide"
+	}
 	cw := (w - 24) / 3
 	for i, opt := range options {
 		cardX := x + float32(i)*(cw+12)
 		on := selected == opt[1]
-		card := ui.ButtonBase(c).Absolute().Left(cardX).Top(y).Width(cw).Height(164).
+		card := ui.ButtonBase(c).Absolute().Left(cardX).Top(y).Width(cw).Height(156).
 			Radius(16).Label("选择" + opt[0])
 		if on {
 			card.Background(Col(s.PrimaryContainer)).Border(2, Col(s.Primary))
@@ -239,29 +246,33 @@ func (a *App) musicLayoutChoices(c *ui.Context, p *Palette, x, y, w float32) flo
 		if card.Clicked() {
 			a.pushNative("MusicExpandedLayout", opt[1])
 		}
-		// The mini layout sketch: cover block plus lyric lines.
+		// 呼应三套重制桌面端布局的结构示意图
 		card.Children(func() {
 			ink := s.OnSurface
 			switch opt[1] {
 			case "SideBySide":
-				ui.Box(c).Absolute().Left(12).Top(16).Width(40).Height(40).Radius(8).Background(Col(s.High))
-				ui.Box(c).Absolute().Left(60).Top(20).Width(cw - 80).Height(7).Radius(3.5).Background(Col(ink))
-				ui.Box(c).Absolute().Left(60).Top(34).Width(cw - 96).Height(6).Radius(3).Background(Col(s.OutlineVariant))
-				ui.Box(c).Absolute().Left(60).Top(58).Width(cw - 80).Height(7).Radius(3.5).Background(Col(ink))
+				ui.Box(c).Absolute().Left(12).Top(14).Width(42).Height(42).Radius(9).Background(Col(s.High))
+				ui.Box(c).Absolute().Left(12).Top(60).Width(30).Height(4).Radius(2).Background(Col(s.Primary))
+				ui.Box(c).Absolute().Left(62).Top(16).Width(cw - 86).Height(7).Radius(3.5).Background(Col(ink))
+				ui.Box(c).Absolute().Left(60).Top(34).Width(2).Height(18).Radius(1).Background(Col(s.Primary))
+				ui.Box(c).Absolute().Left(66).Top(36).Width(cw - 80).Height(7).Radius(3.5).Background(Col(ink))
 			case "Separated":
-				ui.Box(c).Absolute().Left(16).Top(14).Width(cw - 32).Height(8).Radius(4).Background(Col(ink))
-				ui.Box(c).Absolute().Left(16).Top(52).Width(cw - 32).Height(8).Radius(4).Background(Col(ink))
-				ui.Box(c).Absolute().Left(16).Top(88).Width(cw - 64).Height(6).Radius(3).Background(Col(s.OutlineVariant))
+				ui.Box(c).Absolute().Left(14).Top(14).Width(24).Height(24).Radius(5).Background(Col(s.High))
+				ui.Box(c).Absolute().Left(45).Top(17).Width(cw - 76).Height(6).Radius(3).Background(Col(ink))
+				ui.Box(c).Absolute().Left(45).Top(28).Width(cw - 96).Height(5).Radius(2.5).Background(Col(s.OutlineVariant))
+				ui.Box(c).Absolute().Left(14).Top(50).Width(cw - 28).Height(8).Radius(4).Background(Col(ink))
+				ui.Box(c).Absolute().Left(14).Top(66).Width(cw - 64).Height(6).Radius(3).Background(Col(s.OutlineVariant))
 			default:
-				ui.Box(c).Absolute().Left(cw/2 - 36).Top(12).Width(72).Height(30).Radius(6).Background(Col(s.High))
-				ui.Box(c).Absolute().Left(20).Top(58).Width(cw - 40).Height(8).Radius(4).Background(Col(ink))
-				ui.Box(c).Absolute().Left(20).Top(80).Width(cw - 72).Height(6).Radius(3).Background(Col(s.OutlineVariant))
+				ui.Box(c).Absolute().Left(cw/2 - 38).Top(14).Width(22).Height(22).Radius(5).Background(Col(s.High))
+				ui.Box(c).Absolute().Left(cw/2 - 10).Top(22).Width(48).Height(6).Radius(3).Background(Col(s.OutlineVariant))
+				ui.Box(c).Absolute().Left(18).Top(50).Width(cw - 36).Height(9).Radius(4.5).Background(Col(ink))
+				ui.Box(c).Absolute().Left(32).Top(68).Width(cw - 64).Height(6).Radius(3).Background(Col(s.OutlineVariant))
 			}
-			Label(c, opt[0], 16, 112, 13, s.OnSurface, true, cw-32)
-			Label(c, opt[2], 16, 138, 11, s.OnSurfaceVariant, false, cw-32)
+			Label(c, opt[0], 16, 102, 13, s.OnSurface, true, cw-32)
+			Label(c, opt[2], 16, 126, 11, s.OnSurfaceVariant, false, cw-32)
 		})
 	}
-	return y + 180
+	return y + 172
 }
 
 // islandTabMaterial is tab 129: 材质与取色.
@@ -277,23 +288,27 @@ func (a *App) islandTabMaterial(c *ui.Context, p *Palette, x, y, w float32) floa
 	y += 64
 	y = a.islandToggles(c, p, x, y, w, []islandToggleRow{
 		{"胶囊与迷你细条动态色彩", "收起形态的独立开关，与展开卡片互不影响。", "CoverBackground", false},
-		{"展开卡片动态色彩", "从选定来源生成背景、文字与组件配色。", "ExpandedMonetEnabled", true},
+		{"展开卡片动态色彩", "从选定来源生成强调色与主题氛围。", "ExpandedMonetEnabled", true},
 		{"歌词进度涂色", "跟随演唱进度填充原文歌词。", "WordHighlight", true},
 		{"歌词填色动态色彩", "使用同一来源的强调色，与展开卡片背景独立；关闭后使用下方自定填色。", "LyricColorFromCover", true},
-		{"封面磨砂叠层", "在亚克力展开卡片中叠加模糊封面。", "ExpandedCoverOverlay", true},
+		{"封面磨砂叠层", "在亚克力与曜光玻璃展开卡片中叠加高级氛围色场封面。", "ExpandedCoverOverlay", false},
 	})
 	y = a.islandHeading(c, p, "固定颜色", x, y, w)
-	y = a.islandColorRow(c, p, x, y, w, "展开卡片文字", "ExpandedTextColor", "#F4F6F8")
-	y = a.islandColorRow(c, p, x, y, w, "展开卡片组件", "ExpandedComponentColor", "#B1E8D1")
-	y = a.islandColorRow(c, p, x, y, w, "歌词进度高亮", "LyricProgressColor", "#A9E6CD")
-	y = a.islandHeading(c, p, "音乐卡片材质", x, y, w)
-	for _, row := range [][2]string{{"经典胶囊", "ClassicCapsuleMaterial"}, {"展开卡片 · 两种模式共用", "IslandMaterial"}, {"迷你细条", "MiniMaterial"}} {
-		y = a.islandChoices(c, p, x, y, w, row[0], row[1], "Acrylic", materialOptions[:])
+	y = a.islandColorRow(c, p, x, y, w, "展开卡片文字", "ExpandedTextColor", "#FFFFFF")
+	y = a.islandColorRow(c, p, x, y, w, "展开卡片组件", "ExpandedComponentColor", "#FFFFFF")
+	y = a.islandColorRow(c, p, x, y, w, "歌词进度高亮", "LyricProgressColor", "#DDF6FF")
+	y = a.islandHeading(c, p, "卡片与弹窗材质", x, y, w)
+	for _, row := range []struct{ title, key, def string }{
+		{"经典胶囊", "ClassicCapsuleMaterial", "LightField"},
+		{"展开卡片 · 两种模式共用", "IslandMaterial", "LightField"},
+		{"迷你细条", "MiniMaterial", "LightField"},
+		{"弹窗与提醒（通知 / 系统提示 / 验证码）", "PopupMaterial", "Acrylic"},
+	} {
+		y = a.islandChoices(c, p, x, y, w, row.title, row.key, row.def, materialOptions[:])
 	}
-	y = a.islandToggles(c, p, x, y, w, []islandToggleRow{
-		{"玻璃边缘折射", "沿外壳边缘轻微偏折背景，中央内容保持清晰。", "GlassRefractionEnabled", true},
-		{"迷你玻璃自动对比", "根据背景调整细条文字的明暗。", "MiniAutoContrast", true},
-	})
+	y = a.islandToggles(c, p, x, y, w, []islandToggleRow{})
+	y = a.islandHeading(c, p, "灵动岛透明度", x, y, w)
+	y = a.islandRange(c, p, x, y, w, "灵动岛整体透明度", "IslandOpacity", 100, 25, 100, "%")
 	y = a.islandHeading(c, p, "亚克力叠层", x, y, w)
 	y = a.islandRange(c, p, x, y, w, "展开卡片磨砂", "AcrylicCardFrost", 40, 0, 100, "%")
 	y = a.islandRange(c, p, x, y, w, "展开卡片叠层强度", "AcrylicCardOpacity", 60, 0, 100, "%")
@@ -305,20 +320,26 @@ func (a *App) islandTabMaterial(c *ui.Context, p *Palette, x, y, w float32) floa
 // islandTabGestures is tab 130: 交互与系统提示.
 func (a *App) islandTabGestures(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	s := &p.Scheme
-	Panel(c, p, x, y, w, 104, s.PrimaryContainer)
+	settingCard(c, x, y, w, 104, s.PrimaryContainer)
 	Label(c, "认识你的灵动岛", x+24, y+19, 18, s.OnPrimaryContainer, true, w-230)
-	Label(c, "展开、切换、隐藏与托盘找回 · 交互式手势教程", x+24, y+54, 12, s.OnPrimaryContainer, false, w-230)
-	Button(c, p, "再看一次", x+w-174, y+29, 150, 46, "再看一次", "play_arrow", false, true, a.startGestureTutorial)
+	Label(c, "在实际灵动岛上练习展开、切换、隐藏与找回", x+24, y+54, 12, s.OnPrimaryContainer, false, w-230)
+	Button(c, p, "练习手势", x+w-174, y+29, 150, 46, "练习手势", "play_arrow", false, true, a.startGestureTutorial)
 	y += 128
 	y = a.islandHeading(c, p, "出现与退场", x, y, w)
-	on := a.islandBool("IslandResidentEnabled", false)
-	Panel(c, p, x, y, w, 88, s.Container)
-	ToggleRow(c, p, "IslandResidentEnabled", x+24, y+12, w-48, "灵动岛常驻", "空闲时整岛透明并穿透鼠标；任务占用时恢复显示。", on, func() {
-		a.pushNative("IslandResidentEnabled", !on)
+	on := a.islandBool("IslandKeepVisibleEnabled", false)
+	settingCard(c, x, y, w, 88, s.Container)
+	ToggleRow(c, p, "IslandKeepVisibleEnabled", x+24, y+12, w-48, "灵动岛常驻", "空闲时循环显示你选择的内容。", on, func() {
+		a.pushNative("IslandKeepVisibleEnabled", !on)
 	})
-	ui.Box(c).Absolute().Left(x + 106).Top(y + 21).Width(38).Height(LineHeight(14)).Radius(7).Background(Col(s.SecondaryContainer)).IgnoreInput(true)
-	CenteredText(c, "Beta", x+106, y+21, 38, LineHeight(14), 10, s.OnSecondaryContainer, true).IgnoreInput(true)
 	y += 104
+	if on {
+		y = a.islandHeading(c, p, "常驻轮播内容", x, y, w)
+		y = a.islandToggles(c, p, x, y, w, []islandToggleRow{
+			{"时间", "显示本地时间。当没有可轮播的内容时，也会显示时间。", "IslandResidentShowTime", true},
+			{"系统占用", "同时显示 CPU 与内存的当前占用率。", "IslandResidentShowSystem", false},
+			{"设备电量", "逐个显示已连接的无线设备。没有连接时跳过。", "IslandResidentShowDevices", false},
+		})
+	}
 	y = a.islandToggles(c, p, x, y, w, []islandToggleRow{
 		{"暂停音乐后隐藏", "有计时器等活动或开启常驻时继续显示。", "HideWhenPaused", true},
 		{"始终置顶", "不抢占键盘焦点。", "AlwaysOnTop", true},
@@ -328,10 +349,36 @@ func (a *App) islandTabGestures(c *ui.Context, p *Palette, x, y, w float32) floa
 		{"悬停展开", "鼠标经过胶囊时展开当前活动。", "HoverExpand", false},
 		{"点击任意区域展开", "点击胶囊主体展开当前活动。", "ClickAnywhereExpand", true},
 		{"左右滑动切换", "在胶囊或卡片空白处拖动，切换音乐、计时与待办。", "SwipeActivities", true},
-		{"向上拖动隐藏", "从空白处向上拖动；可从托盘找回。", "SwipeUpHide", true},
-		{"自由悬浮", "经典模式下可拖动位置，并自动保存。", "Floating", false},
+		{"向上拖动隐藏", "从空白处向上拖动；有通知仍会提醒，也可从托盘或边缘找回。", "SwipeUpHide", true},
+		{"鼠标触碰边缘显示", "上滑隐藏后将鼠标移至屏幕顶部居中片刻浮现灵动岛（默认关闭）。", "EdgeHoverRevealEnabled", false},
+		{"自由悬浮", "允许直接按住胶囊或卡片拖动到任意位置或屏幕，并自动保存。", "Floating", false},
 		{"点击封面或歌名打开播放器", "只影响音乐卡片的封面和标题。", "MusicClickOpenApp", false},
 	})
+	y = a.islandHeading(c, p, "多显示器位置", x, y, w)
+	displayOpts := [][2]string{{"主显示器（默认）", ""}}
+	if raw, ok := a.State["displays"].([]any); ok {
+		for _, item := range raw {
+			if m, ok := item.(map[string]any); ok {
+				id, _ := m["id"].(string)
+				label, _ := m["label"].(string)
+				if id != "" && label != "" {
+					displayOpts = append(displayOpts, [2]string{label, id})
+				}
+			}
+		}
+	}
+	y = a.islandChoices(c, p, x, y, w, "显示在哪个显示器", "Display", "", displayOpts)
+	y = a.islandHeading(c, p, "任务栏模式", x, y, w)
+	y = a.islandToggles(c, p, x, y, w, []islandToggleRow{
+		{"任务栏模式", "在 Windows 任务栏显示实时逐字歌词与微控制条，点击向上展开完整卡片，通知仍照常在屏幕上方弹出。", "TaskbarModeEnabled", false},
+		{"任务栏常驻显示", "未播放音乐或暂停时仍在任务栏常驻显示时间与系统状态，避免组件消失。", "TaskbarAlwaysShow", true},
+	})
+	y = a.islandChoices(c, p, x, y, w, "任务栏外观", "TaskbarStyle", "Transparent",
+		[][2]string{{"透明融入", "Transparent"}, {"轻透胶囊", "Pill"}})
+	y = a.islandChoices(c, p, x, y, w, "停靠基准", "TaskbarDockAlign", "Free",
+		[][2]string{{"自由调节", "Free"}, {"智能自动", "Auto"}, {"任务栏左侧", "Left"}, {"托盘左侧", "Right"}})
+	y = a.islandRange(c, p, x, y, w, "水平位置", "TaskbarPosition", 18, 0, 100, "%")
+	y = a.islandRange(c, p, x, y, w, "歌词条宽度", "TaskbarWidth", 340, 220, 640, "px")
 	y = a.islandHeading(c, p, "系统状态提示", x, y, w)
 	y = a.islandToggles(c, p, x, y, w, []islandToggleRow{
 		{"系统状态提示", "大小写锁定、数字锁定、麦克风静音与触控板状态。", "SystemStateHintsEnabled", true},
@@ -386,7 +433,7 @@ var playerGroups = [][2]any{
 func (a *App) islandTabPlayers(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	s := &p.Scheme
 	y = a.islandHeading(c, p, "网易云进度拖动", x, y, w)
-	Panel(c, p, x, y, w, 104, s.PrimaryContainer)
+	settingCard(c, x, y, w, 104, s.PrimaryContainer)
 	Label(c, "正常启动 · 自动连接", x+24, y+19, 18, s.OnPrimaryContainer, true, w-48)
 	Label(c, "正常启动网易云即可自动接入，后台、最小化和托盘均可拖动进度。", x+24, y+55, 12, s.OnPrimaryContainer, false, w-48)
 	y += 128
@@ -394,7 +441,7 @@ func (a *App) islandTabPlayers(c *ui.Context, p *Palette, x, y, w float32) float
 	Label(c, "选择响应范围；默认响应所有播放器，浏览器媒体单独控制。", x, y, 12, s.OnSurfaceVariant, false, w-8)
 	y += 36
 	mode := a.islandString("PlayerResponseMode", "All")
-	Panel(c, p, x, y, w, 108, s.Container)
+	settingCard(c, x, y, w, 108, s.Container)
 	Label(c, "响应范围", x+24, y+15, 15, s.OnSurface, true, w-48)
 	half := (w - 48 - 8) / 2
 	Chip(c, p, "PlayerAll", x+24, y+52, half, 38, "所有播放器", mode == "All", func() {
@@ -468,16 +515,24 @@ func trimSpace(s string) string {
 	return s[start:end]
 }
 
+// Keys must match dotisle_render::progress::ThumbStyle; the old Dot/Ring/
+// Rounded/Petal names were rejected by the native setting, so clicks did nothing.
+var leafProgressThumbs = [][2]string{
+	{"胶囊", "Pill"}, {"圆形", "Circle"}, {"方形", "Square"}, {"菱形", "Diamond"},
+	{"心形", "Heart"}, {"花朵", "Flower"}, {"贝壳", "Clam"}, {"云朵", "Puffy"},
+}
+
 // islandTabProgress is tab 133: 播放进度条. The 8 bar styles and 16 thumb styles
 // select through chips; the preview draws the current style.
 func (a *App) islandTabProgress(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	s := &p.Scheme
+	y = a.islandToggles(c, p, x, y, w, []islandToggleRow{{"进度条柔光", "只在已播放的进度周围显示柔光。", "ProgressBarGlow", true}})
 	y = a.islandHeading(c, p, "进度条样式", x, y, w)
 	barStyles := [][2]string{
-		{"波浪", "Wavy"}, {"常规", "Normal"}, {"圆角", "Rounded"}, {"纤细", "Thin"},
+		{"标准", "Normal"}, {"波浪", "Wavy"}, {"圆角", "Rounded"}, {"纤细", "Thin"},
 		{"厚重", "Thick"}, {"渐变", "Gradient"}, {"分段", "Segmented"}, {"圆点", "Dots"},
 	}
-	y = a.styleChipGrid(c, p, x, y, w, barStyles, "ProgressBarStyle", "Wavy")
+	y = a.styleChipGrid(c, p, x, y, w, barStyles, "ProgressBarStyle", "Normal")
 	thumbOn := a.islandBool("ProgressBarThumbEnabled", false)
 	y = a.islandToggles(c, p, x, y, w, []islandToggleRow{
 		{"显示滑块", "进度末端显示当前主题的滑块。", "ProgressBarThumbEnabled", false},
@@ -485,17 +540,11 @@ func (a *App) islandTabProgress(c *ui.Context, p *Palette, x, y, w float32) floa
 	})
 	if thumbOn {
 		y = a.islandHeading(c, p, "滑块样式", x, y, w)
-		thumbs := [][2]string{
-			{"胶囊", "Pill"}, {"圆点", "Dot"}, {"圆环", "Ring"}, {"方圆", "Rounded"},
-			{"菱形", "Gem"}, {"心形", "Heart"}, {"贝壳", "Clam"}, {"花瓣", "Petal"},
-		}
-		y = a.styleChipGrid(c, p, x, y, w, thumbs, "ProgressBarThumb", "Pill")
+		y = a.styleChipGrid(c, p, x, y, w, leafProgressThumbs, "ProgressBarThumb", "Pill")
 	}
-	// Live preview of the current bar style at full width.
-	Panel(c, p, x, y, w, 72, s.Container)
-	fraction := 0.38
-	bar := a.islandString("ProgressBarStyle", "Wavy")
-	drawBarPreview(c, p, x+24, y+22, w-48, 28, bar, fraction)
+	// Live preview of the current bar and thumb style at full width.
+	settingCard(c, x, y, w, 72, s.Container)
+	a.drawProgressPreview(c, p, x+16, y+22, w-32, thumbOn)
 	return y + 88
 }
 
@@ -511,45 +560,6 @@ func (a *App) styleChipGrid(c *ui.Context, p *Palette, x, y, w float32, styles [
 			})
 	}
 	return y + float32((len(styles)+3)/4)*50 + 16
-}
-
-// drawBarPreview paints the current bar style into a preview strip.
-func drawBarPreview(c *ui.Context, p *Palette, x, y, w, h float32, style string, fraction float64) {
-	s := &p.Scheme
-	mid := y + h/2 - 2.5
-	track := Col(s.OutlineVariant)
-	fill := Col(s.Primary)
-	switch style {
-	case "Thin":
-		ui.Box(c).Absolute().Left(x).Top(mid + 1.5).Width(w).Height(2).Background(track)
-		ui.Box(c).Absolute().Left(x).Top(mid + 1.5).Width(float32(float64(w) * fraction)).Height(2).Background(fill)
-	case "Thick":
-		ui.Box(c).Absolute().Left(x).Top(mid - 3).Width(w).Height(11).Radius(5.5).Background(track)
-		ui.Box(c).Absolute().Left(x).Top(mid - 3).Width(float32(float64(w) * fraction)).Height(11).Radius(5.5).Background(fill)
-	case "Segmented":
-		segments := 24
-		segW := (w - float32(segments-1)*4) / float32(segments)
-		for i := 0; i < segments; i++ {
-			col := track
-			if float64(i)/float64(segments) < fraction {
-				col = fill
-			}
-			ui.Box(c).Absolute().Left(x + float32(i)*(segW+4)).Top(mid).Width(segW).Height(5).Radius(2.5).Background(col)
-		}
-	case "Dots":
-		dots := 20
-		gap := w / float32(dots)
-		for i := 0; i < dots; i++ {
-			col := track
-			if float64(i)/float64(dots) < fraction {
-				col = fill
-			}
-			ui.Box(c).Absolute().Left(x + float32(i)*gap).Top(mid).Width(6).Height(6).Radius(3).Background(col)
-		}
-	default: // Wavy / Normal / Rounded / Gradient share the rounded track look
-		ui.Box(c).Absolute().Left(x).Top(mid).Width(w).Height(5).Radius(2.5).Background(track)
-		ui.Box(c).Absolute().Left(x).Top(mid).Width(float32(float64(w) * fraction)).Height(5).Radius(2.5).Background(fill)
-	}
 }
 
 // islandTabTransport is tab 134: 播放按钮主题. Ten themes, each with a mini sample.
@@ -580,27 +590,53 @@ func (a *App) islandTabTransport(c *ui.Context, p *Palette, x, y, w float32) flo
 		}
 		card.Children(func() {
 			// Mini sample: accent play key plus two plain keys, per the theme fill.
-			playBg := Col(s.Primary)
-			if value == "Sand" || value == "Whitespace" || value == "Halo" {
-				playBg = ui.Transparent
+			playBg, playInk := Col(s.Primary), Col(s.OnPrimary)
+			playRadius, playBorder, playBorderW := float32(12), ui.Transparent, float32(0)
+			sideBg := ui.Transparent
+			sideRadius := float32(0)
+			switch value {
+			case "Ripple":
+				playRadius = 20
+			case "Sand":
+				playBg, playInk = ui.Transparent, Col(s.Primary)
+				playBorder, playBorderW = Col(s.Primary), 1.1
+			case "Mist":
+				playBg, playInk = AlphaCol(s.Primary, .20), Col(s.Primary)
+				playBorder, playBorderW = AlphaCol(s.Primary, .38), 1
+			case "Glaze":
+				playBg, playInk = AlphaCol(s.Primary, .30), Col(s.Primary)
+				playBorder, playBorderW = AlphaCol(s.Primary, .62), 1
+			case "InkIsle":
+				playBg, playInk = Col(s.OnSurface), Col(s.Surface)
+			case "Tide":
+				sideBg, sideRadius = AlphaCol(s.SecondaryContainer, .45), 14
+			case "Whitespace":
+				playBg, playInk = ui.Transparent, Col(s.Primary)
+			case "Halo":
+				playBg, playInk = ui.Transparent, Col(s.Primary)
+				playBorder, playBorderW = Col(s.Primary), 2.2
 			}
-			key := ui.Box(c).Absolute().Left(cw/2 - 62).Top(18).Width(124).Height(52)
-			key.Justify(ui.Center).AlignItems(ui.Center).Gap(14).Children(func() {
-				prev := ui.Box(c).Width(44).Height(44).Justify(ui.Center).AlignItems(ui.Center)
+			// Row, not the default column: a column stacks the three keys and pushes
+			// the play key onto the card's bottom edge.
+			key := ui.Box(c).Row().Absolute().Left(cw/2 - 62).Top(14).Width(124).Height(40)
+			key.Justify(ui.Center).AlignItems(ui.Center).Gap(8).Children(func() {
+				prev := ui.Box(c).Width(30).Height(30).Radius(sideRadius).Background(sideBg).
+					Justify(ui.Center).AlignItems(ui.Center)
 				prev.Children(func() {
-					ui.Icon(c, Symbol("skip_previous")).FontSize(22).TextColor(Col(s.OnSurface))
+					ui.Icon(c, TransportSymbol(value, "prev")).FontSize(18).TextColor(Col(s.OnSurface))
 				})
-				play := ui.Box(c).Width(44).Height(44).Justify(ui.Center).AlignItems(ui.Center).
-					Radius(22).Background(playBg).Border(1, Col(s.Primary))
+				play := ui.Box(c).Width(40).Height(40).Justify(ui.Center).AlignItems(ui.Center).
+					Radius(playRadius).Background(playBg).Border(playBorderW, playBorder)
 				play.Children(func() {
-					ui.Icon(c, Symbol("play_arrow")).FontSize(24).TextColor(Col(s.OnPrimary))
+					ui.Icon(c, TransportSymbol(value, "play")).FontSize(20).TextColor(playInk)
 				})
-				playNext := ui.Box(c).Width(44).Height(44).Justify(ui.Center).AlignItems(ui.Center)
+				playNext := ui.Box(c).Width(30).Height(30).Radius(sideRadius).Background(sideBg).
+					Justify(ui.Center).AlignItems(ui.Center)
 				playNext.Children(func() {
-					ui.Icon(c, Symbol("skip_next")).FontSize(22).TextColor(Col(s.OnSurface))
+					ui.Icon(c, TransportSymbol(value, "next")).FontSize(18).TextColor(Col(s.OnSurface))
 				})
 			})
-			Label(c, theme[0], 0, 76, 12, s.OnSurface, on, cw)
+			CenteredText(c, theme[0], 0, 66, cw, 24, 12, s.OnSurface, on)
 		})
 	}
 	return y + float32((len(themes)+2)/3)*120 + 16

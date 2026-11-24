@@ -8,7 +8,7 @@ impl Renderer{
         let label=s.panel.map(|p|format!("{}  {}",p.title,p.value)).unwrap_or_else(||s.lyric.to_owned());
         let font=crate::compact::mini_font_size(s.font_size);let area=Rect::new(c.x+22.,c.y,c.w-44.,c.h);
         // Symmetric gutters keep the words on the capsule centre, independently of the dot.
-        if s.mini_glass{for(dx,dy)in[(-0.65,0.),(0.65,0.),(0.,-0.65),(0.,0.65)]{self.text_family(&label,Rect::new(area.x+dx,area.y+dy,area.w,area.h),font,500,s.mini_outline,"Noto Sans SC",false,DWRITE_TEXT_ALIGNMENT_CENTER,Some(-1.))?;}}
+        if s.mini_light_field{for(dx,dy)in[(-0.65,0.),(0.65,0.),(0.,-0.65),(0.,0.65)]{self.text_family(&label,Rect::new(area.x+dx,area.y+dy,area.w,area.h),font,500,s.mini_outline,"Noto Sans SC",false,DWRITE_TEXT_ALIGNMENT_CENTER,Some(-1.))?;}}
         self.text_family(&label,area,font,500,s.mini_ink,"Noto Sans SC",false,DWRITE_TEXT_ALIGNMENT_CENTER,Some(-1.))?;Ok(())
     }
     unsafe fn mini_expanded(&mut self,s:&Scene<'_>)->Result<()>{
@@ -53,6 +53,6 @@ impl Renderer{
     }
     unsafe fn mini_text_button(&mut self,id:i32,r:Rect,label:&str,primary:bool,s:&Scene<'_>)->Result<()>{
         let fill=if primary{if s.pressed==id{s.tool_theme.pressed}else if s.hover==id{s.tool_theme.hover}else{s.tool_theme.fill}}else if s.hover==id{0x20ffffff}else{0x0dffffff};self.fill(r,8.,fill);
-        let glass=self.reading_glass;if primary{self.reading_glass=false;}let result=self.text_family(label,Rect::new(r.x,r.y+3.,r.w,r.h-4.),10.,500,if primary{s.tool_theme.ink}else{0xffd3ddeb},"Noto Sans SC",false,DWRITE_TEXT_ALIGNMENT_CENTER,None);self.reading_glass=glass;result
+        self.text_family(label,Rect::new(r.x,r.y+3.,r.w,r.h-4.),10.,500,if primary{s.tool_theme.ink}else{0xffd3ddeb},"Noto Sans SC",false,DWRITE_TEXT_ALIGNMENT_CENTER,None)
     }
 }

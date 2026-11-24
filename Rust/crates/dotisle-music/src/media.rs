@@ -48,6 +48,19 @@ pub fn normalize_metadata(source:&str,title:&str,artist:&str)->(String,String){
 #[derive(Debug,Clone,Default)]
 pub struct SourceFilter{pub ignored:Vec<String>,pub only:Vec<String>}
 impl SourceFilter{
+    pub(crate) fn from_settings(settings: &serde_json::Value) -> Self {
+        let list = |key: &str| settings[key].as_array().map(|values|
+            values.iter().filter_map(serde_json::Value::as_str).map(str::to_owned).collect::<Vec<_>>());
+        let mut ignored = list("IgnoredSources").unwrap_or_else(|| vec!["Browser".into()]);
+        // The current browser toggle owns the legacy Browser exclusion. Callers
+        // without the toggle still get the old allow/ignore-list behavior.
+        if let Some(enabled) = settings["BrowserMediaEnabled"].as_bool() {
+            ignored.retain(|rule| !rule.eq_ignore_ascii_case("Browser"));
+            if !enabled { ignored.push("Browser".into()); }
+        }
+        Self { ignored, only: list("AllowedSources").unwrap_or_default() }
+    }
+
     pub fn allows(&self,source:&str)->bool{
         if blocked(source){return false}
         if !self.only.is_empty()&&!self.only.iter().any(|rule|matches(rule,source)){return false}
@@ -179,6 +192,27 @@ impl Drop for Media{fn drop(&mut self){self.set_active(None);let _=self.manager.
     assert!(filter.allows("QQMusic.exe"));
     assert!(!filter.allows("chrome.exe"));
     assert!(!filter.allows("Microsoft.Windows.ShellExperienceHost"));
+}
+#[test]fn browser_toggle_overrides_the_legacy_exclusion_on_each_read(){
+    let mut settings = serde_json::json!({"IgnoredSources":["browser","Netease"], "BrowserMediaEnabled":false});
+    for enabled in [false, true, false] {
+        settings["BrowserMediaEnabled"] = enabled.into();
+        let filter = SourceFilter::from_settings(&settings);
+        for source in ["Chrome.exe", "MSEdge", "Mozilla.Firefox", "brave.exe"] {
+            assert_eq!(filter.allows(source), enabled, "{source}");
+        }
+        assert!(!filter.allows("cloudmusic.exe"));
+        assert!(filter.allows("QQMusic.exe"));
+        assert!(!filter.allows("Microsoft.Windows.ShellExperienceHost"));
+    }
+}
+#[test]fn missing_browser_toggle_keeps_legacy_lists_and_diagnostic_pins(){
+    assert!(!SourceFilter::from_settings(&serde_json::json!({})).allows("Chrome.exe"));
+    assert!(SourceFilter::from_settings(&serde_json::json!({"IgnoredSources":[]})).allows("Chrome.exe"));
+    assert!(!SourceFilter::from_settings(&serde_json::json!({"IgnoredSources":[], "BrowserMediaEnabled":false})).allows("Chrome.exe"));
+    let pinned = SourceFilter::from_settings(&serde_json::json!({"BrowserMediaEnabled":true,"AllowedSources":["LyricIsland.Verify13"]}));
+    assert!(pinned.allows("LyricIsland.Verify13"));
+    assert!(!pinned.allows("Chrome.exe"));
 }
 /// A blocked built-in still reaches its aliases: 网易云 is one session id in SMTC and another in the
 /// window-title fallback, and both have to go quiet together.

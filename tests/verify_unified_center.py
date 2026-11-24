@@ -5,6 +5,7 @@ from ctypes import wintypes as w
 import json
 import os
 import subprocess
+import shutil
 import time
 from pathlib import Path
 from verify_pomodoro import Runtime
@@ -18,6 +19,7 @@ WindowCallback=ctypes.WINFUNCTYPE(w.BOOL,w.HWND,w.LPARAM)
 user.EnumWindows.argtypes=[WindowCallback,w.LPARAM]
 user.GetWindowThreadProcessId.argtypes=[w.HWND,ctypes.POINTER(w.DWORD)]
 user.GetWindowTextW.argtypes=[w.HWND,w.LPWSTR,ctypes.c_int]
+user.GetClassNameW.argtypes=[w.HWND,w.LPWSTR,ctypes.c_int]
 user.IsWindowVisible.argtypes=[w.HWND]
 class Process(ctypes.Structure):
     _fields_=[('size',w.DWORD),('usage',w.DWORD),('pid',w.DWORD),('heap',ctypes.c_size_t),('module',w.DWORD),('threads',w.DWORD),('parent',w.DWORD),('priority',w.LONG),('flags',w.DWORD),('name',w.WCHAR*260)]
@@ -55,6 +57,23 @@ def widget_windows(pid):
     user.EnumWindows(collect,0)
     return windows
 
+def real_center_window(pid):
+    matches=[]
+    @WindowCallback
+    def collect(hwnd,_):
+        owner=w.DWORD()
+        user.GetWindowThreadProcessId(hwnd,ctypes.byref(owner))
+        if owner.value==pid and user.IsWindowVisible(hwnd):
+            title=ctypes.create_unicode_buffer(256)
+            cls=ctypes.create_unicode_buffer(256)
+            user.GetWindowTextW(hwnd,title,len(title))
+            user.GetClassNameW(hwnd,cls,len(cls))
+            if title.value.startswith('点屿 · 控制中心') and cls.value and cls.value!='#32770':
+                matches.append(hwnd)
+        return True
+    user.EnumWindows(collect,0)
+    return bool(matches)
+
 def wait(predicate,label,seconds=35):
     deadline=time.monotonic()+seconds
     while time.monotonic()<deadline:
@@ -63,8 +82,24 @@ def wait(predicate,label,seconds=35):
         time.sleep(.1)
     raise AssertionError('Timed out: '+label)
 
+_WORKER_CACHE={}
+
+def is_lyrics_worker(pid):
+    if pid not in _WORKER_CACHE:
+        try:
+            cmd=subprocess.check_output(
+                ['powershell','-NoProfile','-Command',f'(Get-CimInstance Win32_Process -Filter "ProcessId={pid}").CommandLine'],
+                encoding='utf-8',errors='replace',creationflags=subprocess.CREATE_NO_WINDOW,timeout=5)
+            _WORKER_CACHE[pid]='--lyrics-worker' in cmd
+        except Exception:
+            _WORKER_CACHE[pid]=False
+    return _WORKER_CACHE[pid]
+
+def center_children(app):
+    return [p for p in children(app) if p['name']=='LyricIsland.Center.exe' and not is_lyrics_worker(p['pid'])]
+
 def host(app):
-    centers=[p for p in children(app) if p['name']=='LyricIsland.Center.exe']
+    centers=center_children(app)
     if len(centers)!=1: return None
     pid=centers[0]['pid']
     names={m['name'].lower() for m in snapshot(0x18,pid,Module,'Module32')}
@@ -83,7 +118,10 @@ def run(args):
         assert not (app.runtime/'LyricIsland.Settings.exe').exists()
         assert not (app.runtime/'dotisle_settings.dll').exists()
         assert (app.runtime/'dotisle_desktop.dll').is_file()
-        state=app.start();assert state['centerFrontend']=='go'
+        trace=app.data/'center-startup.json'
+        app.data.mkdir(parents=True, exist_ok=True)
+        app.write_settings()
+        state=app.launch(env={'DOTISLE_STARTUP_TRACE':str(trace)});assert state['centerFrontend']=='go'
         # Overview tiles own their content: the cards must read data and keep their
         # settings without any desktop placement.
         for kind,config in (('weather',{'city':'厦门'}),('storage',{'drive':'C:'}),('worldClock',{'city':'东京'}),('note',{'text':'概览便签'})):
@@ -113,7 +151,13 @@ def run(args):
         wait(lambda:len(widget_windows(center))==2,'removed widget window is destroyed')
         assert app.request('settings',{'page':'overview'})['success']
         assert wait(lambda:host(app),'center reopen')==center
-        report['checks'].append('add, resize, remove and reopen preserve the same host process')
+        def center_ready():
+            try:
+                return 'first-frame' in json.loads(trace.read_text(encoding='utf-8')) and real_center_window(center)
+            except (OSError, ValueError):
+                return False
+        wait(center_ready, 'real control center window (not an error dialog)')
+        report['checks'].append('the hardware-only control center reached its ready frame and became visible')
         dll=ctypes.CDLL(str(app.runtime/'dotisle_desktop.dll'))
         dll.dotisle_desktop_layout.argtypes=[ctypes.c_char_p,ctypes.c_size_t,ctypes.c_void_p,ctypes.c_size_t]
         dll.dotisle_desktop_layout.restype=ctypes.c_ssize_t
@@ -145,20 +189,27 @@ def run(args):
         report['checks'].append('unexpected native exit releases widget windows and center; restart restores saved widgets')
         # A center from another portable runtime shares the default pipe; it must
         # stop instead of following this instance and opening a second window.
-        other=args.scratch/'other-data'
+        other=(args.scratch/'other-data').resolve()
         other.mkdir(parents=True,exist_ok=True)
+        # This fixture tests data-directory isolation after an explicit synthetic
+        # agreement; first-use consent is exercised by its own acceptance run.
+        shutil.copy2(app.data/'consent.json',other/'consent.json')
         environment=dict(os.environ,LYRICISLAND_TEST_PIPE=app.pipe.split('\\')[-1])
         stray=subprocess.Popen([str(app.runtime/'LyricIsland.Center.exe'),'--data-dir',str(other)],cwd=app.runtime,env=environment,
             stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=subprocess.CREATE_NO_WINDOW)
         wait(lambda:stray.poll() is not None,'center from another data directory exits',seconds=15)
-        assert len([p for p in children(app) if p['name']=='LyricIsland.Center.exe'])==1
+        assert len(center_children(app))==1
         report['checks'].append('a stray center never joins another instance or opens a second window')
         report['success']=True
     except Exception as error:
         report['error']=str(error)
         raise
     finally:
-        try: stop(app)
+        try:
+            if 'stray' in locals() and stray.poll() is None:
+                stray.terminate()
+                stray.wait(timeout=10)
+            stop(app)
         finally:
             args.report.parent.mkdir(parents=True,exist_ok=True)
             args.report.write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')

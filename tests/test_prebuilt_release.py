@@ -2,12 +2,14 @@
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'build'))
+from portable_archive import create_portable, tar_command
 from verify_prebuilt_release import CHECKS, REPORTS, digest, verify
 
 
@@ -16,6 +18,10 @@ class PrebuiltReleaseTests(unittest.TestCase):
     commit = 'a' * 40
 
     def setUp(self):
+        try:
+            tar_command()
+        except RuntimeError as error:
+            self.skipTest(str(error))
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -28,9 +34,8 @@ class PrebuiltReleaseTests(unittest.TestCase):
             archive.comment = self.commit.encode('ascii')
             archive.writestr('source/README.md', 'source')
         self.reports()
-        (self.root / f'{self.prefix}-Setup.exe').write_bytes(b'setup')
+        (self.root / f'{self.prefix}-Setup.exe').write_bytes(b'setup' * 1024)
         (self.root / f'{self.prefix}-Notes.md').write_text('notes')
-        (self.root / f'LyricIsland-{self.version}-Portable.zip').write_bytes(b'legacy')
         (self.root / f'LyricIsland-{self.version}-SHA256.txt').write_text('legacy checksum')
         (self.root / 'module.zip').write_bytes(b'module update')
         index = dict(version=self.version, runtimeVersion=self.version, packages=[dict(archive='module.zip', sha256=digest(self.root / 'module.zip'))])
@@ -39,9 +44,16 @@ class PrebuiltReleaseTests(unittest.TestCase):
         (self.root / f'{self.prefix}-Verification.json').write_text(json.dumps(evidence))
 
     def portable(self):
-        with zipfile.ZipFile(self.root / f'{self.prefix}-Portable.zip', 'w') as archive:
+        stage = self.root / 'stage' / self.prefix
+        stage.mkdir(parents=True, exist_ok=True)
+        for name, data in self.runtime.items():
+            (stage / name).write_bytes(data)
+        create_portable(stage, self.root / f'{self.prefix}-Portable.7z')
+        shutil.rmtree(stage.parent)
+        legacy = f'LyricIsland-{self.version}'
+        with zipfile.ZipFile(self.root / f'{legacy}-Portable.zip', 'w') as archive:
             for name, data in self.runtime.items():
-                archive.writestr(self.prefix + '/' + name, data)
+                archive.writestr(legacy + '/' + name, data)
 
     def reports(self, failed=None):
         with zipfile.ZipFile(self.root / f'{self.prefix}-Validation.zip', 'w') as archive:
@@ -80,6 +92,17 @@ class PrebuiltReleaseTests(unittest.TestCase):
         self.runtime['LyricIsland.Center.exe'] = b'different runtime'
         self.portable()
         with self.assertRaisesRegex(ValueError, 'Portable runtime differs'):
+            self.check()
+
+    def test_portable_must_match_ota_file_contents(self):
+        stage = self.root / 'altered' / self.prefix
+        stage.mkdir(parents=True)
+        for name, data in self.runtime.items():
+            (stage / name).write_bytes(data)
+        (stage / 'LyricIsland.Center.exe').write_bytes(b'altered')
+        create_portable(stage, self.root / f'{self.prefix}-Portable.7z')
+        shutil.rmtree(stage.parent)
+        with self.assertRaisesRegex(ValueError, '7z differs from the verified runtime'):
             self.check()
 
     def test_manifest_cannot_change_after_dispatch(self):

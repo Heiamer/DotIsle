@@ -32,7 +32,6 @@ impl Renderer{
         if s.panel.is_some(){self.classic_button(id,x,y,size,s);return}
         // Music glyphs retain their own alpha and colour on glass; an opaque contrast
         // outline made disabled icons look like doubled, black wireframes.
-        let glass=self.reading_glass;self.reading_glass=false;
-        let _=self.music_button(id,x,y,size,s);self.reading_glass=glass;
+        let _=self.music_button(id,x,y,size,s);
     }
 }

@@ -108,22 +108,44 @@ impl State {
         self.kind != Kind::Off || self.visible.value > 0.002
     }
     pub fn frame(&self, time_ms: f64, animate: bool) -> Frame {
-        let breath = if animate {
-            0.65 + 0.2 * (time_ms / 2400. * std::f64::consts::TAU).sin()
+        let tau = std::f64::consts::TAU;
+        let music_breath = if animate {
+            // 双谐波自然有机呼吸，避免单调正弦机械感
+            let w1 = (time_ms / 2800. * tau).sin();
+            let w2 = (time_ms / 1400. * tau + 0.6).sin();
+            (0.66 + 0.17 * w1 + 0.06 * w2).clamp(0.35, 0.96)
         } else {
-            0.6
+            0.65
+        };
+        let timer_breath = if animate {
+            (0.60 + 0.22 * (time_ms / 4200. * tau).sin()).clamp(0.35, 0.92)
+        } else {
+            0.62
         };
         let amount = match self.kind {
-            Kind::MusicRhythm => 0.12 + 0.88 * self.envelope.value.clamp(0., 1.),
-            Kind::MusicBreath | Kind::Timer => breath,
-            Kind::Update => 0.85,
+            // 音乐律动保留基线亮度并随音频峰值包络产生弹性跃动
+            Kind::MusicRhythm => (0.16 + 0.84 * self.envelope.value.clamp(0., 1.)).clamp(0., 1.),
+            Kind::MusicBreath => music_breath,
+            Kind::Timer => timer_breath,
+            Kind::Update => {
+                if animate {
+                    0.82 + 0.14 * (time_ms / 2600. * tau).sin()
+                } else {
+                    0.86
+                }
+            }
             Kind::Off => 0.,
+        };
+        let speed_ms = match self.kind {
+            Kind::Update => 2600.,
+            Kind::Timer => 5600.,
+            _ => 5200.,
         };
         Frame {
             kind: self.kind,
             strength: (self.visible.value * amount).clamp(0., 1.),
             phase: if animate {
-                time_ms / 3800. * std::f64::consts::TAU
+                (time_ms / speed_ms * tau) % tau
             } else {
                 0.
             },

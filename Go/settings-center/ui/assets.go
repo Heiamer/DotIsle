@@ -1,4 +1,5 @@
-// Embedded HarmonyOS Sans and control icons accompany the runtime's native preview fonts.
+// Control center uses OS fallbacks plus on-demand shared fonts from Assets/Fonts
+// without embedding a duplicate multi-megabyte font payload inside the executable.
 package ui
 
 import (
@@ -25,7 +26,10 @@ var assetDirectory = sync.OnceValue(func() string {
 		}
 	}
 	for _, candidate := range candidates {
-		if st, err := os.Stat(filepath.Join(candidate, "Fonts", "HarmonyOS_Sans_SC_Regular.ttf")); err == nil && st.Mode().IsRegular() {
+		if st, err := os.Stat(filepath.Join(candidate, "Sounds", "notification-soft.wav")); err == nil && st.Mode().IsRegular() {
+			return candidate
+		}
+		if st, err := os.Stat(filepath.Join(candidate, "Fonts", "NotoSansSC.ttf")); err == nil && st.Mode().IsRegular() {
 			return candidate
 		}
 	}
@@ -34,52 +38,69 @@ var assetDirectory = sync.OnceValue(func() string {
 
 func assetsRoot() string { return assetDirectory() }
 
+var transportSVGs = map[string]*ui.SVG{}
+
+// TransportSymbol loads the theme's own prev/play/next artwork. Reef keeps the
+// shipped Material Symbols, like the island; every other theme reads its SVGs
+// from the shared Assets folder so the preview matches the real control.
+func TransportSymbol(theme, name string) *ui.SVG {
+	fallback := map[string]string{"prev": "skip_previous", "play": "play_arrow", "next": "skip_next"}[name]
+	if theme == "Reef" {
+		return Symbol(fallback)
+	}
+	key := theme + "/" + name
+	if svg, ok := transportSVGs[key]; ok {
+		return svg
+	}
+	root := assetsRoot()
+	if root == "" {
+		return Symbol(fallback)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "TransportIcons", theme, name+".svg"))
+	if err != nil {
+		return Symbol(fallback)
+	}
+	svg := ui.MustParseSVG(raw)
+	transportSVGs[key] = svg
+	return svg
+}
+
 //go:embed assets/icons/*.svg
 var controlIcons embed.FS
 
-// Small Latin fallbacks stay embedded. The CJK faces are shared with the native
-// island in Assets/Fonts, without a second 24 MB copy inside the executable.
-//
-//go:embed assets/fonts/HarmonyOS_Sans_Regular.ttf
-var uiSansRegular []byte
-
-//go:embed assets/fonts/HarmonyOS_Sans_Medium.ttf
-var uiSansMedium []byte
-
-//go:embed assets/fonts/HarmonyOS_Sans_Bold.ttf
-var uiSansBold []byte
-
-var uiFontFaces = []struct {
-	name string
-	face string
-	data []byte
+var sharedFonts = []struct {
+	file   string
+	family string
 }{
-	{"HarmonyOS_Sans_Regular.ttf", "HarmonyOS Sans", uiSansRegular},
-	{"HarmonyOS_Sans_Medium.ttf", "HarmonyOS Sans", uiSansMedium},
-	{"HarmonyOS_Sans_Bold.ttf", "HarmonyOS Sans", uiSansBold},
-	{"HarmonyOS_Sans_SC_Regular.ttf", "HarmonyOS Sans SC", nil},
-	{"HarmonyOS_Sans_SC_Medium.ttf", "HarmonyOS Sans SC", nil},
-	{"HarmonyOS_Sans_SC_Bold.ttf", "HarmonyOS Sans SC", nil},
+	{"GoogleSansFlex-Regular.ttf", "Google Sans Flex"},
+	{"GoogleSansFlex-Medium.ttf", "Google Sans Flex"},
+	{"GoogleSansFlex-SemiBold.ttf", "Google Sans Flex"},
+	{"GoogleSansFlex-Bold.ttf", "Google Sans Flex"},
+	{"NotoSansSC.ttf", "Noto Sans SC"},
 }
 
 var fontsRegistered bool
 
-// RegisterFonts uses the same complete font files as the native island. The
-// Windows loader maps their input instead of allocating a transient Go copy.
+// RegisterFonts loads the shared Google Sans Flex and Noto Sans SC faces
+// directly from Assets/Fonts without duplicating fonts inside the center binary.
 func RegisterFonts() {
 	if fontsRegistered {
 		return
 	}
 	fontsRegistered = true
-	for _, f := range uiFontFaces {
-		var err error
-		if len(f.data) != 0 {
-			err = ui.RegisterFont(f.data, f.face)
-		} else {
-			err = registerFontFile(filepath.Join(assetsRoot(), "Fonts", f.name), f.face)
+	root := assetsRoot()
+	if root == "" {
+		return
+	}
+	for _, f := range sharedFonts {
+		p := filepath.Join(root, "Fonts", f.file)
+		if st, err := os.Stat(p); err != nil || !st.Mode().IsRegular() {
+			continue
 		}
-		if err != nil {
-			log.Printf("register %s: %v", f.name, err)
+		if err := registerFontFile(p, f.family); err != nil {
+			log.Printf("register %s: %v", f.file, err)
+		} else if f.file == "NotoSansSC.ttf" {
+			previewFontsLoaded[f.family] = true
 		}
 	}
 }

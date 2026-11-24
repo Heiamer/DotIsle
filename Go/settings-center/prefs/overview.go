@@ -8,11 +8,12 @@ import (
 )
 
 type Overview struct {
-	View        string              `json:"view"`
-	Cards       []string            `json:"cards"`
-	ScrollPages []string            `json:"scrollPages"`
-	Information []string            `json:"information"`
-	Sizes       map[string]CardSize `json:"sizes,omitempty"`
+	View         string              `json:"view"`
+	ScrollPlugin bool                `json:"scrollPlugin"`
+	Cards        []string            `json:"cards"`
+	ScrollPages  []string            `json:"scrollPages"`
+	Information  []string            `json:"information"`
+	Sizes        map[string]CardSize `json:"sizes,omitempty"`
 }
 
 // Width is a fraction of the overview canvas, so a saved layout also fits the
@@ -58,7 +59,9 @@ func cleanOverviewKeys(keys, allowed, fallback []string) []string {
 }
 
 func NormalizeOverview(p Overview) Overview {
-	if p.View != "scroll" {
+	// The scroll deck ships as an opt-in built-in plugin; without it the
+	// overview always uses the card grid.
+	if p.View != "scroll" || !p.ScrollPlugin {
 		p.View = "cards"
 	}
 	d := DefaultOverview()

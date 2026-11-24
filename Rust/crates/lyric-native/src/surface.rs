@@ -16,7 +16,7 @@ pub struct Surface{
     pub card_frost:f64,pub card_opacity:f64,pub capsule_frost:f64,pub capsule_opacity:f64,
 }
 /// `amount` is the live expansion progress: 0 collapsed, 1 fully expanded.
-pub struct Paint{pub top:u32,pub bottom:u32,pub reflection:f64,pub frost:f64,pub amount:f64,pub cover_alpha:f64,pub cover_blur:f64,pub tint:f64}
+pub struct Paint{pub top:u32,pub bottom:u32,pub reflection:f64,pub frost:f64,pub amount:f64,pub cover_alpha:f64,pub cover_blur:f64,pub tint:f64,pub light_field:f64}
 impl Surface{
     pub fn expanded(material:Material,cover_background:bool)->Self{
         Self{material,compact:material,cover_background,compact_cover_background:false,cover_overlay:true,reveal:1.,overlay:0.,mini:false,transparent:false,card_frost:0.,card_opacity:0.,capsule_frost:0.,capsule_opacity:0.}
@@ -28,25 +28,32 @@ impl Surface{
         // The strip is painted from `compact` and hands over to `material` as it opens,
         // so both ends stay exact while everything in between is a plain blend.
         let compact_alpha=match self.compact{
-            Material::Glass=>if self.mini{104.}else{196.},
+            Material::LightField=>if self.mini{164.}else{214.},
             _ if self.transparent=>245.,
             _=>255.,
         };
-        let expanded_alpha=if self.material==Material::Glass{224.}else if self.transparent{245.}else{255.};
+        let expanded_alpha=match self.material{
+            Material::LightField=>228.,
+            Material::Acrylic if self.transparent=>245.,
+            Material::Acrylic=>255.,
+        };
         let alpha=((compact_alpha+(expanded_alpha-compact_alpha)*amount).round()as u32)<<24;
-        let tint=(if self.cover_background{amount}else{0.})+(if self.compact_cover_background{1.-amount}else{0.});
-        let top=cover_color::mix(0x1b1f25,palette.background,tint);
-        let bottom=cover_color::mix(0x0c0f14,palette.background,tint*0.65);
-        let reflection=(if self.compact==Material::Glass{1.-amount}else{0.})+(if self.material==Material::Glass{amount}else{0.});
-        let top=cover_color::mix(top,0xdfefff,0.08*reflection);
-        // Acrylic frosts the whole plane, so a capsule set to acrylic reads exactly like an
-        // acrylic card instead of falling back to the flat classic strip.
-        let frost=match self.material{Material::Acrylic=>amount,Material::Glass=>amount*0.28}
-            +(if self.compact==Material::Acrylic{1.-amount}else{0.});
-        // The frosted artwork layer only exists for acrylic surfaces, and it hands over from the
-        // strip's pair to the card's pair exactly like the rest of the plane.
-        let card=if self.material==Material::Acrylic{amount}else{0.};
-        let strip=if self.compact==Material::Acrylic{1.-amount}else{0.};
+        // 曜光玻璃接入动态取色系统
+        let light_field=((if self.compact==Material::LightField{1.-amount}else{0.})+(if self.material==Material::LightField{amount}else{0.})).clamp(0.,1.);
+        let raw_tint=(if self.cover_background{amount}else{0.})+(if self.compact_cover_background{1.-amount}else{0.});
+        let tint=raw_tint;
+        let lf_top=cover_color::mix(0x06080c,palette.background,raw_tint*0.48);
+        let lf_bottom=cover_color::mix(0x161d30,palette.background,raw_tint*0.82);
+        let top=cover_color::mix(cover_color::mix(0x1b1f25,palette.background,tint),lf_top,light_field);
+        let bottom=cover_color::mix(cover_color::mix(0x0c0f14,palette.background,tint*0.65),lf_bottom,light_field);
+        let has_glass=|m:Material|m==Material::LightField;
+        let reflection=(if has_glass(self.compact){1.-amount}else{0.})+(if has_glass(self.material){amount}else{0.});
+        // 亚克力柔化铺满表面，曜光玻璃搭配克制凝霜
+        let frost=match self.material{Material::Acrylic=>amount,Material::LightField=>amount*0.36}
+            +(if self.compact==Material::Acrylic{1.-amount}else if self.compact==Material::LightField{(1.-amount)*0.22}else{0.});
+        // 封面磨砂叠层同时开放给亚克力与曜光玻璃
+        let card=match self.material{Material::Acrylic=>amount,Material::LightField=>amount*0.78};
+        let strip=match self.compact{Material::Acrylic=>1.-amount,Material::LightField=>(1.-amount)*0.72};
         let weight=(card+strip).max(1e-6);
         // Artwork is independent from Monet tint. The capsule still obeys its own opt-in.
         let cover_alpha=((if self.cover_overlay{card*self.card_opacity}else{0.})
@@ -54,32 +61,22 @@ impl Surface{
         let strength=((card*self.card_frost+strip*self.capsule_frost)/weight/100.).clamp(0.,1.);
         // Keep useful detail across the whole slider instead of saturating a 192px image early.
         let cover_blur=30.*strength.powf(1.4);
-        Paint{top:alpha|top,bottom:alpha|bottom,reflection,frost,amount,cover_alpha:cover_alpha.clamp(0.,1.),cover_blur,tint}
+        Paint{top:alpha|top,bottom:alpha|bottom,reflection,frost,amount,cover_alpha:cover_alpha.clamp(0.,1.),cover_blur,tint,light_field}
     }
 }
 
 #[cfg(test)]mod tests{
     use super::*;
     #[test]fn hints_use_the_same_material_as_the_expanded_card_even_when_music_is_collapsed(){
-        for mini in [false,true]{for material in [Material::Acrylic,Material::Glass]{
+        for mini in [false,true]{for material in [Material::Acrylic,Material::LightField]{
             let expanded=Surface::expanded(material,true).paint(CoverPalette::default());
             let hint=Surface{mini,reveal:0.,overlay:1.,compact:Material::Acrylic,..Surface::expanded(material,true)}.paint(CoverPalette::default());
             assert_eq!((hint.top,hint.bottom,hint.frost,hint.reflection),(expanded.top,expanded.bottom,expanded.frost,expanded.reflection));
         }}
     }
-    #[test]fn aero_glass_has_a_denser_reading_plane_and_retains_cover_hue(){
-        let glass=Surface::expanded(Material::Glass,true);
-        let red=glass.paint(CoverPalette{background:0x681c12,accent:0xffb0a0});
-        let blue=glass.paint(CoverPalette{background:0x123568,accent:0xa0c0ff});
-        assert_eq!(red.top>>24,224);assert!(red.top>>24>168);
-        assert!(red.top>>16&255>red.top&255);assert!(blue.top&255>blue.top>>16&255);
-        assert!(red.frost>0.&&red.reflection>0.);
-        let neutral=Surface{cover_background:false,..glass};
-        assert_eq!(neutral.paint(CoverPalette{background:0x681c12,accent:0xffb0a0}).top,neutral.paint(CoverPalette{background:0x123568,accent:0xa0c0ff}).top);
-    }
     #[test]fn switching_expanded_material_does_not_change_the_collapsed_strip(){
-        for mini in [false,true]{for compact in [Material::Acrylic,Material::Glass]{
-            let surfaces=[Material::Acrylic,Material::Glass].map(|material|Surface{material,compact,mini,reveal:0.,..Surface::expanded(material,true)}.paint(CoverPalette::default()));
+        for mini in [false,true]{for compact in [Material::Acrylic,Material::LightField]{
+            let surfaces=[Material::Acrylic,Material::LightField].map(|material|Surface{material,compact,mini,reveal:0.,..Surface::expanded(material,true)}.paint(CoverPalette::default()));
             for surface in &surfaces[1..]{assert_eq!((surface.top,surface.bottom,surface.frost),(surfaces[0].top,surfaces[0].bottom,surfaces[0].frost));}
         }}
     }
@@ -93,7 +90,7 @@ impl Surface{
         assert!(strip.frost>0.);
         assert_eq!((strip.top,strip.bottom,strip.reflection),(card.top,card.bottom,card.reflection));
     }
-    #[test]fn the_frosted_artwork_layer_only_exists_for_acrylic(){
+    #[test]fn acrylic_artwork_layer_respects_its_independent_switches(){
         let card=Surface{card_frost:40.,card_opacity:60.,capsule_frost:40.,capsule_opacity:0.,..Surface::expanded(Material::Acrylic,true)};
         let full=card.paint(CoverPalette::default());
         assert!((full.cover_alpha-0.6).abs()<0.01);
@@ -105,11 +102,6 @@ impl Surface{
         let monet_off=Surface{cover_background:false,..card}.paint(CoverPalette::default());
         assert_eq!(monet_off.cover_alpha,full.cover_alpha);
         assert_eq!(Surface{cover_overlay:false,..card}.paint(CoverPalette::default()).cover_alpha,0.);
-        // Glass never samples the artwork through this layer.
-        for material in [Material::Glass]{
-            let other=Surface{material,compact:material,..card}.paint(CoverPalette::default());
-            assert_eq!(other.cover_alpha,0.);
-        }
     }
 }
 
@@ -146,5 +138,18 @@ impl Surface{
         assert_eq!(Surface{card_frost:100.,card_opacity:100.,..surface()}.paint(palette).cover_alpha,1.);
         let mid=Surface{reveal:0.5,compact_cover_background:true,..surface()}.paint(palette);
         assert!(mid.cover_alpha>=0.6&&mid.cover_alpha<=0.8&&mid.cover_blur.is_finite());
+    }
+    #[test]fn light_field_glass_supports_cover_background_and_overlay(){
+        let lf=Surface{card_frost:80.,card_opacity:100.,capsule_frost:80.,capsule_opacity:100.,compact_cover_background:true,cover_overlay:true,..Surface::expanded(Material::LightField,true)};
+        let red=lf.paint(CoverPalette{background:0xd92626,accent:0xff9999});
+        let blue=lf.paint(CoverPalette{background:0x1b4fd9,accent:0x99ccff});
+        assert_eq!(red.light_field,1.);
+        assert_eq!(red.tint,1.);
+        assert!(red.cover_alpha>0.7);
+        assert_ne!(red.top,blue.top);
+        assert_ne!(red.bottom,blue.bottom);
+        assert!(red.reflection>0.&&red.frost>0.);
+        let neutral=Surface{cover_background:false,cover_overlay:false,..lf};
+        assert_eq!(neutral.paint(CoverPalette{background:0xd92626,accent:0xff9999}).top,neutral.paint(CoverPalette{background:0x1b4fd9,accent:0x99ccff}).top);
     }
 }

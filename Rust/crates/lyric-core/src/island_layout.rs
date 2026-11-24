@@ -1,35 +1,160 @@
-//! Original island geometry shared with the visual motion preview.
+//! 灵动岛基础几何与展开形变路径（支持顶部经典模式与底部任务栏向上弹出模式）。
 use crate::music_layout::Rect;
-fn blend(p:f64,a:f64,b:f64)->f64{let t=((p-a)/(b-a)).clamp(0.,1.);t*t*(3.-2.*t)}
-#[derive(Clone,Copy)] pub struct Layout{pub capsule:Rect,pub card:Rect,pub host:Rect}
+fn blend(p: f64, a: f64, b: f64) -> f64 {
+    let t = ((p - a) / (b - a)).clamp(0., 1.);
+    t * t * (3. - 2. * t)
+}
+#[derive(Clone, Copy)]
+pub struct Layout {
+    pub capsule: Rect,
+    pub card: Rect,
+    pub host: Rect,
+    pub anchor_bottom: bool,
+    pub taskbar_height: f64,
+}
 impl Layout {
-    /// The host reserves the taller A layout so switching never resizes the window.
-    pub fn new(width:f64)->Self{let cw=(width+112.).max(400.);let host=cw.max(440.);Self{capsule:Rect::new(24.+(host-width)/2.,24.,width,40.),card:Rect::new(24.+(host-cw)/2.,24.,cw,264.),host:Rect::new(0.,0.,host+48.,332.)}}
-    pub fn reserve_compact(&mut self,max:f64){let width=(max+48.).max(self.host.w);self.host.w=width;self.capsule.x=(width-self.capsule.w)/2.;self.card.x=(width-self.card.w)/2.;}
-    pub fn set_compact(&mut self,width:f64,height:f64){self.capsule.w=width;self.capsule.x=(self.host.w-width)/2.;self.capsule.h=height;}
-    /// Horizontal expansion leads the vertical unfolding; both are derived from
-    /// the same live spring, so reversing the gesture never swaps coordinate spaces.
-    pub fn morph_shape(self,p:f64,r:f64)->(Rect,f64){self.morph_shape_with_radii(p,self.capsule.h/2.,r)}
-    pub fn morph_shape_with_radii(self,p:f64,closed_radius:f64,r:f64)->(Rect,f64){
-        let over=(p-p.clamp(0.,1.)).clamp(-0.04,0.04)*0.4;let p=p.clamp(0.,1.);let x=blend(p,0.10,0.88)+over;let y=blend(p,0.22,1.)+over;
-        let a=self.capsule;let b=self.card;// A restrained parabolic toss: lift as a capsule, unfold, then settle.
-        // One live progress parameter makes collapse retrace this exact path.
-        let arc=(std::f64::consts::PI*p).sin();
-        let rect=Rect::new(a.x+(b.x-a.x)*x+5.*arc,a.y+(b.y-a.y)*y-12.*arc,a.w+(b.w-a.w)*x,a.h+(b.h-a.h)*y);
-        (rect,(closed_radius.clamp(0.,a.h/2.)+(r-closed_radius.clamp(0.,a.h/2.))*y).min(rect.w.min(rect.h)/2.).max(0.))
+    /// Host 预留最大高度，切换组件时不需反复重建窗口大小。
+    pub fn new(width: f64) -> Self {
+        let cw = (width + 112.).max(400.);
+        let host = cw.max(440.);
+        Self {
+            capsule: Rect::new(24. + (host - width) / 2., 24., width, 40.),
+            card: Rect::new(24. + (host - cw) / 2., 24., cw, 264.),
+            host: Rect::new(0., 0., host + 48., 332.),
+            anchor_bottom: false,
+            taskbar_height: 48.,
+        }
     }
-    pub fn satellite(self)->Rect{Rect::new(self.capsule.x+self.capsule.w+8.,self.capsule.y,self.capsule.h,self.capsule.h)}
-    pub fn compact_cover(self,scale:f64)->Rect{let round=|v:f64|(v*scale).round_ties_even()/scale;Rect::new(self.capsule.x+round(7.)+round(3.),self.capsule.y+round((self.capsule.h-24.)/2.),24.,24.)}
+    /// 切换底部任务栏停靠模式：胶囊垂直居中于任务栏槽位，展开卡片位于胶囊上方 10dp。
+    pub fn configure_anchor(&mut self, anchor_bottom: bool, taskbar_height: f64) {
+        self.anchor_bottom = anchor_bottom;
+        self.taskbar_height = taskbar_height.clamp(36., 76.);
+        self.sync_vertical();
+    }
+    pub fn sync_vertical(&mut self) {
+        if self.anchor_bottom {
+            let tb = self.taskbar_height.clamp(36., 76.);
+            // 贴合 Windows 11 原生任务栏控件尺寸（48dp 任务栏下约 38dp 高，上下保留 5dp 安全呼吸边距）
+            let cap_h = (tb - 10.).clamp(32., 38.);
+            let min_host_h = (tb + 12. + self.card.h + 24.).max(332.);
+            if self.host.h < min_host_h {
+                self.host.h = min_host_h;
+            }
+            self.capsule.h = cap_h;
+            self.capsule.y = self.host.h - tb + (tb - cap_h) / 2.;
+            self.card.y = (self.host.h - tb - 10. - self.card.h).max(16.);
+        } else {
+            self.capsule.y = 24.;
+            self.card.y = 24.;
+        }
+    }
+    pub fn align_dock(&mut self, capsule_center_x: f64, card_center_x: f64) {
+        let cap_x = (capsule_center_x - self.capsule.w / 2.)
+            .clamp(8., (self.host.w - self.capsule.w - 8.).max(8.));
+        let card_x = (card_center_x - self.card.w / 2.)
+            .clamp(12., (self.host.w - self.card.w - 12.).max(12.));
+        self.capsule.x = cap_x;
+        self.card.x = card_x;
+    }
+    pub fn reserve_compact(&mut self, max: f64) {
+        let width = (max + 48.).max(self.host.w);
+        self.host.w = width;
+        self.capsule.x = (width - self.capsule.w) / 2.;
+        self.card.x = (width - self.card.w) / 2.;
+        self.sync_vertical();
+    }
+    pub fn set_compact(&mut self, width: f64, height: f64) {
+        let old_center = self.capsule.x + self.capsule.w / 2.;
+        self.capsule.w = width;
+        self.capsule.h = height;
+        if self.anchor_bottom {
+            self.capsule.x = (old_center - width / 2.)
+                .clamp(8., (self.host.w - width - 8.).max(8.));
+        } else {
+            self.capsule.x = (self.host.w - width) / 2.;
+        }
+        self.sync_vertical();
+    }
+    pub fn morph_shape(self, p: f64, r: f64) -> (Rect, f64) {
+        self.morph_shape_with_radii(p, self.capsule.h / 2., r)
+    }
+    pub fn morph_shape_with_radii(self, p: f64, closed_radius: f64, r: f64) -> (Rect, f64) {
+        let over = (p - p.clamp(0., 1.)).clamp(-0.04, 0.04) * 0.4;
+        let p = p.clamp(0., 1.);
+        let x = blend(p, 0.10, 0.88) + over;
+        let y = blend(p, 0.22, 1.) + over;
+        let a = self.capsule;
+        let b = self.card;
+        let arc = (std::f64::consts::PI * p).sin();
+        let y_arc = if self.anchor_bottom { -6. * arc } else { -12. * arc };
+        let rect = Rect::new(
+            a.x + (b.x - a.x) * x + 5. * arc,
+            a.y + (b.y - a.y) * y + y_arc,
+            a.w + (b.w - a.w) * x,
+            a.h + (b.h - a.h) * y,
+        );
+        (
+            rect,
+            (closed_radius.clamp(0., a.h / 2.) + (r - closed_radius.clamp(0., a.h / 2.)) * y)
+                .min(rect.w.min(rect.h) / 2.)
+                .max(0.),
+        )
+    }
+    pub fn satellite(self) -> Rect {
+        Rect::new(
+            self.capsule.x + self.capsule.w + 8.,
+            self.capsule.y,
+            self.capsule.h,
+            self.capsule.h,
+        )
+    }
+    pub fn compact_cover(self, scale: f64) -> Rect {
+        let round = |v: f64| (v * scale).round_ties_even() / scale;
+        Rect::new(
+            self.capsule.x + round(7.) + round(3.),
+            self.capsule.y + round((self.capsule.h - 24.) / 2.),
+            24.,
+            24.,
+        )
+    }
 }
 
-#[cfg(test)]mod independent_radius_tests{
- use super::*;
- #[test]fn radii_follow_the_same_geometry_and_remain_independent(){
-  let l=Layout::new(260.);
-  for closed in [0.,8.,20.,48.]{for opened in [8.,30.,48.]{
-   let(a,ra)=l.morph_shape_with_radii(0.,closed,opened);let(b,rb)=l.morph_shape_with_radii(1.,closed,opened);
-   assert_eq!(a,l.capsule);assert_eq!(b,l.card);assert_eq!(ra,closed.min(l.capsule.h/2.));assert_eq!(rb,opened);
-   for i in 0..100{let p=i as f64/100.;let(shape,r)=l.morph_shape_with_radii(p,closed,opened);assert!(r>=0.&&r<=shape.w.min(shape.h)/2.);assert_eq!(shape,l.morph_shape(p,opened).0);}
-  }}
- }
+#[cfg(test)]
+mod independent_radius_tests {
+    use super::*;
+    #[test]
+    fn radii_follow_the_same_geometry_and_remain_independent() {
+        let l = Layout::new(260.);
+        for closed in [0., 8., 20., 48.] {
+            for opened in [8., 30., 48.] {
+                let (a, ra) = l.morph_shape_with_radii(0., closed, opened);
+                let (b, rb) = l.morph_shape_with_radii(1., closed, opened);
+                assert_eq!(a, l.capsule);
+                assert_eq!(b, l.card);
+                assert_eq!(ra, closed.min(l.capsule.h / 2.));
+                assert_eq!(rb, opened);
+                for i in 0..100 {
+                    let p = i as f64 / 100.;
+                    let (shape, r) = l.morph_shape_with_radii(p, closed, opened);
+                    assert!(r >= 0. && r <= shape.w.min(shape.h) / 2.);
+                    assert_eq!(shape, l.morph_shape(p, opened).0);
+                }
+            }
+        }
+    }
+    #[test]
+    fn taskbar_anchor_bottom_grows_upward_inside_host() {
+        let mut l = Layout::new(240.);
+        l.configure_anchor(true, 48.);
+        assert!(l.card.y + l.card.h < l.capsule.y);
+        assert_eq!(l.morph_shape(0., 28.).0, l.capsule);
+        let (end, _) = l.morph_shape(1., 28.);
+        assert!((end.x - l.card.x).abs() < 1e-8);
+        assert!((end.y - l.card.y).abs() < 1e-8);
+        for i in 0..=100 {
+            let p = i as f64 / 100.;
+            let (s, _) = l.morph_shape(p, 28.);
+            assert!(s.x >= 0. && s.y >= 0. && s.x + s.w <= l.host.w && s.y + s.h <= l.host.h);
+        }
+    }
 }

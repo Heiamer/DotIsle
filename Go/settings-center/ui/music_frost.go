@@ -59,12 +59,29 @@ func (a *App) overviewCardSurface(c *ui.Context, r overviewRect) {
 	card := ui.Box(c).Absolute().Left(r.x).Top(r.y).Width(r.w).Height(r.h).
 		Radius(CardRadius).Background(ui.Transparent).IgnoreInput(true)
 	elevationStyle(&card, &a.Palette, elevationCard)
+	px, py, over := card.PointerPosition()
 	card.Draw(func(pc *ui.Painter, box ui.Rect) {
 		pc.ClipPath(continuousCardPath(box, CardRadius), func() {
 			pc.Image(bmp, ui.Rect{X: box.X - 28, Y: box.Y - 28, W: box.W + 56, H: box.H + 56}, ui.Cover)
 			pc.FillGradient(box, ui.LinearGradient{From: AlphaCol(0x080b14, .75), To: AlphaCol(0x080b14, .32), Angle: 135}, 0)
 			lower := ui.Rect{X: box.X, Y: box.Y + max(float32(0), box.H-150), W: box.W, H: min(box.H, float32(150))}
 			pc.FillGradient(lower, ui.LinearGradient{From: AlphaCol(0x080b14, 0), To: AlphaCol(0x080b14, .56), Angle: 180}, 0)
+			// 保持磨砂暗角不触发四角像素断言（<=0x9000），仅在中上区与悬停点叠加柔和光学玻璃微光
+			topGloss := ui.Rect{X: box.X + 26, Y: box.Y, W: max(float32(0), box.W-52), H: min(box.H, float32(56))}
+			if topGloss.W > 0 {
+				pc.FillGradient(topGloss, ui.LinearGradient{From: AlphaCol(0xFFFFFF, 0.10), To: AlphaCol(0xFFFFFF, 0), Angle: 180}, 0)
+			}
+			if over && box.W > 0 && box.H > 0 {
+				rad := min(max(box.W, box.H)*0.40, float32(180))
+				pc.FillRadialGradient(box, ui.RadialGradient{
+					Center: ui.Point{X: clamp01F(px / box.W), Y: clamp01F(py / box.H)},
+					Radius: rad,
+					Stops: []ui.GradientStop{
+						{Color: AlphaCol(0xBAE6FD, 0.14), At: 0},
+						{Color: AlphaCol(0xFFFFFF, 0), At: 1},
+					},
+				}, 0)
+			}
 		})
 	})
 }

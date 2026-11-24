@@ -26,7 +26,7 @@ pub unsafe fn run(app: &mut App, out: &Path) -> Result<(), Box<dyn std::error::E
             let mut scene = app.scene();
             scene.panel = Some(&panel);
             scene.component_count = 1;
-            scene.glass_refraction = false;
+
             let file = format!("{mode}-{:03}.png", (amount * 100.) as u32);
             renderer.render(&scene, false)?;
             renderer.snapshot(&out.join(&file))?;
@@ -60,7 +60,7 @@ pub unsafe fn run(app: &mut App, out: &Path) -> Result<(), Box<dyn std::error::E
         let mut scene = app.scene();
         scene.panel = Some(&panel);
         scene.component_count = 1;
-        scene.glass_refraction = false;
+
         renderer.render(&scene, false)?;
         renderer.snapshot(&out.join(format!("flow-{i:03}.png")))?;
     }
@@ -71,7 +71,7 @@ pub unsafe fn run(app: &mut App, out: &Path) -> Result<(), Box<dyn std::error::E
         scene.panel = Some(&panel);
         scene.component_count = 1;
         scene.time_ms = time;
-        scene.glass_refraction = false;
+
         renderer.render(&scene, false)?;
         renderer.snapshot(&out.join(format!("{name}.png")))?;
     }

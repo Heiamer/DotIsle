@@ -13,9 +13,9 @@ import (
 
 const fontSample = "海边来信 · 让好音乐陪你"
 
-const defaultIslandFont = "HarmonyOS Sans SC"
+const defaultIslandFont = "Noto Sans SC"
 
-var builtinFamilies = []string{defaultIslandFont, "Noto Sans SC"}
+var builtinFamilies = []string{defaultIslandFont}
 
 var systemFamiliesCache []string
 
@@ -69,7 +69,7 @@ func fontFamilyName(value string) string {
 
 type fontPickerState struct {
 	query    string
-	selected string // "" means the default (HarmonyOS Sans SC)
+	selected string // "" means the default (Noto Sans SC)
 	current  string
 }
 

@@ -1,4 +1,4 @@
-// Native D3D soak test of the production overview, isolated from user data.
+// Native renderer soak test of the production overview, isolated from user data.
 package main
 
 import (
@@ -32,6 +32,7 @@ type sample struct {
 	Phase                                                            string  `json:"phase"`
 	Seconds                                                          float64 `json:"seconds"`
 	Heap, HeapInuse, HeapSys, Released, TotalAlloc, Private, Working uint64
+	CPUSeconds                                                       float64
 	Collections                                                      uint32
 	PauseNs                                                          uint64
 }
@@ -40,12 +41,13 @@ func main() {
 	output := flag.String("output", "", "report JSON and adjacent heap profile")
 	frames := flag.Int("frames", 3600, "unique native view frames to render")
 	pages := flag.Int("pages", 5, "number of overview pages, 1 to 5")
+	hardwareOnly := flag.Bool("hardware-only", false, "require hardware and time successful DXGI presents")
 	flag.Parse()
 	if *output == "" || *frames < 120 || *pages < 1 || *pages > 5 {
 		log.Fatal("invalid profile arguments")
 	}
 	debug.SetGCPercent(50)
-	debug.SetMemoryLimit(192 << 20)
+	debug.SetMemoryLimit(96 << 20)
 	data, err := os.MkdirTemp("", "dotisle-overview-profile-")
 	if err != nil {
 		log.Fatal(err)
@@ -54,6 +56,7 @@ func main() {
 	os.Setenv("LYRICISLAND_TEST_PIPE", fmt.Sprintf("LyricIsland.Settings.test.profile.%d", os.Getpid()))
 	overview := prefs.DefaultOverview()
 	overview.View = "scroll"
+	overview.ScrollPlugin = true
 	overview.ScrollPages = overview.ScrollPages[:*pages]
 	if err := prefs.SaveOverview(filepath.Join(data, "center-overview.json"), overview); err != nil {
 		log.Fatal(err)
@@ -74,6 +77,7 @@ func main() {
 	var buildUs []float64
 	var frameMs []float64
 	var previous time.Time
+	var presents []time.Time
 	frame := 0
 	phase := 0
 	phaseAt := time.Time{}
@@ -86,7 +90,12 @@ func main() {
 		if ok == 0 {
 			log.Fatal(callErr)
 		}
-		s := sample{Frame: frame, Phase: label, Seconds: time.Since(start).Seconds(), Heap: stats.HeapAlloc, HeapInuse: stats.HeapInuse, HeapSys: stats.HeapSys, Released: stats.HeapReleased, TotalAlloc: stats.TotalAlloc, Private: uint64(counter.Private), Working: uint64(counter.Working), Collections: stats.NumGC, PauseNs: stats.PauseTotalNs}
+		var created, exited, kernel, user windows.Filetime
+		if err := windows.GetProcessTimes(windows.CurrentProcess(), &created, &exited, &kernel, &user); err != nil {
+			log.Fatal(err)
+		}
+		cpu := (uint64(kernel.HighDateTime)<<32 | uint64(kernel.LowDateTime)) + (uint64(user.HighDateTime)<<32 | uint64(user.LowDateTime))
+		s := sample{CPUSeconds: float64(cpu) / 1e7, Frame: frame, Phase: label, Seconds: time.Since(start).Seconds(), Heap: stats.HeapAlloc, HeapInuse: stats.HeapInuse, HeapSys: stats.HeapSys, Released: stats.HeapReleased, TotalAlloc: stats.TotalAlloc, Private: uint64(counter.Private), Working: uint64(counter.Working), Collections: stats.NumGC, PauseNs: stats.PauseTotalNs}
 		samples = append(samples, s)
 		log.Printf("frame=%d phase=%s private=%.1fMiB working=%.1fMiB heap=%.1fMiB gc=%d", frame, label, float64(s.Private)/(1<<20), float64(s.Working)/(1<<20), float64(s.Heap)/(1<<20), s.Collections)
 	}
@@ -94,7 +103,7 @@ func main() {
 		capture("ready")
 		center.RegisterFonts()
 		capture("fonts")
-		win := mygo.NewWindow(mygo.WindowOptions{Title: "点屿 · 概览内存压力测试", Width: center.WindowW, Height: center.WindowH, MinWidth: center.WindowW, MinHeight: center.WindowH, MaxWidth: center.WindowW, MaxHeight: center.WindowH, DisableResize: true, DisableMaximize: true, Frameless: true, Vibrancy: mygo.VibrancyMica, Content: ui.View(func(c *ui.Context) {
+		view := func(c *ui.Context) {
 			unique := !c.Now().Equal(previous)
 			if unique && phase == 0 {
 				if !previous.IsZero() {
@@ -138,7 +147,20 @@ func main() {
 				capture("final")
 				mygo.App.Quit()
 			}
-		})})
+		}
+		content := ui.View(view)
+		if *hardwareOnly {
+			var err error
+			content, err = center.HardwareContent(view, func(err error) { log.Fatal(err) }, func(at time.Time) {
+				if phase == 0 {
+					presents = append(presents, at)
+				}
+			})
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+		win := mygo.NewWindow(mygo.WindowOptions{Title: "点屿 · 概览内存压力测试", Width: center.WindowW, Height: center.WindowH, MinWidth: center.WindowW, MinHeight: center.WindowH, MaxWidth: center.WindowW, MaxHeight: center.WindowH, DisableResize: true, DisableMaximize: true, Frameless: true, Vibrancy: mygo.VibrancyMica, Content: content})
 		a.Win = win
 		win.SetBackgroundColor("transparent")
 	})
@@ -153,7 +175,20 @@ func main() {
 		}
 		return v[min(int(float64(len(v)-1)*p), len(v)-1)]
 	}
-	report := map[string]any{"success": frame >= *frames, "frames": frame, "pages": *pages, "seconds": time.Since(start).Seconds(), "buildMedianUs": percentile(buildUs, .5), "buildP95Us": percentile(buildUs, .95), "frameMedianMs": percentile(frameMs, .5), "frameP95Ms": percentile(frameMs, .95), "samples": samples, "synthetic": true, "renderer": "native MyGo D3D11"}
+	report := map[string]any{"success": frame >= *frames, "frames": frame, "pages": *pages, "seconds": time.Since(start).Seconds(), "buildMedianUs": percentile(buildUs, .5), "buildP95Us": percentile(buildUs, .95), "frameMedianMs": percentile(frameMs, .5), "frameP95Ms": percentile(frameMs, .95), "samples": samples, "synthetic": true, "gpuSetting": os.Getenv("MYGO_GPU")}
+	if *hardwareOnly {
+		if len(presents) < 2 {
+			log.Fatal("no DXGI present samples")
+		}
+		intervals := make([]float64, len(presents)-1)
+		for i := range intervals {
+			intervals[i] = float64(presents[i+1].Sub(presents[i]).Microseconds()) / 1000
+		}
+		sort.Float64s(intervals)
+		report["dxgiPresents"] = len(presents)
+		report["dxgiPresentFPS"] = float64(len(presents)-1) / presents[len(presents)-1].Sub(presents[0]).Seconds()
+		report["dxgiPresentMedianMs"], report["dxgiPresentP95Ms"] = percentile(intervals, .5), percentile(intervals, .95)
+	}
 	if err := os.MkdirAll(filepath.Dir(*output), 0755); err != nil {
 		log.Fatal(err)
 	}

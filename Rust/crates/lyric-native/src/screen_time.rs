@@ -13,6 +13,8 @@ pub struct Tracker {
     path: PathBuf, days: BTreeMap<String,Day>, last: Instant, checkpoint: Instant,
     awake: u64, date: Date, locked: bool, dirty: bool,
 }
+#[derive(Default)]
+pub struct Sample { pub active_ms: u64, pub continuous: bool }
 fn local() -> Date {
     let t=unsafe { GetLocalTime() };
     Date{year:t.wYear as i32,month:t.wMonth as u32,day:t.wDay as u32,
@@ -28,17 +30,18 @@ impl Tracker {
         let days=std::fs::read(&path).ok().and_then(|b|serde_json::from_slice(&b).ok()).unwrap_or_default();
         Self{path,days,last:Instant::now(),checkpoint:Instant::now(),awake,date:local(),locked:false,dirty:false}
     }
-    pub fn poll(&mut self,awake:u64,locked:bool){
-        if self.last.elapsed()<Duration::from_secs(1) { return }
-        let elapsed=self.last.elapsed().as_millis().min(u64::MAX as u128) as u64;
-        self.last=Instant::now();
+    pub fn poll(&mut self,at:Instant,awake:u64,locked:bool)->Sample{
+        let elapsed=at.saturating_duration_since(self.last).as_millis().min(u64::MAX as u128) as u64;
+        self.last=at;
         let now=local();
         // Unbiased time excludes sleep. Long scheduler gaps are deliberately uncounted.
         let observed=if elapsed<=90_000 {awake.saturating_sub(self.awake).min(elapsed)}else{0};
-        let active=if !locked&&!self.locked&&idle_ms().is_some_and(|v|v<300_000){observed}else{0};
+        let present=!locked&&!self.locked&&idle_ms().is_some_and(|v|v<crate::reminder_plugins::AWAY_MS);
+        let active=if present{observed}else{0};
         self.record(now,observed,active);
         self.awake=awake;self.locked=locked;
         if self.checkpoint.elapsed()>=Duration::from_secs(30){self.flush();self.checkpoint=Instant::now();}
+        Sample{active_ms:active,continuous:present&&elapsed.saturating_sub(observed)<5_000}
     }
     fn record(&mut self,now:Date,observed:u64,active:u64){
         let day=ordinal(now);let previous=ordinal(self.date);

@@ -13,13 +13,16 @@ func TestOverviewMigrationAndRoundTrip(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(p, DefaultOverview()) {
 		t.Fatal("missing store did not use defaults")
 	}
-	p = Overview{View: "scroll", Cards: []string{"quick", "music", "quick", "unknown", "widget:system"}}
+	p = Overview{View: "scroll", ScrollPlugin: true, Cards: []string{"quick", "music", "quick", "unknown", "widget:system"}}
 	if err = SaveOverview(path, p); err != nil {
 		t.Fatal(err)
 	}
 	restored, err := LoadOverview(path)
 	if err != nil || restored.View != "scroll" || !reflect.DeepEqual(restored.Cards, []string{"quick", "music", "widget:system"}) {
 		t.Fatalf("bad round trip: %+v %v", restored, err)
+	}
+	if NormalizeOverview(Overview{View: "scroll"}).View != "cards" {
+		t.Fatal("scroll view must be opt-in")
 	}
 	raw := []byte(`{"view":"invalid","cards":[]}`)
 	if err = os.WriteFile(path, raw, 0600); err != nil {

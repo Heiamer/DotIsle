@@ -1,5 +1,4 @@
-//! Content-free messaging signals. Never inspect window titles, accessibility
-//! text, client databases, process memory, input or notification payloads.
+//! Taskbar signals for metadata-only message reminders.
 use std::{collections::HashMap,time::{Duration,Instant}};
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Hash)]
@@ -8,7 +7,9 @@ impl App {
     pub fn id(self)->&'static str { match self { Self::WeChat=>"WeChat",Self::Feishu=>"Feishu",Self::DingTalk=>"DingTalk",Self::WeCom=>"WXWork" } }
     pub fn name(self)->&'static str { match self { Self::WeChat=>"微信",Self::Feishu=>"飞书",Self::DingTalk=>"钉钉",Self::WeCom=>"企业微信" } }
     pub fn setting(self)->&'static str { match self { Self::WeChat=>"WeChatMessageHintsEnabled",Self::Feishu=>"FeishuMessageHintsEnabled",Self::DingTalk=>"DingTalkMessageHintsEnabled",Self::WeCom=>"WeComMessageHintsEnabled" } }
-    pub fn notice(self)->crate::notifications::Notice { crate::notifications::Notice { app_id:self.id().into(),app_name:self.name().into(),title:"有新消息".into(),..Default::default() } }
+    pub fn uses_toast(self)->bool { self!=Self::WeChat }
+    pub fn content_only(self)->bool { matches!(self,Self::Feishu|Self::DingTalk) }
+    pub fn notice(self)->crate::notifications::Notice { crate::notifications::Notice { app_id:self.id().into(),app_name:self.name().into(),title:if self.content_only(){String::new()}else{"有新消息".into()},..Default::default() } }
 }
 
 pub fn from_executable(path:&str)->Option<App> {
@@ -99,6 +100,13 @@ unsafe fn window_identity(window:windows::Win32::Foundation::HWND)->Option<(App,
         assert_eq!(identify("DingTalk",""),Some(App::DingTalk));
         for name in ["FakeWeChat.exe","WeChatAppEx.exe","DingTalkUpdater.exe","QQMusic.exe"] {assert_eq!(from_executable(name),None)}
         assert_eq!(identify("FakeWeChat",""),None);
+    }
+    #[test] fn wechat_is_a_shell_only_hint() {
+        assert!(!App::WeChat.uses_toast());
+        assert!(!App::WeChat.content_only());
+        let hint:Hint=App::WeChat.into();
+        assert_eq!(hint.app_id,"WeChat");
+        assert_eq!(hint.app_name,"微信");
     }
     #[test] fn flashing_and_toast_share_cooldown_without_replaying_foreground() {
         let mut gate=Gate::default();let now=Instant::now();let a=App::WeChat;

@@ -28,14 +28,17 @@ impl Banner {
     pub fn show(&mut self,notice:Notice,base:Rect,radius:f64,host_width:f64,height:f64,now:f64,animate:bool){
         if self.notice.is_none(){for (s,v) in self.motion.iter_mut().zip([base.x,base.y,base.w,base.h,radius,0.]){s.snap(v,now);}}
         self.notice=Some(notice);self.open=true;self.retiring=false;self.changed=now;self.deadline=now+7.;self.compact=false;
-        let width=440_f64.min(host_width-48.);let target=[(host_width-width)/2.,base.y,width,height.clamp(64.,96.),24.,1.];
+        let width=440_f64.min(host_width-48.);
+        let h=height.clamp(64.,98.);
+        let target=[(host_width-width)/2.,base.y,width,h,24.,1.];
         for (s,v) in self.motion.iter_mut().zip(target){if animate{s.retarget(v,now)}else{s.snap(v,now)}}
     }
     /// A compact, non-interactive hint: same spring and interruption rules, shorter hold.
     pub fn show_compact(&mut self,notice:Notice,base:Rect,radius:f64,host_width:f64,now:f64,animate:bool){
         if self.notice.is_none(){for (s,v) in self.motion.iter_mut().zip([base.x,base.y,base.w,base.h,radius,0.]){s.snap(v,now);}}
         self.notice=Some(notice);self.open=true;self.retiring=false;self.changed=now;self.deadline=now+1.6;self.compact=true;
-        let width=220_f64.min(host_width-48.);let target=[(host_width-width)/2.,base.y,width,44.,22.,1.];
+        let width=220_f64.min(host_width-48.);
+        let target=[(host_width-width)/2.,base.y,width,44.,22.,1.];
         // Reduced motion still gets a short opacity fade; the shell never scales.
         for (i,(s,v)) in self.motion.iter_mut().zip(target).enumerate(){if animate||i==5{s.retarget(v,now)}else{s.snap(v,now)}}
     }

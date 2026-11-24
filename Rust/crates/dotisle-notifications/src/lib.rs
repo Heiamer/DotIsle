@@ -1,4 +1,4 @@
-use serde_json::{json,Value};use std::{cell::RefCell,collections::BTreeMap};mod message_hints;mod notifications;mod notification_store;mod app_icon;
+use serde_json::{json,Value};use std::{cell::RefCell,collections::BTreeMap};mod message_hints;mod notifications;mod notification_store;mod app_icon;mod toast_avatar;
 thread_local!{static LISTENERS:RefCell<BTreeMap<u64,notifications::Listener>>=RefCell::new(BTreeMap::new());static NEXT:std::cell::Cell<u64>=const{std::cell::Cell::new(1)};}
 fn dispatch(v:Value)->Result<Value,String>{let a=&v["args"];match v["method"].as_str().unwrap_or(""){
 "example"=>Ok(json!(notifications::Notice::example(std::path::Path::new(a["base"].as_str().ok_or("base")?)))),

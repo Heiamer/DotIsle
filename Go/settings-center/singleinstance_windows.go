@@ -49,7 +49,9 @@ func signalCenterShow(data string) {
 		return
 	}
 	h, err := windows.CreateEvent(nil, 0, 0, p)
-	if err != nil {
+	// ERROR_ALREADY_EXISTS is the normal case: the resident center created the
+	// event first, and CreateEvent still returns a usable handle to it.
+	if err != nil && err != windows.ERROR_ALREADY_EXISTS {
 		return
 	}
 	defer windows.CloseHandle(h)
@@ -63,7 +65,7 @@ func watchCenterShow(data string, show func()) {
 		return
 	}
 	h, err := windows.CreateEvent(nil, 0, 0, p)
-	if err != nil {
+	if err != nil && err != windows.ERROR_ALREADY_EXISTS {
 		return
 	}
 	go func() {

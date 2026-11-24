@@ -1,4 +1,5 @@
 """Exercise the packaged native timer over its real, isolated settings pipe."""
+import hashlib
 import argparse
 import ctypes
 from ctypes import wintypes
@@ -37,6 +38,9 @@ class Runtime:
         return self.launch()
 
     def write_settings(self):
+        # Isolated test data only; production consent is exercised separately.
+        text = (Path(__file__).resolve().parents[1] / 'Go/settings-center/consent/disclaimer.zh-CN.txt').read_text(encoding='utf-8')
+        (self.data / 'consent.json').write_text(json.dumps({'appVersion':json.loads((self.runtime/'Assets/RuntimeFiles.json').read_text(encoding='utf-8'))['version'],'revision':'2026-11-17.1','sha256':hashlib.sha256(text.encode()).hexdigest(),'accepted':True,'acceptedAtUnix':int(time.time())}), encoding='utf-8')
         (self.data / 'settings.json').write_text(json.dumps({
             'AutoStart': False, 'AutoCheckUpdatesEnabled': False,
             'DeviceRemindersEnabled': False, 'SystemStateHintsEnabled': False,
@@ -44,13 +48,14 @@ class Runtime:
             'NotificationSoundEnabled': False, 'DeviceSoundEnabled': False,
             'GestureTutorialSeen': True, 'OnlineSongInfo': False,
         }), encoding='utf-8')
-    def launch(self):
-        environment = dict(os.environ, LYRICISLAND_TEST_PIPE=self.pipe.split('\\')[-1])
+    def launch(self, *, args=(), env=None, creationflags=subprocess.CREATE_NO_WINDOW):
+        environment = dict(os.environ, **(env or {}))
+        environment['LYRICISLAND_TEST_PIPE'] = self.pipe.split('\\')[-1]
         self.log = (self.data / 'process.log').open('ab')
         self.process = subprocess.Popen(
-            [str(self.runtime / 'LyricIsland.exe'), '--data-dir', str(self.data), '--startup'],
+            [str(self.runtime / 'LyricIsland.exe'), '--data-dir', str(self.data), '--startup', *args],
             cwd=self.runtime, env=environment, stdout=self.log, stderr=self.log,
-            creationflags=subprocess.CREATE_NO_WINDOW)
+            creationflags=creationflags)
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             if self.process.poll() is not None:

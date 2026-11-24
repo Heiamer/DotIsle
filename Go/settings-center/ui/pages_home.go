@@ -1,5 +1,5 @@
 // Equal-sized overview cards travel on a continuous ring. Only transforms
-// and opacity change while the fixed content surfaces stay cached.
+// change while the fixed content is laid out at the same size.
 package ui
 
 import (
@@ -110,39 +110,31 @@ func (a *App) homePage(c *ui.Context, x, y, w, viewportH float32) {
 		}
 	}
 
-	// One edge mask; no animated full-viewport blur or per-page reflow.
-	black := ui.RGB(0, 0, 0)
-	ui.Box(c).Key("deck-edges").Absolute().Left(0).Top(0).Width(w).Height(viewportH).
-		MaskLinearGradient(ui.LinearGradient{Angle: 180, Stops: []ui.GradientStop{
-			{Color: ui.Transparent, At: 0}, {Color: black, At: min(24/viewportH, .3)},
-			{Color: black, At: max(1-24/viewportH, .7)}, {Color: ui.Transparent, At: 1},
-		}}).Children(func() {
-		layer := ui.Box(c).Key("deck-layer").Absolute().Fill()
-		layer.Children(func() {
-			for _, slot := range order {
-				if count == 1 && slot != base {
-					continue
-				}
-				i := deckSlotIndex(slot, count)
-				d := float64(slot) - progress
-				visibility := float32(clampF64(2-math.Abs(d), 0, 1))
-				dy, visualH := deckGeometry(d, h)
-				ty := y + float32(dy)
-				hidden := visibility <= 0 || ty+h < 0 || ty > viewportH
-				identity := deckSlotIndex(slot, 4)
-				if count == 1 {
-					identity = 0
-				}
-				card := ui.ButtonBase(c).Role(ui.RoleGroup).Key("deck-slot-"+itoa(identity)).Label("浏览"+overviewName(pages[i])+"卡片").Absolute().Left(x).Top(y).
-					Width(cardW).Height(h).Translate(0, float32(dy)).Opacity(visibility).Hidden(hidden)
-				dragged := a.deckGesture(c, card, count, h)
-				if card.Clicked() && !dragged && math.Abs(d) >= .5 {
-					a.deckTo(float64(slot)*deckStep, false)
-				}
-				card.Children(func() { a.deckCard(c, pages[i], cardW, h, visualH, d) })
-			}
-		})
-	})
+	// The parent already clips the deck. Do not rasterize a second,
+	// full-viewport gradient mask on every card translation.
+	for _, slot := range order {
+		if count == 1 && slot != base {
+			continue
+		}
+		i := deckSlotIndex(slot, count)
+		d := float64(slot) - progress
+		dy, _ := deckGeometry(d, h)
+		ty := y + float32(dy)
+		hidden := ty+h < 0 || ty > viewportH
+		identity := deckSlotIndex(slot, 4)
+		if count == 1 {
+			identity = 0
+		}
+		card := ui.ButtonBase(c).Role(ui.RoleGroup).Key("deck-slot-"+itoa(identity)).Label("浏览"+overviewName(pages[i])+"卡片").Absolute().Left(x).Top(y).
+			Width(cardW).Height(h).Translate(0, float32(dy)).Hidden(hidden)
+		dragged := a.deckGesture(c, card, count, h)
+		if card.Clicked() && !dragged && math.Abs(d) >= .5 {
+			a.deckTo(float64(slot)*deckStep, false)
+		}
+		if !hidden {
+			card.Children(func() { a.deckCard(c, pages[i], cardW, h, d) })
+		}
+	}
 }
 
 // Full-sized neighbours keep a constant gap at every intermediate phase.
@@ -241,11 +233,10 @@ func (a *App) deckTo(target float64, immediate bool) {
 
 // The same complete card surface moves through the viewport; only the closest
 // page owns controls. Neighbour content remains visible without duplicate titles.
-func (a *App) deckCard(c *ui.Context, key string, w, h, visualH float32, d float64) {
+func (a *App) deckCard(c *ui.Context, key string, w, h float32, d float64) {
 	a.overviewCardSurface(c, overviewRect{key, 0, 0, w, h})
-	body := float32(.45 + .55*clampF64(1-math.Abs(d), 0, 1))
 	ui.Box(c).Key("deck-body").Absolute().Left(0).Top(0).Width(w).Height(h).
-		ClipInset(0, 12, 12, 12, 0).Opacity(body).Cache().
+		ClipInset(0, 12, 12, 12, 0).
 		IgnoreInput(math.Abs(d) >= .5).AccessHidden(math.Abs(d) >= .5).Children(func() {
 		ui.Box(c).Key("deck-content").Width(w).Height(h).Children(func() {
 			a.renderOverviewCardBody(c, overviewRect{key, 0, 0, w, h})

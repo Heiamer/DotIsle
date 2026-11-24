@@ -70,6 +70,7 @@ impl Registry{
   self.save(&entries)?;self.entries=entries;self.refresh(true);Ok(())
  }
  pub fn refresh(&mut self,force:bool)->bool{
+  if !force&&self.entries.is_empty(){return false}
   if !force&&self.last.elapsed()<Duration::from_secs(1){return false} self.last=Instant::now();
   let mut stamps=BTreeMap::new();
   let next=Value::Array(self.entries.iter().map(|e|{
@@ -80,7 +81,9 @@ impl Registry{
    _=>json!({"id":e.id,"name":e.id,"enabled":e.enabled,"views":{},"error":"插件文件损坏、缺失或格式不受支持"})}
   }).collect());let changed=self.state!=next;self.state=next;self.stamps=stamps;changed
  }
- pub fn island_ids(&self)->Vec<String>{self.state.as_array().into_iter().flatten().filter(|p|p["enabled"]==true&&p["views"]["island"].is_array()).filter_map(|p|p["id"].as_str().map(|id|format!("plugin:{id}"))).collect()}
+ fn island_plugins(&self)->impl Iterator<Item=&str>{self.state.as_array().into_iter().flatten().filter(|p|p["enabled"]==true&&p["views"]["island"].is_array()).filter_map(|p|p["id"].as_str())}
+ pub fn island_ids(&self)->Vec<String>{self.island_plugins().map(|id|format!("plugin:{id}")).collect()}
+ pub fn has_island_plugins(&self)->bool{self.island_plugins().next().is_some()}
  pub fn get(&self,id:&str)->Option<&Value>{self.state.as_array()?.iter().find(|p|p["id"]==id&&p["enabled"]==true&&p["error"]=="")}
 }
 #[cfg(test)]mod tests{use super::*;

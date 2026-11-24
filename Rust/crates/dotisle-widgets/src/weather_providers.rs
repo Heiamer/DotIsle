@@ -14,28 +14,53 @@ fn fixed_offset(zone:&str)->Option<i64>{match zone {
 fn wttr(city:&str)->Result<Value,String>{
     get(&format!("https://wttr.in/{}?format=j1",dotisle_module_storage::http::encode(city)))
 }
-fn place(city:&str)->Result<Place,String>{
+// Keep successful coordinates longer than their refresh TTL: a transient geocoder
+// outage should not prevent an otherwise healthy forecast endpoint from serving the city.
+fn place(city:&str, fallback:impl FnOnce()->Result<Value,String>)->Result<Place,String>{
     static PLACES:OnceLock<Mutex<BTreeMap<String,(Instant,Place)>>>=OnceLock::new();
     let cache=PLACES.get_or_init(Default::default);
-    if let Ok(cache)=cache.lock(){if let Some((at,p))=cache.get(city){if at.elapsed()<Duration::from_secs(86400){return Ok(p.clone())}}}
-    let resolved=(||{
+    let previous=cache.lock().ok().and_then(|c|c.get(city).cloned());
+    if let Some((at,p))=&previous {if at.elapsed()<Duration::from_secs(86400){return Ok(p.clone())}}
+    let resolved=validate_place((||{
         let raw=get(&format!("https://geocoding-api.open-meteo.com/v1/search?name={}&count=1&language=zh&format=json",dotisle_module_storage::http::encode(city)))?;
         let p=raw["results"].as_array().and_then(|a|a.first()).ok_or("未找到城市")?;
-        Ok::<_,String>(Place{name:p["name"].as_str().unwrap_or(city).into(),region:p["admin1"].clone(),
+        Ok(Place{name:p["name"].as_str().unwrap_or(city).into(),region:p["admin1"].clone(),
             lat:super::number(&p["latitude"]).ok_or("城市坐标缺失")?,lon:super::number(&p["longitude"]).ok_or("城市坐标缺失")?,
             offset:fixed_offset(p["timezone"].as_str().unwrap_or(""))})
-    })().or_else(|_|{
-        // A geocoder outage must not disable the independent MET provider.
-        let raw=wttr(city)?;let p=&raw["nearest_area"][0];
-        Ok::<_,String>(Place{name:city.into(),region:p["region"][0]["value"].clone(),
+    })()).or_else(|_|validate_place((||{
+        let raw=fallback()?;let p=&raw["nearest_area"][0];
+        Ok(Place{name:p["areaName"][0]["value"].as_str().unwrap_or(city).into(),region:p["region"][0]["value"].clone(),
             lat:super::wttr_number(&p["latitude"]).ok_or("城市坐标缺失")?,lon:super::wttr_number(&p["longitude"]).ok_or("城市坐标缺失")?,
             offset:(p["country"][0]["value"].as_str()==Some("China")).then_some(8*3600)})
-    })?;
-    if !(-90. ..=90.).contains(&resolved.lat)||!(-180. ..=180.).contains(&resolved.lon){return Err("城市坐标无效".into())}
+    })()));
+    let resolved=match resolved {
+        Ok(p)=>p,
+        Err(error)=>return previous.filter(|(at,_)|at.elapsed()<Duration::from_secs(7*86400)).map(|(_,p)|p).ok_or(error),
+    };
     if let Ok(mut cache)=cache.lock(){if cache.len()>=32{if let Some(key)=cache.iter().min_by_key(|(_,v)|v.0).map(|(k,_)|k.clone()){cache.remove(&key);}}cache.insert(city.into(),(Instant::now(),resolved.clone()));}
     Ok(resolved)
 }
-pub(super) fn request(source:Source,city:&str)->Result<Value,String>{
+fn validate_place(result:Result<Place,String>)->Result<Place,String>{
+    let place=result?;
+    if !(-90. ..=90.).contains(&place.lat)||!(-180. ..=180.).contains(&place.lon){return Err("城市坐标无效".into())}
+    Ok(place)
+}
+#[derive(Default)]
+struct PerRefresh<T>(Option<Result<T,String>>);
+impl<T> PerRefresh<T>{
+    fn get(&mut self,load:impl FnOnce()->Result<T,String>)->Result<&T,String>{
+        self.0.get_or_insert_with(load).as_ref().map_err(Clone::clone)
+    }
+}
+pub(super) struct Requests<'a> { city:&'a str, place:PerRefresh<Place>, wttr:PerRefresh<Value> }
+impl<'a> Requests<'a>{
+    pub fn new(city:&'a str)->Self{Self{city,place:PerRefresh(None),wttr:PerRefresh(None)}}
+    fn coordinates(&mut self)->Result<&Place,String>{
+        let city=self.city;let weather=&mut self.wttr;
+        self.place.get(||place(city,||weather.get(||wttr(city)).cloned()))
+    }
+    pub fn request(&mut self,source:Source)->Result<Value,String>{
+    let city=self.city;
     let mut data=match source {
         Source::Qq=>fetch_qq(city)?,
         Source::Toutiao=>{
@@ -43,25 +68,25 @@ pub(super) fn request(source:Source,city:&str)->Result<Value,String>{
             parse_toutiao(city,&raw,now())?
         }
         Source::OpenMeteo=>{
-            let p=place(city)?;
+            let p=self.coordinates()?;
             let raw=get(&format!("https://api.open-meteo.com/v1/forecast?latitude={:.4}&longitude={:.4}&current=temperature_2m,weather_code,is_day&hourly=precipitation,rain,showers,snowfall,precipitation_probability&daily=temperature_2m_max,temperature_2m_min&forecast_days=2&timezone=auto&timeformat=unixtime",p.lat,p.lon))?;
             super::parse(&json!({"name":p.name,"admin1":p.region}),&raw)?
         }
         Source::MetNorway=>{
-            let p=place(city)?;
+            let p=self.coordinates()?;
             // Four decimals respect MET's cache requirement; the app identifies its project.
             let raw=get(&format!("https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={:.4}&lon={:.4}",p.lat,p.lon))?;
-            parse_met(&p,&raw,now())?
+            parse_met(p,&raw,now())?
         }
         Source::BrightSky=>{
-            let p=place(city)?;let clock=now();
+            let p=self.coordinates()?;let clock=now();
             let raw=get(&format!("https://api.brightsky.dev/weather?lat={:.4}&lon={:.4}&date={}&last_date={}&max_dist=50000&tz=UTC",p.lat,p.lon,utc_text(clock-3600),utc_text(clock+30*3600)))?;
-            parse_brightsky(&p,&raw,clock)?
+            parse_brightsky(p,&raw,clock)?
         }
-        Source::Wttr=>super::parse_wttr(city,&wttr(city)?)?,
+        Source::Wttr=>super::parse_wttr(city,self.wttr.get(||wttr(city))?)?,
         Source::SevenTimer=>{
-            let p=place(city)?;let raw=get(&format!("https://www.7timer.info/bin/api.pl?lon={:.4}&lat={:.4}&product=civil&output=json",p.lon,p.lat))?;
-            parse_seven(&p,&raw,now())?
+            let p=self.coordinates()?;let raw=get(&format!("https://www.7timer.info/bin/api.pl?lon={:.4}&lat={:.4}&product=civil&output=json",p.lon,p.lat))?;
+            parse_seven(p,&raw,now())?
         }
     };
     let at=data["time"].as_i64().ok_or("天气时间缺失")?;let clock=now();
@@ -69,6 +94,18 @@ pub(super) fn request(source:Source,city:&str)->Result<Value,String>{
     data["sourceUrl"]=json!(match source {Source::Qq=>"https://tianqi.qq.com/",Source::Toutiao=>"https://www.toutiao.com/",Source::OpenMeteo=>"https://open-meteo.com/",Source::MetNorway=>"https://api.met.no/",Source::BrightSky=>"https://brightsky.dev/",Source::Wttr=>"https://github.com/chubin/wttr.in",Source::SevenTimer=>"https://www.7timer.info/"});
     if matches!(source,Source::OpenMeteo|Source::MetNorway){data["dataLicense"]=json!("CC BY 4.0");}
     Ok(data)
+}
+
+}
+
+#[cfg(test)]
+#[test]
+fn failed_shared_requests_are_tried_once_per_refresh(){
+    let mut batch=PerRefresh::<Value>(None);
+    assert!(batch.get(||Err("offline".into())).is_err());
+    assert!(batch.get(||panic!("fallback retried the failed geocoder")).is_err());
+    let mut next=PerRefresh(None);
+    assert_eq!(next.get(||Ok(json!("online"))).unwrap(),"online");
 }
 
 // Civil calendar conversion avoids a timezone library for UTC request bounds.
@@ -310,7 +347,7 @@ fn parse_toutiao(city:&str,raw:&Value,clock:i64)->Result<Value,String>{
         let mut results=Vec::new();
         for city in ["上海","北京","广州"] {
             for source in [Source::Qq,Source::Toutiao,Source::SevenTimer] {
-                let began=Instant::now();let result=request(source,city);
+                let began=Instant::now();let result=Requests::new(city).request(source);
                 results.push(match result {
                     Ok(data)=>json!({"city":city,"source":source.name(),"elapsedMs":began.elapsed().as_millis(),
                         "temperatureUsable":data["temperature"].as_f64().is_some(),"forecastUsable":data["precipitationForecastAvailable"]==true,"data":data}),
@@ -328,7 +365,7 @@ fn parse_toutiao(city:&str,raw:&Value,clock:i64)->Result<Value,String>{
     fn live_all_sources(){
         let mut results=Vec::new();
         for city in ["上海","北京","广州"]{for source in super::super::pool::SOURCES{
-            let began=Instant::now();let result=request(source,city);
+            let began=Instant::now();let result=Requests::new(city).request(source);
             results.push(match result{
                 Ok(data)=>json!({"city":city,"source":source.name(),"elapsedMs":began.elapsed().as_millis(),
                     "forecastUsable":data["precipitationForecastAvailable"]==true,"data":data}),

@@ -10,8 +10,7 @@ impl BarStyle{
     pub const ALL:[Self;8]=[Self::Normal,Self::Wavy,Self::Rounded,Self::Thin,Self::Thick,Self::Gradient,Self::Segmented,Self::Dots];
     pub fn key(self)->&'static str{match self{Self::Normal=>"Normal",Self::Wavy=>"Wavy",Self::Rounded=>"Rounded",Self::Thin=>"Thin",Self::Thick=>"Thick",Self::Gradient=>"Gradient",Self::Segmented=>"Segmented",Self::Dots=>"Dots"}}
     pub fn detail(self)->&'static str{match self{Self::Normal=>"标准填充",Self::Wavy=>"随播放起伏的波浪",Self::Rounded=>"两端完全圆角",Self::Thin=>"纤细线条",Self::Thick=>"加粗填充",Self::Gradient=>"主色渐变",Self::Segmented=>"分段刻度",Self::Dots=>"圆点串联"}}
-    /// Unknown values keep the shipped Wavy bar instead of failing to render.
-    pub fn from_setting(s:&str)->Self{match s{"Normal"=>Self::Normal,"Wavy"|""=>Self::Wavy,"Rounded"=>Self::Rounded,"Thin"=>Self::Thin,"Thick"=>Self::Thick,"Gradient"=>Self::Gradient,"Segmented"=>Self::Segmented,"Dots"=>Self::Dots,_=>Self::Wavy}}
+    pub fn from_setting(s:&str)->Self{match s{"Wavy"=>Self::Wavy,"Rounded"=>Self::Rounded,"Thin"=>Self::Thin,"Thick"=>Self::Thick,"Gradient"=>Self::Gradient,"Segmented"=>Self::Segmented,"Dots"=>Self::Dots,_=>Self::Normal}}
 }
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
@@ -202,7 +201,7 @@ mod tests{
     use super::*;
     #[test]fn unknown_settings_fall_back_to_the_shipped_wavy_pill(){
         assert_eq!(BarStyle::from_setting("Wavy"),BarStyle::Wavy);
-        assert_eq!(BarStyle::from_setting("nope"),BarStyle::Wavy);
+        assert_eq!(BarStyle::from_setting("nope"),BarStyle::Normal);
         assert_eq!(ThumbStyle::from_setting("Pill"),ThumbStyle::Pill);
         assert_eq!(ThumbStyle::from_setting("nope"),ThumbStyle::Pill);
         for style in BarStyle::ALL{assert_eq!(BarStyle::from_setting(style.key()),style);}

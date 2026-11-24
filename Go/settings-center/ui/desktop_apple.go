@@ -102,9 +102,6 @@ func (a *App) appleDesktopPreview(c *ui.Context, p *Palette, kind, size string, 
 				}
 			}
 			sort.SliceStable(items, func(i, j int) bool { return items[i].Date+items[i].Time < items[j].Date+items[j].Time })
-			if len(items) == 0 {
-				Label(c, "今天，轻松一点。", xx, yy+45, 17, s.OnSurface, true, ww)
-			}
 			rows := 2
 			if small {
 				rows = 1
@@ -261,7 +258,10 @@ func (a *App) appleDesktopPreview(c *ui.Context, p *Palette, kind, size string, 
 			}
 		case "note":
 			ui.Box(c).Absolute().Left(xx).Top(yy + 27).Width(ww).Height(3).Radius(1.5).Background(Col(0xE9BD51))
-			text := stateString(config, "记下一点想法\n点击编辑便签", "text")
+			text := stateString(config, "", "text")
+			if text == "" {
+				break
+			}
 			for i, line := range strings.Split(text, "\n") {
 				if i >= 3 && !large {
 					break

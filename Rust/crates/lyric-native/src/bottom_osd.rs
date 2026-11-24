@@ -4,7 +4,7 @@ use windows::{core::{w,Result},Win32::{Foundation::*,Graphics::Gdi::*,System::Li
 use crate::{renderer::{Renderer,MaterialTheme,Material},notifications::Notice};
 pub struct Overlay{theme:MaterialTheme,hwnd:HWND,renderer:Option<Renderer>,notice:Option<Notice>,opacity:f64,from:f64,target:f64,began:Instant,until:Instant,animate:bool,dirty:bool,idle:Instant}
 impl Overlay{
- pub fn new()->Self{let now=Instant::now();Self{theme:MaterialTheme::new(Material::Acrylic,false),hwnd:HWND::default(),renderer:None,notice:None,opacity:0.,from:0.,target:0.,began:now,until:now,animate:true,dirty:false,idle:now}}
+ pub fn new()->Self{let now=Instant::now();Self{theme:MaterialTheme::new(Material::LightField,false),hwnd:HWND::default(),renderer:None,notice:None,opacity:0.,from:0.,target:0.,began:now,until:now,animate:true,dirty:false,idle:now}}
  pub fn visible(&self)->bool{self.notice.is_some()&&(self.opacity>0.001||self.target>0.)}
  pub unsafe fn show(&mut self,notice:Notice,anchor:HWND,font:&Path,animate:bool,theme:MaterialTheme)->Result<()>{
   let dpi=GetDpiForWindow(anchor).max(96)as f32;let scale=dpi as f64/96.;let width=(272.*scale).round()as i32;let height=(80.*scale).round()as i32;
@@ -27,7 +27,7 @@ impl Overlay{
    // The overlay keeps its own full wgpu + Vello renderer. Hints are rare, so it
    // is retired after half a hidden minute instead of holding a second GPU
    // context alive for the rest of the session; the next hint rebuilds it.
-   if self.renderer.is_some()&&self.idle.elapsed()>=Duration::from_secs(30){self.renderer=None;}
+   if self.renderer.is_some()&&self.idle.elapsed()>=Duration::from_secs(30){self.renderer=None;self.theme.cover=None;}
    return Ok(())}let now=Instant::now();
   if now>=self.until&&self.target>0.{self.from=self.opacity;self.target=0.;self.began=now;}
   let t=if self.animate{(now.duration_since(self.began).as_secs_f64()/if self.target>0.{0.16}else{0.12}).min(1.)}else{1.};

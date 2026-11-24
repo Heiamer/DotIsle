@@ -10,7 +10,7 @@ impl Notice {
 #[derive(Clone,Default,serde::Serialize,serde::Deserialize)]
 pub struct Policy {pub enabled:bool,pub paused:bool,pub whitelist_enabled:bool,pub allowed:Vec<String>,pub blacklist_enabled:bool,#[serde(default)]pub message_apps:Vec<String>,pub blocked:Vec<String>}
 impl Policy {
-    pub fn from_settings(v:&Value)->Self {Self{message_apps:[crate::message_hints::App::WeChat,crate::message_hints::App::Feishu,crate::message_hints::App::DingTalk,crate::message_hints::App::WeCom].into_iter().filter(|app|v[app.setting()].as_bool().unwrap_or(true)).map(|app|app.id().to_owned()).collect(),blacklist_enabled:v["NotificationBlacklistEnabled"].as_bool().unwrap_or(false),blocked:v["NotificationBlockedApps"].as_array().map(|a|a.iter().filter_map(Value::as_str).map(str::to_owned).collect()).unwrap_or_default(),enabled:v["NotificationsEnabled"].as_bool().unwrap_or(true),paused:v["PauseNotifications"].as_bool().unwrap_or(false),whitelist_enabled:v["NotificationWhitelistEnabled"].as_bool().unwrap_or(false),allowed:v["NotificationAllowedApps"].as_array().map(|a|a.iter().filter_map(Value::as_str).map(str::to_owned).collect()).unwrap_or_else(||vec!["QQNT".into(),"QQ".into()])}}
+    pub fn from_settings(v:&Value)->Self {Self{message_apps:[crate::message_hints::App::WeChat,crate::message_hints::App::Feishu,crate::message_hints::App::DingTalk,crate::message_hints::App::WeCom].into_iter().filter(|app|if *app==crate::message_hints::App::WeChat {v[app.setting()]==true&&v["WeChatTaskbarWarningAccepted"]==true}else{v[app.setting()].as_bool().unwrap_or(true)}).map(|app|app.id().to_owned()).collect(),blacklist_enabled:v["NotificationBlacklistEnabled"].as_bool().unwrap_or(false),blocked:v["NotificationBlockedApps"].as_array().map(|a|a.iter().filter_map(Value::as_str).map(str::to_owned).collect()).unwrap_or_default(),enabled:v["NotificationsEnabled"].as_bool().unwrap_or(true),paused:v["PauseNotifications"].as_bool().unwrap_or(false),whitelist_enabled:v["NotificationWhitelistEnabled"].as_bool().unwrap_or(false),allowed:v["NotificationAllowedApps"].as_array().map(|a|a.iter().filter_map(Value::as_str).map(str::to_owned).collect()).unwrap_or_else(||vec!["QQNT".into(),"QQ".into()])}}
     fn matches(rule:&str,id:&str,name:&str)->bool{
         if rule.eq_ignore_ascii_case(id){return true}
         if let Some(app)=crate::message_hints::identify(id,name){if crate::message_hints::identify(rule,rule)==Some(app){return true}}
@@ -27,13 +27,13 @@ impl Policy {
     pub fn should_show(&self)->bool{self.enabled&&!self.paused}
 }
 #[derive(serde::Serialize,serde::Deserialize)]pub enum Event { Notice(Notice), MessageHint(crate::message_hints::Hint), State(Value) }
-pub struct Listener {pub events:mpsc::Receiver<Event>,policy:Arc<Mutex<Policy>>,stop:Arc<AtomicBool>}
-impl Drop for Listener {fn drop(&mut self){self.stop.store(true,Ordering::Release);}}
+pub struct Listener {pub events:mpsc::Receiver<Event>,policy:Arc<Mutex<Policy>>,stop:Arc<AtomicBool>,thread:Option<std::thread::JoinHandle<()>>}
+impl Drop for Listener {fn drop(&mut self){self.stop.store(true,Ordering::Release);if let Some(t)=self.thread.take(){let _=t.join();}}}
 impl Listener {
     pub fn new(policy:Policy)->Self {
-        let policy=Arc::new(Mutex::new(policy));let stop=Arc::new(AtomicBool::new(false));let (tx,events)=mpsc::channel();
+        let policy=Arc::new(Mutex::new(policy));let stop=Arc::new(AtomicBool::new(false));let (tx,events)=mpsc::sync_channel(128);
         let shared=policy.clone();let stopping=stop.clone();
-        std::thread::spawn(move||{
+        let thread=std::thread::spawn(move||{
             let initialized=unsafe{RoInitialize(RO_INIT_MULTITHREADED)}.is_ok();
             let shell=crate::message_hints::Shell::new();let mut gate=crate::message_hints::Gate::default();let mut icons=std::collections::HashMap::new();
             let mut last_state=Value::Null;let mut last_enabled=false;let mut last_paused=false;let mut apps_cache=json!([]);let mut store=crate::notification_store::Store::new();
@@ -46,35 +46,40 @@ impl Listener {
                     match store.poll(&p){
                         Ok(notices)=>{state["access"]=json!("compatible");state["message"]=json!(if p.paused{"通知已暂停，恢复后只接收新消息"}else if p.blacklist_enabled{"通知接收已连接，屏蔽黑名单中的应用"}else if p.whitelist_enabled{"通知接收已连接，按白名单提醒新通知"}else{"通知接收已连接，提醒各应用的新通知"});
                             for notice in notices{if !apps_cache.as_array().is_some_and(|a|a.iter().any(|a|a["id"]==notice.app_id)){if apps_cache.as_array().is_none_or(|a|a.len()>=32){apps_cache=json!([]);}apps_cache.as_array_mut().unwrap().push(json!({"id":notice.app_id,"name":notice.app_name}));}if let Some(app)=crate::message_hints::identify(&notice.app_id,&notice.app_name){
-                                if p.should_show()&&gate.accept(app,std::time::Instant::now(),false,crate::message_hints::foreground()==Some(app)){let mut hint:crate::message_hints::Hint=app.into();hint.icon=notice.icon;let _=tx.send(Event::MessageHint(hint));}
-                            }else{let _=tx.send(Event::Notice(notice));}}
+                                if !app.uses_toast(){continue}
+                                if app.content_only(){if p.should_show()&&!notice.body.trim().is_empty(){let _=tx.try_send(Event::Notice(content_notice(app,notice)));}continue}
+                                if p.should_show()&&gate.accept(app,std::time::Instant::now(),false,crate::message_hints::foreground()==Some(app)){let mut hint:crate::message_hints::Hint=app.into();hint.icon=notice.icon;let _=tx.try_send(Event::MessageHint(hint));}
+                            }else{let _=tx.try_send(Event::Notice(notice));}}
                             state["apps"]=apps_cache.clone();
                         },Err(error)=>{state["access"]=json!("unavailable");state["message"]=json!(error);}
                     }
                 }
-                state["messageHints"]=json!({"taskbar":shell.is_some(),"contentRead":false,"apps":p.message_apps});
-                if state!=last_state {let _=tx.send(Event::State(state.clone()));last_state=state;}
-                for _ in 0..8 {if stopping.load(Ordering::Acquire){break}if let Some(shell)=&shell{for signal in shell.drain(){let app=signal.app;
+                state["messageHints"]=json!({"taskbar":shell.is_some(),"apps":p.message_apps});
+                if state!=last_state {let _=tx.try_send(Event::State(state.clone()));last_state=state;}
+                for _ in 0..8 {if stopping.load(Ordering::Acquire){break}
+                    if let Some(shell)=&shell{for signal in shell.drain(){let app=signal.app;if app.content_only(){continue}
                         let current=shared.lock().map(|p|p.clone()).unwrap_or_default();
                         let fresh=gate.accept(app,std::time::Instant::now(),true,crate::message_hints::foreground()==Some(app));
-                        if current.should_show()&&current.permits(app.id(),app.name())&&fresh{let icon=icons.entry(app).or_insert_with(||crate::app_icon::shell_icon(&signal.executable)).clone();let mut hint:crate::message_hints::Hint=app.into();hint.icon=icon;let _=tx.send(Event::MessageHint(hint));}
+                        if current.should_show()&&current.permits(app.id(),app.name())&&fresh{let icon=icons.entry(app).or_insert_with(||crate::app_icon::shell_icon(&signal.executable).or_else(||(app==crate::message_hints::App::WeChat).then(crate::app_icon::wechat_icon))).clone();let mut hint:crate::message_hints::Hint=app.into();hint.icon=icon;let _=tx.try_send(Event::MessageHint(hint));}
                     }}std::thread::sleep(Duration::from_millis(50));}
             }
             if initialized {unsafe{RoUninitialize()}}
-        });Self{events,policy,stop}
+        });Self{events,policy,stop,thread:Some(thread)}
     }
     pub fn configure(&self,p:Policy){if let Ok(mut old)=self.policy.lock(){*old=p;}}
 }
+fn content_notice(app:crate::message_hints::App,mut notice:Notice)->Notice{notice.app_id=app.id().into();notice.app_name=app.name().into();notice}
 pub fn diagnostics()->Value {json!({"packaged":windows::ApplicationModel::Package::Current().is_ok(),"readOnly":true,"source":"database","rendering":"Vello Hybrid 0.2 / wgpu 29"})}
 
 #[cfg(test)] mod tests {
     use super::*;
     #[test] fn messaging_toggles_and_alias_filters_do_not_fall_back_to_content(){
-        let mut p=Policy::from_settings(&json!({"WeChatMessageHintsEnabled":false}));
+        let mut p=Policy::from_settings(&json!({"WeChatMessageHintsEnabled":true}));
+        assert!(Policy::from_settings(&json!({"WeChatMessageHintsEnabled":true,"WeChatTaskbarWarningAccepted":true})).permits("Tencent.WeChat","微信"));
         assert!(!p.permits("Tencent.WeChat","微信"));assert!(p.permits("Feishu","飞书"));
         p.blacklist_enabled=true;p.blocked=vec!["企业微信".into()];assert!(!p.permits("WXWork","企业微信"));
         p.whitelist_enabled=true;p.allowed=vec!["飞书".into()];assert!(p.permits("com.bytedance.Feishu","飞书"));assert!(!p.permits("DingTalk","钉钉"));
-        let n=crate::message_hints::App::WeChat.notice();assert_eq!(n.title,"有新消息");assert!(n.body.is_empty());
+        assert!(!crate::message_hints::App::WeChat.uses_toast());
     }
     #[test] fn qq_rules_do_not_admit_qq_music_or_lookalikes(){
         let p=Policy{whitelist_enabled:true,allowed:vec!["QQ".into(),"QQNT".into()],..Default::default()};

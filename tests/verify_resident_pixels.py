@@ -7,19 +7,17 @@ from PIL import Image
 
 def verify(directory):
     report = json.loads((directory / 'report.json').read_text(encoding='utf-8'))
-    transparent = visible = 0
+    visible = 0
     for case in report['cases']:
         with Image.open(directory / case['file']) as image:
             bounds = image.getchannel('A').getbbox()
-        if case['task'] in ('idle', 'paused', 'returned'):
-            assert bounds is None, f"Idle pixels remain: {case['file']}"
-            transparent += 1
-        else:
-            assert bounds is not None, f"Occupied island disappeared: {case['file']}"
-            visible += 1
-    assert transparent == 36 and visible == 24
-    return dict(success=True, fullyTransparentCases=transparent, visibleTaskCases=visible,
-                totalCases=transparent + visible)
+        assert bounds is not None, f"Resident island disappeared: {case['file']}"
+        visible += 1
+        if case['task'] in ('expanded', 'expanded-empty'):
+            assert case['deviceRows'] == (2 if case['task'] == 'expanded' else 0), case
+        assert case['activeComponent'] == ('music' if case['task'] == 'music' else 'resident'), case
+    assert visible == 108
+    return dict(success=True, visibleCases=visible)
 
 
 if __name__ == '__main__':

@@ -6,7 +6,7 @@ on:
       version:
         description: Version of the locally verified draft release
         required: true
-        default: '5.0.5'
+        default: '5.2.1'
       manifest_sha256:
         description: SHA-256 of the checksum manifest verified locally
         required: true
@@ -50,6 +50,9 @@ jobs:
           command -v zstd || (sudo apt-get update && sudo apt-get install -y zstd)
           python build/restore_release_transfer.py --directory incoming --transfer "incoming/DotIsle-$RELEASE_VERSION-Transfer.zip" --sha256 "$TRANSFER_SHA256" --bases "$RUNNER_TEMP/release-bases"
 
+      - name: Install libarchive tools for 7z verification
+        run: command -v bsdtar || (sudo apt-get update && sudo apt-get install -y libarchive-tools)
+
       - name: Verify checksums, source, runtime and local acceptance reports
         run: |
           python build/verify_prebuilt_release.py --directory incoming --version "$RELEASE_VERSION" --source-commit "$GITHUB_SHA" --manifest-sha256 "$MANIFEST_SHA256" --report validation/publish/report.json
@@ -70,6 +73,8 @@ jobs:
 
       - name: Publish accepted release
         run: |
+          gh release edit "v$RELEASE_VERSION" --notes-file "public/DotIsle-$RELEASE_VERSION-Notes.md"
+          gh release view "v$RELEASE_VERSION" --json isDraft,body | python -c 'import json,sys; r=json.load(sys.stdin); assert r["isDraft"] is True and r["body"].strip()'
           if [[ "$RELEASE_VERSION" == *-rc* ]]; then
             gh release edit "v$RELEASE_VERSION" --draft=false --prerelease=true --latest=false
           else

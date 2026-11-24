@@ -55,14 +55,14 @@ impl Pool {
         Ok(data)
     }
 }
-fn complete(data: &Value) -> bool {
+pub(super) fn complete(data: &Value) -> bool {
     data["temperature"].as_f64().is_some_and(f64::is_finite)
         && data["precipitationForecastAvailable"]==true
         && data["forecastThrough"].as_i64().zip(data["time"].as_i64()).is_some_and(|(end,now)|end>=now+3*3600)
         && data["stale"]!=true
 }
 #[derive(Default)]
-struct City { at: Option<Instant>, result: Option<Result<Value,String>>, pool: Pool }
+struct City { at: Option<Instant>, result: Option<Result<Value,String>>, last_good:Option<(Instant,Value)>, pool: Pool }
 type Cities = BTreeMap<String, Arc<Mutex<City>>>;
 pub(super) fn fetch(city: &str) -> Result<Value,String> {
     let city=city.trim();if city.is_empty(){return Err("请先设置城市".into())}
@@ -81,11 +81,26 @@ pub(super) fn fetch(city: &str) -> Result<Value,String> {
     // The same city shares one flight between the overview and the island alert.
     let mut state=state.lock().map_err(|_|"天气缓存不可用")?;
     if let (Some(at),Some(result))=(state.at,state.result.as_ref()) {
-        let ttl=if result.as_ref().is_ok_and(complete){600}else{60};
+        let ttl=if result.as_ref().is_ok_and(complete){600}else{30};
         if at.elapsed()<Duration::from_secs(ttl){return result.clone()}
     }
-    let result=state.pool.fetch(|source|super::providers::request(source,city));
-    state.at=Some(Instant::now());state.result=Some(result.clone());result
+    let mut requests=super::providers::Requests::new(city);
+    let result=state.pool.fetch(|source|requests.request(source));
+    state.finish(result)
+}
+
+impl City {
+    fn finish(&mut self,result:Result<Value,String>)->Result<Value,String>{
+        let now=Instant::now();
+        let result=match result {
+            Ok(data)=>{self.last_good=Some((now,data.clone()));Ok(data)}
+            Err(message)=>match self.last_good.as_ref().filter(|(at,_)|at.elapsed()<Duration::from_secs(1800)) {
+                Some((_,data))=>{let mut stale=data.clone();stale["stale"]=json!(true);stale["error"]=json!(message);Ok(stale)}
+                None=>Err(message),
+            },
+        };
+        self.at=Some(now);self.result=Some(result.clone());result
+    }
 }
 
 #[cfg(test)] mod tests {
@@ -108,6 +123,15 @@ pub(super) fn fetch(city: &str) -> Result<Value,String> {
         let result=pool.fetch(|s|if s==Source::Wttr{Ok(data(s,false))}else{Err("offline".into())}).unwrap();
         assert_eq!(result["precipitationForecastAvailable"],false);
         assert!(pool.fetch(|_|Err("offline".into())).is_err());
+    }
+    #[test]fn outage_can_use_last_reading_but_not_as_a_fresh_forecast(){
+        let mut city=City::default();
+        assert!(city.finish(Err("offline".into())).is_err());
+        city.finish(Ok(data(Source::Qq,true))).unwrap();
+        let stale=city.finish(Err("offline".into())).unwrap();
+        assert_eq!(stale["temperature"],12);assert_eq!(stale["stale"],true);assert!(!complete(&stale));
+        let recovered=city.finish(Ok(data(Source::OpenMeteo,true))).unwrap();
+        assert!(complete(&recovered));assert!(recovered["error"].is_null());
     }
     #[test]fn every_provider_can_take_over_and_repeated_success_does_not_probe_other_sources(){
         for selected in SOURCES{

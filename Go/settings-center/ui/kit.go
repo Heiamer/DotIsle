@@ -4,6 +4,7 @@
 package ui
 
 import (
+	"fmt"
 	"math"
 	"unicode"
 
@@ -13,7 +14,7 @@ import (
 func textFamily(value string) string {
 	for _, r := range value {
 		if unicode.Is(unicode.Han, r) {
-			return "HarmonyOS Sans SC, Microsoft YaHei UI, sans-serif"
+			return "Noto Sans SC, Microsoft YaHei UI, sans-serif"
 		}
 	}
 	return UIFont
@@ -37,7 +38,7 @@ func MixCol(a, b uint32, t float64) ui.Color {
 // The fixed line box keeps the original page measurements stable.
 func LineHeight(size float32) float32 { return size * 1.35 }
 
-// Text uses the embedded HarmonyOS Sans family for Latin and Chinese content.
+// textLine uses the embedded Noto Sans SC family for Latin and Chinese content.
 func textLine(c *ui.Context, text string, size float32, rgb uint32, bold bool) ui.Element {
 	t := ui.Text(c, text).Font(textFamily(text)).FontSize(size).FixedLineHeight(LineHeight(size)).TextColor(Col(rgb))
 	if bold {
@@ -150,8 +151,8 @@ func FieldOutline(c *ui.Context, x, y, w, h, radius float32, focused bool, rgb u
 		Radius(radius).Border(2, border).IgnoreInput(true)
 }
 
-// Button is the pill button (Original widgets::Ui::button): tonal secondary_container
-// or filled primary, 14px semibold label, optional leading icon.
+// Button is the minimalist monochrome pill button: obsidian black in light mode,
+// pure ivory white in dark mode; tonal secondary uses frosted glass.
 func Button(c *ui.Context, p *Palette, label string, x, y, w, h float32, text, iconName string, tonal, enabled bool, onClick func()) *ui.Element {
 	s := &p.Scheme
 	var bgRGB, fgRGB uint32 = s.SecondaryContainer, s.OnSurface
@@ -164,12 +165,53 @@ func Button(c *ui.Context, p *Palette, label string, x, y, w, h float32, text, i
 	}
 	e := ui.ButtonBase(c).Absolute().Left(x).Top(y).Width(w).Height(h).
 		Justify(ui.Center).AlignItems(ui.Center).Gap(8).
-		Radius(ButtonRadius).Background(Col(bgRGB)).
-		Label(label).Cursor(ui.CursorPointer)
+		Radius(ButtonRadius).Label(label).Cursor(ui.CursorPointer)
 	if !enabled {
-		e.Disabled(true).Opacity(.5)
+		e.Background(Col(bgRGB)).Disabled(true).Opacity(.5)
+	} else if !tonal && !p.HighContrast {
+		bg := uint32(0x16181D)
+		fgRGB = 0xFFFFFF
+		rim := AlphaCol(0xFFFFFF, 0.22)
+		if p.Dark {
+			bg, fgRGB = 0xF3F4F6, 0x111316
+			rim = AlphaCol(0xFFFFFF, 0.90)
+		}
+		if e.Hovered() {
+			if p.Dark {
+				bg = 0xFFFFFF
+			} else {
+				bg = 0x262932
+			}
+		}
+		if e.Pressed() {
+			if p.Dark {
+				bg = 0xD9DCE3
+			} else {
+				bg = 0x0B0C0F
+			}
+		}
+		e.Background(Col(bg)).
+			Border(1, AlphaCol(0x111827, 0.14)).
+			InsetShadow(0, 1, 0, 0, rim)
+		elevationStyle(&e, p, elevationControl)
+	} else if tonal && !p.HighContrast {
+		base := AlphaCol(0xFFFFFF, 0.64)
+		border := AlphaCol(0x1E293B, 0.11)
+		rim := AlphaCol(0xFFFFFF, 0.96)
+		if p.Dark {
+			base = AlphaCol(0xFFFFFF, 0.07)
+			border = AlphaCol(0xFFFFFF, 0.10)
+			rim = AlphaCol(0xFFFFFF, 0.14)
+		}
+		e.Background(base).
+			Border(1, border).
+			InsetShadow(0, 1, 0, 0, rim)
+		elevationStyle(&e, p, elevationControl)
+		hoverLayer(&e, base, fgRGB, true)
+	} else {
+		e.Background(Col(bgRGB))
+		hoverLayer(&e, Col(bgRGB), fgRGB, true)
 	}
-	hoverLayer(&e, Col(bgRGB), fgRGB, enabled)
 	pressMotion(c, p, &e, enabled)
 	if enabled && onClick != nil && e.Clicked() {
 		onClick()
@@ -183,7 +225,7 @@ func Button(c *ui.Context, p *Palette, label string, x, y, w, h float32, text, i
 	return &e
 }
 
-// IconButton is the square icon control (widgets::Ui::icon_button).
+// IconButton is the minimalist glass icon control.
 func IconButton(c *ui.Context, p *Palette, label string, x, y, w, h float32, iconName string, filled, enabled bool, onClick func()) *ui.Element {
 	s := &p.Scheme
 	var fgRGB uint32 = s.OnSurfaceVariant
@@ -199,8 +241,34 @@ func IconButton(c *ui.Context, p *Palette, label string, x, y, w, h float32, ico
 		Label(label).Cursor(ui.CursorPointer)
 	if !enabled {
 		e.Disabled(true).Opacity(.5)
+	} else if filled && !p.HighContrast {
+		fill := uint32(0x16181D)
+		fgRGB = 0xFFFFFF
+		rim := AlphaCol(0xFFFFFF, 0.20)
+		if p.Dark {
+			fill, fgRGB = 0xF3F4F6, 0x111316
+			rim = AlphaCol(0xFFFFFF, 0.90)
+		}
+		if e.Hovered() {
+			if p.Dark {
+				fill = 0xFFFFFF
+			} else {
+				fill = 0x262932
+			}
+		}
+		e.Background(Col(fill)).InsetShadow(0, 1, 0, 0, rim)
+		elevationStyle(&e, p, elevationControl)
+	} else {
+		if !p.HighContrast && e.Hovered() {
+			glassHover := AlphaCol(0x111827, 0.055)
+			if p.Dark {
+				glassHover = AlphaCol(0xFFFFFF, 0.10)
+			}
+			e.Background(glassHover)
+		} else {
+			hoverLayer(&e, bg, fgRGB, enabled)
+		}
 	}
-	hoverLayer(&e, bg, fgRGB, enabled)
 	pressMotion(c, p, &e, enabled)
 	if enabled && onClick != nil && e.Clicked() {
 		onClick()
@@ -211,11 +279,17 @@ func IconButton(c *ui.Context, p *Palette, label string, x, y, w, h float32, ico
 	return &e
 }
 
-// Chip is the selection pill (widgets::Ui::chip): radius 12 unselected with an
-// outline, pill when selected, container → secondary_container fill.
+// Chip is the selection pill: minimalist muted unselected, pure white floating when selected.
 func Chip(c *ui.Context, p *Palette, label string, x, y, w, h float32, text string, selected bool, onClick func()) *ui.Element {
 	s := &p.Scheme
 	radius, bg, fg := float32(24), Col(s.SecondaryContainer), Col(s.OnSurfaceVariant)
+	if !p.HighContrast {
+		if p.Dark {
+			bg = AlphaCol(0xFFFFFF, 0.06)
+		} else {
+			bg = AlphaCol(0x111827, 0.05)
+		}
+	}
 	if selected {
 		bg, fg = Col(s.Container), Col(s.OnSurface)
 	}
@@ -225,6 +299,11 @@ func Chip(c *ui.Context, p *Palette, label string, x, y, w, h float32, text stri
 		Label(label).Cursor(ui.CursorPointer)
 	if selected {
 		surfaceStyle(&e, p, s.Container, radius)
+	} else if !p.HighContrast {
+		e.Border(1, AlphaCol(0x111827, 0.05))
+		if p.Dark {
+			e.Border(1, AlphaCol(0xFFFFFF, 0.08))
+		}
 	}
 	hoverLayer(&e, bg, s.OnSurface, true)
 	if onClick != nil && e.Clicked() {
@@ -239,29 +318,69 @@ func Chip(c *ui.Context, p *Palette, label string, x, y, w, h float32, text stri
 	return &e
 }
 
-// Switch uses the Default medium 40x20 track and 22x16 thumb.
+// Switch uses an optical 42x22 track with an independent key per toggle and centered 16x16 circular puck.
 func Switch(c *ui.Context, p *Palette, label string, x, y float32, on bool, onClick func()) *ui.Element {
 	s := &p.Scheme
 	track := s.SecondaryContainer
 	if on {
 		track = s.Primary
 	}
-	e := ui.ButtonBase(c).Absolute().Left(x).Top(y + 3).Width(40).Height(20).
-		Radius(12).Background(Col(track)).Label(label).Cursor(ui.CursorPointer)
-	hoverLayer(&e, Col(track), s.OnSurface, true)
+	keyBase := fmt.Sprintf("%.0f-%.0f-%s", x, y, label)
+	e := ui.ButtonBase(c).Key("switch-" + keyBase).Absolute().Left(x).Top(y + 2).Width(42).Height(22).
+		Radius(11).Label(label).Cursor(ui.CursorPointer)
+	thumbCol := uint32(0xFFFFFF)
+	var borderCol ui.Color
+	hasBorder := false
+	if !p.HighContrast && on {
+		onBg := uint32(0x181A1F)
+		borderCol = AlphaCol(0x111827, 0.10)
+		if p.Dark {
+			onBg = 0xF3F4F6
+			thumbCol = 0x111316
+			borderCol = AlphaCol(0xFFFFFF, 0.18)
+		}
+		if e.Hovered() {
+			if p.Dark {
+				onBg = 0xFFFFFF
+			} else {
+				onBg = 0x262932
+			}
+		}
+		e.Background(Col(onBg)).InsetShadow(0, 1, 0, 0, AlphaCol(0xFFFFFF, 0.25))
+		hasBorder = true
+	} else if !p.HighContrast && !on {
+		offBg := AlphaCol(0x0F172A, 0.16)
+		borderCol = AlphaCol(0x0F172A, 0.09)
+		if p.Dark {
+			offBg = AlphaCol(0xFFFFFF, 0.14)
+			borderCol = AlphaCol(0xFFFFFF, 0.12)
+			thumbCol = 0xE5E7EB
+		}
+		e.Background(offBg)
+		hoverLayer(&e, offBg, s.OnSurface, true)
+		hasBorder = true
+	} else {
+		e.Background(Col(track))
+		hoverLayer(&e, Col(track), s.OnSurface, true)
+	}
 	if onClick != nil && e.Clicked() {
 		onClick()
 	}
-	thumbX := float32(2)
+	thumbOffset := float32(0)
 	if on {
-		thumbX = 16
+		thumbOffset = 20
 	}
 	e.Children(func() {
-		thumb := ui.Box(c).Key("switch-thumb").Absolute().Left(2).Top(2).Width(22).Height(16).
-			Radius(8).Background(Col(0xffffff))
-		thumb.Translate(appSpringValue(c, thumb, "thumb-x", thumbX-2, motionSettle, p.ReducedMotion), 0)
+		if hasBorder {
+			ui.Box(c).Absolute().Fill().Radius(11).Border(1, borderCol).IgnoreInput(true)
+		}
+		thumb := ui.Box(c).Key("switch-thumb-" + keyBase).Absolute().Left(3).Top(3).Width(16).Height(16).
+			Radius(8).Background(Col(thumbCol)).IgnoreInput(true)
+		thumb.Translate(appSpringValue(c, thumb, "thumb-x", thumbOffset, motionSettle, p.ReducedMotion), 0)
 		if !p.Dark {
-			thumb.Shadow(0, 1, 2, 0, AlphaCol(0, .06))
+			thumb.Shadow(0, 1, 3, 0, AlphaCol(0x111827, .18))
+		} else {
+			thumb.Shadow(0, 1, 3, 0, AlphaCol(0x000000, .30))
 		}
 	})
 	return &e
@@ -271,7 +390,7 @@ func Switch(c *ui.Context, p *Palette, label string, x, y float32, on bool, onCl
 func ToggleRow(c *ui.Context, p *Palette, label string, x, y, w float32, title, detail string, on bool, onClick func()) *ui.Element {
 	Label(c, title, x, y+9, 14, p.Scheme.OnSurface, false, w-100)
 	Label(c, detail, x, y+32, 12, p.Scheme.OnSurfaceVariant, false, w-100)
-	return Switch(c, p, label, x+w-51, y+8, on, onClick)
+	return Switch(c, p, label, x+w-52, y+8, on, onClick)
 }
 
 // Slider is the 5px track with a 22px thumb (widgets::Ui::slider look). Dragging

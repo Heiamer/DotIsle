@@ -109,4 +109,8 @@ lazy_static 1.5.1，https://github.com/rust-lang-nursery/lazy-static.rs ，MIT O
 
 ## 5.0 Go 原生控制中心
 
-使用 MyGo v0.9.0、purego、go-text/typesetting 与 golang.org/x 库，锁定版本见 Go/settings-center/go.mod；许可全文保存在 licenses/Go。HarmonyOS Sans 许可见 licenses/HarmonyOS-Sans-LICENSE.txt。
+使用 MyGo v0.9.0、purego、go-text/typesetting 与 golang.org/x 库，锁定版本见 Go/settings-center/go.mod；许可全文保存在 licenses/Go。中文字体使用 Noto Sans SC，许可见 licenses/NotoSansSC-OFL.txt。
+
+## 在线逐字歌词
+
+[AMLL TTML DB](https://github.com/amll-dev/amll-ttml-db) 社区提供的同步时间轴由其公开 API 在线查询。点屿不随包分发曲库；下载歌词及其文本适用各自权利，不因公开 API 而变成点屿开源代码的一部分。

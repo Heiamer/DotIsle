@@ -20,6 +20,8 @@
 
 ## 发布附件
 
-Action 保留完整验收证据作为工作流产物。公开 Release 只保留安装版、便携包、源码包、校验清单以及旧命名便携包和校验清单。`prepare_public_release.py` 在上传或发布前筛选公开文件；`verify_prebuilt_release.py` 先核验内部证据。
+Action 保留完整验收证据作为工作流产物。GitHub Release 提供安装版、便携包、源码包、兼容 ZIP 和校验文件。公开 OTA 只使用全量 ZIP；组件清单和组件包仅用于内部构建与验收，不上传到 Release。`prepare_public_release.py --gitee-output` 另外生成仅含兼容 ZIP 和校验文件的 Gitee 镜像目录。两个源的兼容 ZIP 必须字节一致。
+
+创建 Release 后默认保留草稿，先进行测试。GitHub 和 Gitee 当前只保留最新正式版 Release。先核对 GitHub 新附件可下载，再轮换 Gitee 附件；脚本不会上传、删除或公开 Gitee 附件。
 
 3.5.x 旧更新器对旧设置文件的硬要求仍需单独处理。没有完成跨版本升级验收前，不应发布去除旧设置的新 OTA 包。

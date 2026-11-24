@@ -3,14 +3,14 @@ use crate::{error::{Error,Result},paths,payload};
 use serde_json::{json,Value};
 use std::{collections::BTreeMap,path::{Path,PathBuf}};
 
-const INVENTORY:&str="Assets/RuntimeFiles.json";
+use payload::RUNTIME_INVENTORY as INVENTORY;
 pub struct Retired { relative:String,hash:Option<String> }
 fn managed(name:&str)->bool{
     let name=name.replace('\\',"/");
     if name.split('/').any(|part|part.is_empty()||part=="."||part==".."||part.contains(':')){return false}
     let first=name.split('/').next().unwrap_or("").to_ascii_lowercase();
     matches!(first.as_str(),"assets"|"licenses"|"docs"|"examples")||!name.contains('/')&&
-        (name.ends_with(".exe")||name.ends_with(".dll")||matches!(name.as_str(),"README.md"|"LICENSE"|"CHANGELOG.md"|"FONT-NOTICE.md"|"THIRD-PARTY-NOTICES.md"|"REWRITE.md"|"GESTURE-TUTORIAL.md"|"NETEASE-SEEKFIX.md"|"发布说明.md"))
+        (name.ends_with(".exe")||name.ends_with(".dll")||matches!(name.as_str(),"README.md"|"LICENSE"|"CHANGELOG.md"|"FONT-NOTICE.md"|"THIRD-PARTY-NOTICES.md"|"REWRITE.md"|"GESTURE-TUTORIAL.md"|"NETEASE-SEEKFIX.md"|"ReleaseNotes.md"|"发布说明.md"))
 }
 fn inventory(root:&Path)->Option<BTreeMap<String,String>>{
     let value=paths::read_json(&root.join(INVENTORY)).ok()?;
@@ -35,7 +35,7 @@ pub fn plan(stage:&Path,target:&Path)->Result<Vec<Retired>>{
     Ok(owned.into_iter().filter(|name|managed(name)&&!new.contains_key(&name.to_ascii_lowercase()))
         .map(|relative|Retired{hash:old.as_ref().and_then(|old|old.get(&relative.to_ascii_lowercase()).cloned()),relative}).collect())
 }
-fn ordinary_path(root:&Path,path:&Path)->bool{
+pub(crate) fn ordinary_path(root:&Path,path:&Path)->bool{
     if !paths::starts_with_path(path,root)||paths::has_reparse_point(root){return false}
     let mut cursor=Some(path);
     while let Some(current)=cursor {

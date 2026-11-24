@@ -1,7 +1,7 @@
 use alloc::{string::String, sync::Arc, vec::Vec};
 
 use parking_lot::RwLock;
-use windows::Win32::{Foundation, Graphics::Dxgi};
+use windows::{core::Interface, Win32::{Foundation, Graphics::Dxgi}};
 
 use super::SurfaceTarget;
 use crate::{
@@ -10,6 +10,32 @@ use crate::{
         device_creation::DeviceFactory, shader_compilation::CompilerContainer, D3D12Lib, DCompLib,
     },
 };
+
+impl super::Instance {
+    /// Try the OS's first low-power adapter without opening every DX12 device.
+    /// Callers must fall back to normal enumeration when this returns `None`.
+    pub fn preferred_integrated_adapter(&self) -> Option<crate::ExposedAdapter<super::Api>> {
+        let factory = self.factory.cast::<Dxgi::IDXGIFactory6>().ok()?;
+        let raw: Dxgi::IDXGIAdapter4 = unsafe {
+            factory.EnumAdapterByGpuPreference(0, Dxgi::DXGI_GPU_PREFERENCE_MINIMUM_POWER)
+        }.ok()?;
+        if !auxil::dxgi::factory::should_keep_adapter(&raw) {
+            return None;
+        }
+        let adapter = super::Adapter::expose(
+            auxil::dxgi::factory::DxgiAdapter::Adapter4(raw),
+            &self.library,
+            &self.device_factory,
+            &self.dcomp_lib,
+            self.flags,
+            self.memory_budget_thresholds,
+            self.compiler_container.clone(),
+            self.options.clone(),
+            self.telemetry,
+        )?;
+        (adapter.info.device_type == wgt::DeviceType::IntegratedGpu).then_some(adapter)
+    }
+}
 
 impl crate::Instance for super::Instance {
     type A = super::Api;

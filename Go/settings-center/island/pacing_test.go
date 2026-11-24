@@ -6,8 +6,8 @@ import (
 )
 
 func TestSnapshotFilteringKeepsNavigationAndLyrics(t *testing.T) {
-	before := map[string]any{"renderFrames": float64(1), "glassCaptures": float64(2), "title": "歌曲", "pendingRequestId": float64(1), "musicPreview": map[string]any{"lyricFrame": "第一句"}}
-	next := map[string]any{"renderFrames": float64(9), "glassCaptures": float64(4), "title": "歌曲", "pendingRequestId": float64(1), "musicPreview": map[string]any{"lyricFrame": "第一句"}}
+	before := map[string]any{"renderFrames": float64(1), "title": "歌曲", "pendingRequestId": float64(1), "musicPreview": map[string]any{"lyricFrame": "第一句"}}
+	next := map[string]any{"renderFrames": float64(9), "title": "歌曲", "pendingRequestId": float64(1), "musicPreview": map[string]any{"lyricFrame": "第一句"}}
 	if !sameSnapshot(before, next) {
 		t.Fatal("renderer-only counters caused a redraw")
 	}

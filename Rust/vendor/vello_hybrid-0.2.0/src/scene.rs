@@ -113,6 +113,8 @@ pub struct RenderSettings {
     pub level: Level,
     /// Configuration for GPU memory used while rendering.
     pub memory_settings: MemorySettings,
+    /// Create the wgpu filter pipeline on first use rather than at startup.
+    pub defer_filter_pipeline: bool,
 }
 
 /// Settings controlling usage of GPU memory.
@@ -195,6 +197,7 @@ impl Default for RenderSettings {
         Self {
             level: Level::try_detect().unwrap_or(Level::baseline()),
             memory_settings: MemorySettings::default(),
+            defer_filter_pipeline: false,
         }
     }
 }

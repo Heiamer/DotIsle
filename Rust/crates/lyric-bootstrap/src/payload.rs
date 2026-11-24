@@ -11,6 +11,7 @@ pub const PAYLOAD_RESOURCE: &str = "DotIsle.InstallPayload.zip";
 pub const PAYLOAD_DIGEST_RESOURCE: &str = "DotIsle.InstallPayload.sha256";
 pub const LAUNCHER_PAYLOAD_RESOURCE: &str = "LyricIsland.Payload.zip";
 pub const INSTALLED_MARKER: &str = "Installed.json";
+pub const RUNTIME_INVENTORY: &str = "Assets/RuntimeFiles.json";
 
 pub fn required_runtime() -> &'static [&'static str] {
     &["dotisle_focus.dll","dotisle_todos.dll","dotisle_music.dll","dotisle_lyrics.dll","dotisle_notifications.dll","dotisle_history.dll","dotisle_automation.dll","dotisle_devices.dll","dotisle_osd.dll","dotisle_sound.dll","dotisle_widgets.dll","dotisle_themes.dll","dotisle_glow.dll","dotisle_core.dll", "dotisle_desktop.dll", "LyricIsland.exe", "LyricIsland.Center.exe", "LyricIsland.Updater.exe", "Assets/Fonts/GoogleSansFlex-Regular.ttf", "Assets/Fonts/GoogleSansFlex-Medium.ttf", "Assets/Fonts/GoogleSansFlex-SemiBold.ttf", "Assets/Fonts/GoogleSansFlex-Bold.ttf", "Assets/Fonts/NotoSansSC.ttf", "Assets/Fonts/NotoSansJP.ttf"]
@@ -68,6 +69,72 @@ pub fn extract_payload(payload: &[u8], directory: &Path) -> Result<PathBuf> {
 pub fn extract_zip_file(zip_path: &Path, stage: &Path, folder: &str, required: &[&str], limit: u64) -> Result<PathBuf> {
     let mut reader = ZipReader::open(zip_path)?;
     extract_reader(&mut reader, stage, folder, required, limit)?;
+    Ok(stage.to_path_buf())
+}
+
+pub(crate) fn update_path(root: &Path, name: &str) -> Result<PathBuf> {
+    let first = name.split('/').next().unwrap_or("").to_ascii_lowercase();
+    if matches!(first.as_str(), "data" | "logs" | "cache" | "installed.json" | "modulestate.json" | "otainstall.json" | "settings.json")
+        || name.contains(['\\', ':'])
+        || name.split('/').any(|part| part.is_empty() || part.ends_with(['.', ' ']))
+    {
+        return Err(Error(format!("更新清单路径无效：{name}")));
+    }
+    safe_child(root, name)
+}
+
+pub fn extract_update(zip: &Path, stage: &Path, version: &str) -> Result<PathBuf> {
+    const LIMIT: u64 = 512 * 1024 * 1024;
+    let mut reader = ZipReader::open(zip)?;
+    let prefix = format!("LyricIsland-{version}/");
+    let mut files = std::collections::BTreeMap::new();
+    let mut seen = HashSet::new();
+    let mut total = 0u64;
+    for (index, entry) in reader.entries().iter().enumerate() {
+        let name = entry.name.strip_prefix(&prefix).ok_or_else(|| Error("更新包目录无效".into()))?;
+        if name.is_empty() && entry.is_dir { continue; }
+        let name = if entry.is_dir { name.trim_end_matches('/') } else { name };
+        update_path(stage, name)?;
+        if !seen.insert(name.to_lowercase()) { return Err(Error("更新包包含重复路径".into())); }
+        if entry.is_dir { continue; }
+        total = total.saturating_add(entry.size);
+        if total > LIMIT { return Err(Error("更新包超过大小限制".into())); }
+        files.insert(name.to_owned(), (index, entry.size));
+    }
+    let &(inventory_index, size) = files.get(RUNTIME_INVENTORY).ok_or_else(|| Error("更新包缺少文件校验清单".into()))?;
+    if size > 4 * 1024 * 1024 { return Err(Error("更新清单超过大小限制".into())); }
+    let inventory_bytes = reader.read(inventory_index)?;
+    let inventory: Value = serde_json::from_slice(&inventory_bytes)?;
+    if inventory["schemaVersion"] != 1 || inventory["product"] != "DotIsle" || inventory["version"] != version {
+        return Err(Error("更新清单与目标版本不符".into()));
+    }
+    let declared = inventory["files"].as_object().ok_or_else(|| Error("更新清单缺少文件列表".into()))?;
+    // Only the stable launch entry point is required by the transaction itself.
+    // Everything else (modules, fonts and other assets) belongs to the new package.
+    if !declared.contains_key("LyricIsland.exe") || declared.len() + 1 != files.len() || declared.contains_key(RUNTIME_INVENTORY) {
+        return Err(Error("更新包文件与清单不符".into()));
+    }
+    for (name, hash) in declared {
+        update_path(stage, name)?;
+        if !files.contains_key(name) || !hash.as_str().is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())) {
+            return Err(Error(format!("更新包缺少清单文件或摘要无效：{name}")));
+        }
+    }
+    // The stage is private to this transaction and must not contain unverified files.
+    if stage.exists() { return Err(Error("更新暂存目录已存在".into())); }
+    std::fs::create_dir_all(stage)?;
+    for (name, hash) in declared {
+        let bytes = reader.read(files[name].0)?;
+        if !sha256_bytes(&bytes).eq_ignore_ascii_case(hash.as_str().unwrap()) {
+            return Err(Error(format!("更新文件摘要不符：{name}")));
+        }
+        let path = update_path(stage, name)?;
+        std::fs::create_dir_all(path.parent().unwrap())?;
+        std::fs::write(path, bytes)?;
+    }
+    let inventory_path = stage.join(RUNTIME_INVENTORY);
+    std::fs::create_dir_all(inventory_path.parent().unwrap())?;
+    std::fs::write(inventory_path, inventory_bytes)?;
     Ok(stage.to_path_buf())
 }
 

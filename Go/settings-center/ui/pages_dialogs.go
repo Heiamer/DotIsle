@@ -179,12 +179,9 @@ func (a *App) sendQuickPreview() {
 	text := dialogUI.quickText
 	dialogUI.quickSeq++
 	seq := dialogUI.quickSeq
-	go func() {
+	a.startAsync(func() {
 		reply, err := island.Request("quickReminderPreview", map[string]any{"text": text})
-		if a.Win == nil {
-			return
-		}
-		a.Win.Update(func() {
+		a.applyAsync(func() {
 			if !a.showQuickReminder || seq != dialogUI.quickSeq {
 				a.Refresh()
 				return
@@ -204,7 +201,7 @@ func (a *App) sendQuickPreview() {
 			}
 			a.Refresh()
 		})
-	}()
+	})
 }
 
 // sendQuickCommit is Action::QuickCommit (model.rs): quickReminderCommit with
@@ -215,15 +212,12 @@ func (a *App) sendQuickCommit() {
 	if token == "" {
 		return
 	}
-	go func() {
+	a.startAsync(func() {
 		reply, err := island.Request("quickReminderCommit", map[string]any{
 			"previewToken":    token,
 			"clientRequestId": "vello-" + token,
 		})
-		if a.Win == nil {
-			return
-		}
-		a.Win.Update(func() {
+		a.applyAsync(func() {
 			switch {
 			case err != nil:
 				dialogUI.quickErr = err.Error()
@@ -238,7 +232,7 @@ func (a *App) sendQuickCommit() {
 			}
 			a.Refresh()
 		})
-	}()
+	})
 }
 
 // ruleDialog renders views.rs dialog for DialogKind::Rule: the 560x620 card
@@ -336,12 +330,9 @@ func (a *App) sendRuleSave() {
 		"trigger":          trigger,
 		"enabled":          true,
 	}
-	go func() {
+	a.startAsync(func() {
 		reply, err := island.Request("appRuleSave", payload)
-		if a.Win == nil {
-			return
-		}
-		a.Win.Update(func() {
+		a.applyAsync(func() {
 			switch {
 			case err != nil:
 				dialogUI.ruleErr = err.Error()
@@ -355,7 +346,7 @@ func (a *App) sendRuleSave() {
 			}
 			a.Refresh()
 		})
-	}()
+	})
 }
 
 // sendRuleDelete is the delete entry: appRuleAction {"id", "action": "delete",
@@ -370,12 +361,9 @@ func (a *App) sendRuleDelete() {
 		"action":   "delete",
 		"revision": dialogUI.ruleRevision,
 	}
-	go func() {
+	a.startAsync(func() {
 		reply, err := island.Request("appRuleAction", payload)
-		if a.Win == nil {
-			return
-		}
-		a.Win.Update(func() {
+		a.applyAsync(func() {
 			switch {
 			case err != nil:
 				dialogUI.ruleErr = err.Error()
@@ -387,5 +375,5 @@ func (a *App) sendRuleDelete() {
 			}
 			a.Refresh()
 		})
-	}()
+	})
 }

@@ -112,7 +112,11 @@ fn launch(args: &[String]) -> Result<i32> {
 }
 
 fn runtime_command(executable:&Path,args:&[String])->std::process::Command{
+    use std::{os::windows::process::CommandExt, process::Stdio};
     let mut command=std::process::Command::new(executable);command.args(args);
+    // Do not create a console even if a locally replaced runtime is a console build.
+    command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0)
+        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     if let Some(parent)=executable.parent(){command.current_dir(parent);}command
 }
 

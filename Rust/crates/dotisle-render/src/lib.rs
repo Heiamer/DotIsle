@@ -3,6 +3,7 @@ pub mod brand_signature;
 pub mod control_icons;
 pub mod draw;
 pub mod material_symbols;
+pub mod modern_icons;
 pub mod progress;
 pub mod transport;
 pub mod transport_icons;

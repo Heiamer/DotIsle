@@ -24,6 +24,7 @@ pub fn finalize(target:&Path,record:&Path,data_override:Option<&Path>,key:&str)-
  let files=payload::relative_files(target)?.into_iter().filter(|f|!f.to_lowercase().starts_with("unins")&&!f.starts_with("Data/")).collect::<Vec<_>>();
  paths::write_json(&target.join(payload::INSTALLED_MARKER),&json!({"product":"DotIsle","version":payload::VERSION,"dataDirectory":data,"files":files,"installer":"Inno","uninstallKey":key}))?;
  if isolated{return Ok(())}
+ installer::repair_startup_in_place(target)?;
  paths::write_json(&paths::local_app_data().join("DotIsle/install.json"),&json!({"target":target}))?;
  if let Some(old)=Key::open(UNINSTALL_KEY)?{if old.string("InstallLocation").is_some_and(|p|paths::same_path(p,target)){drop(old);registry::delete_tree(UNINSTALL_KEY)?;}}
  Ok(())

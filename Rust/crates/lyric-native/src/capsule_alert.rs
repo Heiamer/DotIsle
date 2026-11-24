@@ -21,7 +21,7 @@ impl Alert{
     pub fn message(id:&str,name:&str,icon:Option<&[u8]>)->Self{
         let epoch=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
         let mut a=Self::new(format!("message:{id}:{epoch}"),&format!("Message:{id}"),format!("{name}有新消息"),String::new());
-        a.image=icon.and_then(|raw|crate::renderer::Renderer::decode(raw).ok()).map(|v|v.0);
+        a.image=icon.and_then(|raw|crate::renderer::Renderer::decode_notification_icon(raw).ok());
         a.width=320.;a.hold=5.;a.expires=Instant::now()+Duration::from_secs(15);a
     }
     pub fn device(id:&str,icon:&str,name:&str,connected:bool,level:Option<u8>,low:bool)->Self{
@@ -37,7 +37,7 @@ impl Hub{
     pub fn visible(&self)->bool{self.banner.visible()}
     pub fn pending(&self)->bool{!self.queue.is_empty()}
     pub fn enqueue(&mut self,a:Alert){
-        self.seen.retain(|key,at|at.elapsed()<Duration::from_secs(if key.starts_with("device:"){3}else{120}));
+        self.seen.retain(|key,at|at.elapsed()<Duration::from_secs(if key.starts_with("device:")||key.starts_with("reminder:"){3}else{120}));
         if a.expires<=Instant::now()||self.seen.contains_key(&a.key){return}
         self.seen.insert(a.key.clone(),Instant::now());
         if self.queue.len()>=8{self.queue.pop_front();}
@@ -69,6 +69,13 @@ impl Hub{
         }
         false
     }
+    /// 取出下一条尚未过期的提醒（供任务栏模式路由到屏幕顶部独立弹窗使用）。
+    pub fn pop_next(&mut self)->Option<Alert>{
+        while let Some(a)=self.queue.pop_front(){
+            if a.expires>Instant::now(){return Some(a);}
+        }
+        None
+    }
     pub fn tick(&mut self,base:Rect,radius:f64,now:f64,animate:bool){
         // Always return to the current base, including Mini. Visibility is retired by the host.
         self.banner.tick(base,radius,now,false,animate,true);
@@ -76,6 +83,7 @@ impl Hub{
     }
     pub fn dismiss(&mut self,base:Rect,radius:f64,now:f64,animate:bool){self.banner.dismiss(base,radius,now,animate,true);}
     pub fn clear(&mut self,base:Rect,radius:f64,now:f64,animate:bool){self.queue.clear();self.dismiss(base,radius,now,animate);}
+    pub fn remove_pending(&mut self,key:&str){self.queue.retain(|a|a.key!=key);self.seen.remove(key);}
 }
 
 #[derive(Default)]
@@ -140,6 +148,9 @@ impl WeatherWatch{
     #[test]fn message_capsule_restores_classic_and_mini_without_content(){
         for base in [Rect::new(170.,24.,260.,40.),Rect::new(250.,24.,100.,18.)] {
             let mut h=Hub::default();let a=Alert::message("WXWork","企业微信",None);
+            let wechat=Alert::message("WeChat","微信",None);
+            assert_eq!(wechat.title,"微信有新消息");
+            assert!(wechat.detail.is_empty()&&wechat.trailing.is_empty()&&wechat.code.is_none());
             assert_eq!(a.title,"企业微信有新消息");assert!(a.detail.is_empty()&&a.trailing.is_empty()&&a.code.is_none());
             h.enqueue(a);assert!(h.begin(base,base.h/2.,600.,24.,0.,true));
             assert_eq!(h.banner.presentation(0.).0,base);

@@ -8,7 +8,7 @@ pub unsafe fn run(a:&mut App,out:&Path)->Result<(),Box<dyn std::error::Error>>{
  let o=a.options();let opening=Transition::new(true,Frame::hidden(o),o,Frame::default(),false);let closing=Transition::new(false,Frame::expanded(),o,Frame::default(),false);let reversed=Transition::new(false,opening.sample(140.),o,opening.velocity(140.),false);let mut rows=vec![];let mut times=vec![];
  for (name,t) in [("open",opening),("close",closing),("reverse",reversed)]{
   let frames=(t.duration_ms/16.6667).ceil()as usize;
-  for i in 0..=frames{let ms=(i as f64*16.6667).min(t.duration_ms);let mut s=a.scene();s.frame=t.sample(ms);s.animate=true;s.layout_scale=1.;s.glass_refraction=false;s.component_count=1;s.title="海边来信";s.artist="展开与收起 · 实际渲染预览";s.lyric_age_ms=1000.;s.cover_age_ms=1000.;s.elapsed=86.;s.duration=252.;s.progress=86./252.;
+  for i in 0..=frames{let ms=(i as f64*16.6667).min(t.duration_ms);let mut s=a.scene();s.frame=t.sample(ms);s.animate=true;s.layout_scale=1.;s.component_count=1;s.title="海边来信";s.artist="展开与收起 · 实际渲染预览";s.lyric_age_ms=1000.;s.cover_age_ms=1000.;s.elapsed=86.;s.duration=252.;s.progress=86./252.;
    let start=Instant::now();renderer.render(&s,false)?;renderer.wait_idle();times.push(start.elapsed().as_secs_f64()*1000.);
    let file=format!("{name}-{i:03}.png");renderer.snapshot(&out.join(&file))?;let (card,compact)=crate::motion::content_softness(s.frame.card_reveal,true);rows.push(json!({"file":file,"ms":ms,"reveal":s.frame.card_reveal,"cardSigma":card,"compactSigma":compact}));
   }

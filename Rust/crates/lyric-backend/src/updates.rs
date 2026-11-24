@@ -45,7 +45,26 @@ pub fn describe_channel(release:&Value,current:&str,channel:&str)->Result<Value,
  if !preview&&latest.1!=4{return Err("测试版本缺少预发行标记".into())}
  let installed=release_version(current).ok_or("当前版本号无效")?;
  let newer=latest>installed;
- Ok(json!({"success":true,"message":if newer{format!("发现新版本 {tag}，下载校验后由你确认安装。")}else{format!("当前渠道暂无更新（{current}）")},"newer":newer,"version":tag,"channel":channel,"prerelease":preview,"url":RELEASES}))
+ let notes = if newer { release["body"].as_str().map(notes_text).unwrap_or_default() } else { String::new() };
+ Ok(json!({"success":true,"message":if newer{format!("发现新版本 {tag}，下载校验后由你确认安装。")}else{format!("当前渠道暂无更新（{current}）")},"newer":newer,"version":tag,"channel":channel,"prerelease":preview,"url":RELEASES,"releaseNotes":notes}))
+}
+fn notes_text(text: &str) -> String { text.trim_start_matches('\u{feff}').trim().chars().take(6_000).collect() }
+
+fn fill_release_notes(result: &mut Value, fetch: impl FnOnce() -> Result<Vec<u8>, String>) {
+    if result["newer"] != true || result["releaseNotes"].as_str().is_some_and(|s| !s.trim().is_empty()) { return; }
+    if let Ok(bytes) = fetch() {
+        if let Ok(text) = std::str::from_utf8(&bytes) {
+            let notes = notes_text(text);
+            if !notes.is_empty() { result["releaseNotes"] = json!(notes); }
+        }
+    }
+}
+
+fn github_notes(result: &mut Value, tag: &str, version: &str) {
+    fill_release_notes(result, || crate::http::request_system(
+        &format!("https://github.com/Heiamer/DotIsle/releases/download/{tag}/DotIsle-{version}-Notes.md"),
+        &crate::http::RequestContext::new(Duration::from_secs(5)), 32 * 1024,
+    ));
 }
 fn choose_release(releases:&Value,channel:&str,current:&str)->Result<Value,String>{
  let items=releases.as_array().ok_or("更新列表格式无效")?;
@@ -77,29 +96,44 @@ fn manifest_release(value:Value)->Result<Value,String>{
     if value["published"]!=true{return Err("备用清单对应版本尚未发布".into())}
     describe(&value,&installed_version())?;Ok(value)
 }
-fn check_github(channel:&str)->Result<Value,String>{
- if channel=="beta" {return check_github_beta()}
-    let ctx=crate::http::RequestContext::new(Duration::from_secs(10));
-    let release=match crate::http::get_system("https://api.github.com/repos/Heiamer/DotIsle/releases/latest",&ctx){
-        Ok(value)=>value,
-        Err(api_error)=>{
-            // The raw manifest has a separate rate limit and does not depend on GitHub HTML.
-            let ctx=crate::http::RequestContext::new(Duration::from_secs(6));
-            match crate::http::get_system(RELEASE_MANIFEST,&ctx).and_then(manifest_release){
-                Ok(value)=>value,
-                Err(manifest_error)=>{
-                    let ctx=crate::http::RequestContext::new(Duration::from_secs(10));
-                    crate::http::request_system(RELEASES,&ctx,4*1024*1024)
-                        .and_then(|bytes|page_release(&String::from_utf8_lossy(&bytes)))
-                        .map_err(|page_error|format!("API：{api_error}；备用清单：{manifest_error}；页面：{page_error}"))?
-                }
-            }
-        }
+fn check_stable_sources(
+    current: &str,
+    api: impl FnOnce() -> Result<Value, String>,
+    page: impl FnOnce() -> Result<Value, String>,
+    manifest: impl FnOnce() -> Result<Value, String>,
+) -> Result<Value, String> {
+    let api = api().and_then(|release| describe(&release, current));
+    let api_error = match api {
+        Ok(result) => return Ok(result),
+        Err(error) => error,
     };
-    let mut result=describe(&release,&installed_version())?;
-    let v=release["tag_name"].as_str().ok_or("版本号缺失")?.trim_start_matches('v');
-    let base=format!("https://github.com/Heiamer/DotIsle/releases/download/v{v}/LyricIsland-{v}");
-    result["source"]=json!("GitHub");result["manifestUrl"]=json!(format!("{base}-SHA256.txt"));result["zipUrl"]=json!(format!("{base}-Portable.zip"));Ok(result)
+    // A valid but stale manifest can otherwise hide a release when the API is rate limited.
+    let page_error = match page().and_then(|release| describe(&release, current)) {
+        Ok(result) => return Ok(result),
+        Err(error) => error,
+    };
+    manifest().and_then(manifest_release).and_then(|release| describe(&release, current))
+        .map_err(|manifest_error| format!("API：{api_error}；页面：{page_error}；备用清单：{manifest_error}"))
+}
+fn check_github(channel:&str)->Result<Value,String>{
+    if channel=="beta" {return check_github_beta()}
+    let mut result = check_stable_sources(
+        &installed_version(),
+        || crate::http::get_system("https://api.github.com/repos/Heiamer/DotIsle/releases/latest", &crate::http::RequestContext::new(Duration::from_secs(10))),
+        || crate::http::request_system(RELEASES, &crate::http::RequestContext::new(Duration::from_secs(10)), 4 * 1024 * 1024)
+            .and_then(|bytes| page_release(&String::from_utf8_lossy(&bytes))),
+        || crate::http::get_system(RELEASE_MANIFEST, &crate::http::RequestContext::new(Duration::from_secs(6))),
+    )?;
+    let tag = result["version"].as_str().ok_or("版本号缺失")?.to_owned();
+    let v = tag.trim_start_matches('v');
+    let base = format!("https://github.com/Heiamer/DotIsle/releases/download/{tag}/LyricIsland-{v}");
+    let url = format!("https://github.com/Heiamer/DotIsle/releases/tag/{tag}");
+    result["source"] = json!("GitHub");
+    result["url"] = json!(url);
+    result["manifestUrl"] = json!(format!("{base}-SHA256.txt"));
+    result["zipUrl"] = json!(format!("{base}-Portable.zip"));
+    github_notes(&mut result, &tag, v);
+    Ok(result)
 }
 
 fn check_github_beta()->Result<Value,String>{
@@ -125,7 +159,8 @@ fn check_github_beta()->Result<Value,String>{
  let v=tag.trim_start_matches('v');
  let base=format!("https://github.com/Heiamer/DotIsle/releases/download/{tag}/LyricIsland-{v}");
  result["source"]=json!("GitHub");result["url"]=json!(format!("https://github.com/Heiamer/DotIsle/releases/tag/{tag}"));
- result["manifestUrl"]=json!(format!("{base}-SHA256.txt"));result["zipUrl"]=json!(format!("{base}-Portable.zip"));Ok(result)
+ result["manifestUrl"]=json!(format!("{base}-SHA256.txt"));result["zipUrl"]=json!(format!("{base}-Portable.zip"));
+ github_notes(&mut result,tag,v);Ok(result)
 }
 pub fn check()->Result<Value,String>{check_channel("stable")}
 // GitHub is authoritative. The domestic mirror is queried only on failure;
@@ -206,6 +241,18 @@ pub fn install()->Result<Value,String>{
     Ok(json!({"success":true,"message":"正在下载并校验更新，完成后会自动重启；下载失败时保留当前版本。"}))
 }
 #[cfg(test)]mod tests{use super::*;
+    #[test]
+    fn release_body_is_legacy_compatible_and_empty_metadata_uses_matching_attachment() {
+        let body = include_str!("../../../../release-notes/DotIsle-5.2.0-Notes.md");
+        let release = json!({"tag_name":"v5.2.0","body":body});
+        let mut result = describe(&release, "5.1.2").unwrap();
+        fill_release_notes(&mut result, || panic!("release body already available"));
+        assert_eq!(result["releaseNotes"], body.trim());
+        let mut from_page = describe(&json!({"tag_name":"v5.2.0"}), "5.1.2").unwrap();
+        fill_release_notes(&mut from_page, || Ok(body.as_bytes().to_vec()));
+        assert_eq!(from_page["releaseNotes"], body.trim());
+        assert!(describe(&json!({"tag_name":"v5.2.0","draft":true,"body":body}), "5.1.2").is_err());
+    }
     #[test]fn repositories_require_expected_hosts_and_two_safe_segments(){assert_eq!(repository("https://gitee.com/team/dotisle.git","gitee.com").unwrap(),"team/dotisle");for url in ["http://gitee.com/a/b","https://evil.test/a/b","https://gitee.com/a/b/extra","https://gitee.com/a/..","https://gitee.com/a/b?q=x"]{assert!(repository(url,"gitee.com").is_err());}}
     #[test]fn domestic_urls_are_constructed_from_validated_attachment_ids(){let assets=json!([{"name":"LyricIsland-1.3.1-Portable.zip","id":42,"browser_download_url":"https://evil.test"}]);assert_eq!(gitee_asset_url("team/dotisle",7,&assets,"LyricIsland-1.3.1-Portable.zip").unwrap(),"https://gitee.com/api/v5/repos/team/dotisle/releases/7/attach_files/42/download");assert!(gitee_asset_url("team/dotisle",7,&assets,"missing").is_err());}
     #[test]fn compares_numeric_versions_and_never_downgrades(){
@@ -234,6 +281,29 @@ pub fn install()->Result<Value,String>{
         for html in [r#"<meta data-property='og:url' content='/Heiamer/DotIsle/releases/tag/v9.0'>"#,
                      r#"<meta property='og:url' content='https://evil.test/Heiamer/DotIsle/releases/tag/v9.0'>"#,
                      r#"<meta property='og:url' content='/Heiamer/DotIsle/releases/tag/v2.1.6/evil'>"#]{assert!(page_release(html).is_err());}
+    }
+    #[test]
+    fn rate_limited_stable_api_checks_release_page_before_stale_manifest() {
+        let result = check_stable_sources(
+            "5.0.6",
+            || Err("HTTP 403".into()),
+            || page_release(r#"<meta property="og:url" content="https://github.com/Heiamer/DotIsle/releases/tag/v5.0.7">"#),
+            || panic!("the stale v5.0.6 manifest must not override public release metadata"),
+        ).unwrap();
+        assert_eq!(result["version"], "v5.0.7");
+        assert_eq!(result["newer"], true);
+    }
+
+    #[test]
+    fn invalid_stable_api_response_can_fall_back_to_published_manifest() {
+        let result = check_stable_sources(
+            "5.0.6",
+            || Ok(json!({"tag_name":"v5.1.0","prerelease":true})),
+            || Err("page unreachable".into()),
+            || Ok(json!({"tag_name":"v5.0.7","published":true})),
+        ).unwrap();
+        assert_eq!(result["version"], "v5.0.7");
+        assert_eq!(result["prerelease"], false);
     }
     #[test]fn raw_manifest_requires_a_published_stable_release(){
         let valid=json!({"published":true,"tag_name":"v2.1.6","prerelease":false,"draft":false});

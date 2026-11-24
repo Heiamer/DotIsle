@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 pub fn fetch(city: &str) -> Result<Value, String> {
     pool::fetch(city)
 }
+pub(super) fn complete(value:&Value)->bool{pool::complete(value)}
 #[cfg(test)]
 fn fetch_sources(city:&str,primary:impl FnOnce()->Result<Value,String>,fallback:impl FnOnce()->Result<Value,String>)->Result<Value,String>{
     if city.trim().is_empty(){return Err("请先设置城市".into())}

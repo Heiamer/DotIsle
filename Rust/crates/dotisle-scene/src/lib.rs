@@ -522,7 +522,18 @@ impl Renderer {
         width: u32,
         height: u32,
     ) -> Self {
+        Self::with_filter_policy(device, format, width, height, false)
+    }
+
+    pub fn with_filter_policy(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+        defer_filter_pipeline: bool,
+    ) -> Self {
         let settings = vello_hybrid::RenderSettings {
+            defer_filter_pipeline,
             memory_settings: vello_hybrid::MemorySettings {
                 // Covers are decoded to thumbnail sizes by the callers. Allocate image pages lazily.
                 image_atlas_config: vello_hybrid::AtlasConfig {

@@ -37,7 +37,7 @@ def run(args):
         settings = json.loads(path.read_text(encoding='utf-8'))
         settings.update(NotificationsEnabled=True, PauseNotifications=False,
                         StartupSignatureEnabled=False, StartupGreetingEnabled=False,
-                        IslandResidentEnabled=True, Animation=False,
+                        IslandKeepVisibleEnabled=True, Animation=False,
                         AllowedSources=['LyricIsland.Verify13'])
         path.write_text(json.dumps(settings), encoding='utf-8')
         app.start(preserve_settings=True)
@@ -63,7 +63,7 @@ def run(args):
             assert not state['notificationHistory'], 'OTP must never be persisted as notification history'
             report['checks'].append(mode + ': QQ mail mixed-case OTP reached dedicated visible island; no history persisted')
             assert app.request('update', {'key':'PauseNotifications','value':True})['success']
-            wait(lambda s: not s['verificationAlertVisible'] and s['residentIdle'] and not s['islandEnabled'])
+            wait(lambda s: not s['verificationAlertVisible'] and not s['islandVisible'] and not s['islandEnabled'])
         report['success'] = True
     except Exception:
         report['error'] = traceback.format_exc()

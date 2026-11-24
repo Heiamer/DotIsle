@@ -1,47 +1,5 @@
-//! Native configuration, logs and IPC client used by Slint and the WPF bridge.
-use std::{path::{Path,PathBuf},io::{Read,Write},time::{Instant,Duration},sync::{Mutex,OnceLock}};
-use windows::{core::PCWSTR,Win32::{Foundation::HANDLE,System::Pipes::{WaitNamedPipeW,PeekNamedPipe}}};
-use serde_json::Value;
-/// Auto-reset wake event shared by the island and its settings worker.
-pub struct SettingsWake(HANDLE);
-unsafe impl Send for SettingsWake{}
-unsafe impl Sync for SettingsWake{}
-impl SettingsWake{
-    pub fn new()->Option<Self>{let pipe=std::env::var("LYRICISLAND_TEST_PIPE").unwrap_or_else(|_|"LyricIsland.Native.Settings.v1".into());let name=format!("Local\\DotIsle.SettingsWake.{pipe}").encode_utf16().chain(Some(0)).collect::<Vec<_>>();unsafe{windows::Win32::System::Threading::CreateEventW(None,false,false,PCWSTR(name.as_ptr())).ok().map(Self)}}
-    pub fn signal(&self){unsafe{let _=windows::Win32::System::Threading::SetEvent(self.0);}}
-    pub fn wait(&self,ms:u32){unsafe{let _=windows::Win32::System::Threading::WaitForSingleObject(self.0,ms);}}
-}
-impl Drop for SettingsWake{fn drop(&mut self){unsafe{let _=windows::Win32::Foundation::CloseHandle(self.0);}}}
-pub fn data_directory()->PathBuf{PathBuf::from(std::env::var_os("APPDATA").unwrap_or_default()).join("LyricIsland")}
-pub fn read_settings(path:&Path)->Value{
-    if std::fs::metadata(path).is_ok_and(|m|m.len()<=1024*1024){if let Ok(file)=std::fs::File::open(path){if let Ok(value)=serde_json::from_reader(file){return value}}}
-    serde_json::json!({})
-}
-pub fn save_settings(path:&Path,settings:&Value)->Result<(),String>{crate::storage::atomic_write(path,&serde_json::to_vec_pretty(settings).map_err(|e|e.to_string())?)}
-pub fn pipe_request(pipe:&str,request:&Value)->Result<Value,String>{
-    use std::os::windows::io::AsRawHandle;
-    let path=format!("\\\\.\\pipe\\{pipe}");let wide=path.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
-    // Retry transient gaps before sending bytes; never replay a mutation.
-    let connect_until=Instant::now()+Duration::from_secs(2);
-    let mut file=loop{
-        if unsafe{WaitNamedPipeW(PCWSTR(wide.as_ptr()),100).as_bool()}{
-            match std::fs::OpenOptions::new().read(true).write(true).open(&path){Ok(file)=>break file,Err(error) if !matches!(error.raw_os_error(),Some(2|231|535))=>return Err(error.to_string()),_=>{}}
-        }
-        if Instant::now()>=connect_until{return Err("灵动岛未连接，请先启动主程序。".into())}
-        std::thread::sleep(Duration::from_millis(15));
-    };
-    let mut request=request.to_string();request.push('\n');file.write_all(request.as_bytes()).map_err(|e|e.to_string())?;
-    let deadline=Instant::now()+Duration::from_secs(8);let mut response=vec![];
-    loop{
-        if Instant::now()>deadline{return Err("设置连接超时。".into())}let mut available=0;
-        unsafe{PeekNamedPipe(HANDLE(file.as_raw_handle()),None,0,None,Some(&mut available),None)}.map_err(|e|e.to_string())?;
-        if available==0{std::thread::sleep(Duration::from_millis(10));continue}
-        let mut buffer=vec![0u8;available.min(65536) as usize];let read=file.read(&mut buffer).map_err(|e|e.to_string())?;
-        if read==0{return Err("连接已关闭。".into())}response.extend_from_slice(&buffer[..read]);if response.len()>1024*1024{return Err("设置响应过大。".into())}
-        if response.contains(&b'\n'){return serde_json::from_slice(&response).map_err(|e|e.to_string())}
-    }
-}
-
+//! Bounded lyric lookup diagnostics.
+use std::{path::{Path,PathBuf},io::Write,time::{Instant,Duration},sync::{Mutex,OnceLock}};
 const LOG_LIMIT:u64=2*1024*1024;
 const LOG_FILES:usize=8;
 #[derive(Default)]struct LogState{last:std::collections::HashMap<(PathBuf,String), (Instant,usize)>,pruned:Option<Instant>}

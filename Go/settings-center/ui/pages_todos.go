@@ -131,40 +131,59 @@ func (a *App) todosPage(c *ui.Context, x, y, w float32) float32 {
 		}
 		return todos[i].Time < todos[j].Time
 	})
-	pending := 0
+	pending, dueToday := 0, 0
 	for _, t := range todos {
 		if !todoDone(t, date) {
 			pending++
+			if t.Date == date || t.Daily {
+				dueToday++
+			}
 		}
 	}
+	doneCount := len(todos) - pending
 	var bottom float32
 	if len(todos) == 0 {
-		bottom = 405
+		bottom = 452
 	} else {
-		bottom = 42 + float32(len(todos))*88
+		bottom = 112 + float32(len(todos))*90
 	}
 	page := ui.Box(c).Margin(y, 0, 0, x).Width(w).Height(bottom)
 	page.Children(func() {
-		Label(c, fmt.Sprintf("%d 件未完成 · 共 %d 件", pending, len(todos)), 0, 4, 13, s.OnSurfaceVariant, false, w)
+		// 顶部极简光学统计概览三卡（待完成 / 今日待办 / 已完成）
+		cardW := (w - 24) / 3
+		stats := [3]struct {
+			num, label string
+			accent     uint32
+		}{
+			{fmt.Sprintf("%d", pending), "待完成事项", s.Primary},
+			{fmt.Sprintf("%d", dueToday), "今日 / 每日", s.OnSurface},
+			{fmt.Sprintf("%d", doneCount), "已完成", s.OnSurfaceVariant},
+		}
+		for i, st := range stats {
+			sx := float32(i) * (cardW + 12)
+			appleWidgetSurface(c, p, overviewRect{"", sx, 0, cardW, 74})
+			Label(c, st.num, sx+20, 12, 26, st.accent, true, cardW-40)
+			Label(c, st.label, sx+20, 44, 12, s.OnSurfaceVariant, false, cardW-40)
+		}
+		Label(c, fmt.Sprintf("%d 件未完成 · 共 %d 件", pending, len(todos)), 0, 86, 12.5, s.OnSurfaceVariant, false, w)
 		if len(todos) == 0 {
-			Panel(c, p, 0, 45, w, 360, s.Container)
-			// draw::circle(x+w/2, y+158, 42, secondary_container) + 44px leaf.
-			ui.Box(c).Absolute().Left(w/2 - 42).Top(116).Width(84).Height(84).
-				Radius(42).Background(Col(s.SecondaryContainer))
+			appleWidgetSurface(c, p, overviewRect{"", 0, 114, w, 336})
+			ui.Box(c).Absolute().Left(w/2 - 42).Top(178).Width(84).Height(84).
+				Radius(42).Background(AlphaCol(s.Primary, .12)).IgnoreInput(true)
 			if svg := Symbol("eco"); svg != nil {
-				ui.Icon(c, svg).FontSize(44).TextColor(Col(s.Primary)).
-					Absolute().Left(w/2 - 22).Top(136)
+				ui.Icon(c, svg).FontSize(42).TextColor(Col(s.Primary)).
+					Absolute().Left(w/2 - 21).Top(199)
 			}
-			CenteredText(c, "心里，少一点牵挂", 0, 234, w, 44, 16, s.OnSurface, true)
-			CenteredText(c, "点击右上角的新建待办，记下第一件事。", 0, 293, w, 28, 14, s.OnSurfaceVariant, false)
+			CenteredText(c, "心里，少一点牵挂", 0, 286, w, 40, 17, s.OnSurface, true)
+			CenteredText(c, "点击右上角「新建待办」，记下第一件重要的事。", 0, 334, w, 28, 13, s.OnSurfaceVariant, false)
 			return
 		}
-		top := float32(42)
+		top := float32(114)
 		for index, item := range todos {
-			if y+top+76 >= a.scrollY() && y+top <= a.scrollY()+float32(clipH) {
-				a.todoAgendaRow(c, item, index, 0, top, w, 76, index == 0, true)
+			if y+top+78 >= a.scrollY() && y+top <= a.scrollY()+float32(clipH) {
+				a.todoAgendaRow(c, item, index, 0, top, w, 78, index == 0, true)
 			}
-			top += 88
+			top += 90
 		}
 	})
 	return y + bottom
@@ -268,12 +287,9 @@ func (a *App) sendTodoSave() {
 		"daily":   todoDialogDraft.daily,
 		"color":   color,
 	}
-	go func() {
+	a.startAsync(func() {
 		reply, err := island.Request("todoSave", payload)
-		if a.Win == nil {
-			return
-		}
-		a.Win.Update(func() {
+		a.applyAsync(func() {
 			switch {
 			case err != nil:
 				todoDialogDraft.err = err.Error()
@@ -288,5 +304,5 @@ func (a *App) sendTodoSave() {
 			}
 			a.Refresh()
 		})
-	}()
+	})
 }

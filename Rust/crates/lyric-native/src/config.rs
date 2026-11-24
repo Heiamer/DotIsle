@@ -1,7 +1,10 @@
 use serde_json::{json, Value};
 pub fn defaults() -> Value {
-    let mut defaults = json!({"AutoCheckUpdatesEnabled":true,"LyricColorFromCover":true,"DeviceRemindersEnabled":true,"DeviceSoundEnabled":true,"DeviceSound":"Connect","DeviceSoundPath":"","DeviceVolume":55.,"HeadphoneConnectionRemindersEnabled":true,"SpeakerConnectionRemindersEnabled":true,"GamepadConnectionRemindersEnabled":true,"MouseConnectionRemindersEnabled":false,"KeyboardConnectionRemindersEnabled":false,"DeviceDisconnectRemindersEnabled":true,"SystemStateHintsEnabled":true,"SystemStateHintPlacement":"Island","CapsLockHintEnabled":true,"NumLockHintEnabled":true,"MicrophoneMuteHintEnabled":true,"TouchpadHintEnabled":true,"SwipeActivities":true,"AutoCompactMaxWidth":420.,"TodoDefaultColor":"#F3D79B","TodoRemindersEnabled":true,"TodoIslandEnabled":true,"AutoCompactWidth":true,"CompactTranslation":true,"ChineseTwoLine":true,"NotificationSoundEnabled":true,"TodoSoundEnabled":true,"NotificationSound":"Soft","TodoSound":"Bell","NotificationSoundPath":"","TodoSoundPath":"","QuickReminderHotkey":"","FocusCountUp":false,"FocusPauseOnLock":false,"AppEntryRemindersEnabled":false,"AppUsageRemindersEnabled":false,"NotificationVolume":35.,"TodoVolume":45.,"CompactWidth":260.,"FontSize":14.,"Floating":false,"Translation":true,"TranslationButton":true,"Animation":true,"HoverExpand":false,"ClickAnywhereExpand":true,"NotificationsEnabled":true,"PauseNotifications":false,"NotificationClickOpenApp":true,"MusicClickOpenApp":false,"MusicExpandedLayout":"SideBySide","NotificationWhitelistEnabled":false,"NotificationBlacklistEnabled":false,"NotificationBlockedApps":[],"NotificationAllowedApps":["QQNT","QQ"],"NotificationHistoryEnabled":true,"NotificationHistoryDays":7,"WordHighlight":true,"AlwaysOnTop":true,"AutoStart":true,"OnlineSongInfo":true,"CoverBackground":false,"IslandMonetPreferenceVersion":1,"HideWhenPaused":true,"IgnoredSources":["Browser"],"PlayerFilterVersion":2,"DefaultsOnboardingVersion":0,"ExpandedTextColor":"#F4F6F8","ExpandedComponentColor":"#B1E8D1","LyricProgressColor":"#A9E6CD","SettingsTheme":"System","ControlCenterStartPage":"overview","WorkflowModules":[{"id":"builtin-thinking","name":"整理思路","minutes":5,"kind":0},{"id":"builtin-focus","name":"专注","minutes":25,"kind":1},{"id":"builtin-rest","name":"休息","minutes":5,"kind":2},{"id":"builtin-review","name":"复盘","minutes":10,"kind":3},{"id":"builtin-move","name":"活动一下","minutes":3,"kind":4},{"id":"builtin-custom","name":"自定义","minutes":10,"kind":5}],"CenterX":0.5,"TopFraction":0.08,"Display":"","OffsetMilliseconds":0,"NeteaseCdpPort":"9223","LocalFolders":[],"Motion":crate::motion::Options::default()});
-    defaults["IslandResidentEnabled"] = json!(false);
+    let mut defaults = json!({"AutoCheckUpdatesEnabled":true,"LyricColorFromCover":true,"DeviceRemindersEnabled":true,"DeviceSoundEnabled":true,"DeviceSound":"Connect","DeviceSoundPath":"","DeviceVolume":55.,"HeadphoneConnectionRemindersEnabled":true,"SpeakerConnectionRemindersEnabled":true,"GamepadConnectionRemindersEnabled":true,"MouseConnectionRemindersEnabled":false,"KeyboardConnectionRemindersEnabled":false,"DeviceDisconnectRemindersEnabled":true,"SystemStateHintsEnabled":true,"SystemStateHintPlacement":"Island","CapsLockHintEnabled":true,"NumLockHintEnabled":true,"MicrophoneMuteHintEnabled":true,"TouchpadHintEnabled":true,"SwipeActivities":true,"AutoCompactMaxWidth":420.,"TodoDefaultColor":"#F3D79B","TodoRemindersEnabled":true,"TodoIslandEnabled":true,"AutoCompactWidth":true,"CompactTranslation":true,"ChineseTwoLine":true,"NotificationSoundEnabled":true,"TodoSoundEnabled":true,"NotificationSound":"Soft","TodoSound":"Bell","NotificationSoundPath":"","TodoSoundPath":"","QuickReminderHotkey":"","FocusCountUp":false,"FocusPauseOnLock":false,"AppEntryRemindersEnabled":false,"AppUsageRemindersEnabled":false,"NotificationVolume":35.,"TodoVolume":45.,"CompactWidth":260.,"FontSize":14.,"Floating":false,"Translation":true,"TranslationButton":true,"Animation":true,"HoverExpand":false,"ClickAnywhereExpand":true,"NotificationsEnabled":true,"PauseNotifications":false,"NotificationClickOpenApp":true,"MusicClickOpenApp":false,"MusicExpandedLayout":"SideBySide","NotificationWhitelistEnabled":false,"NotificationBlacklistEnabled":false,"NotificationBlockedApps":[],"NotificationAllowedApps":["QQNT","QQ"],"NotificationHistoryEnabled":true,"NotificationHistoryDays":7,"WordHighlight":true,"AlwaysOnTop":true,"AutoStart":true,"OnlineSongInfo":true,"CoverBackground":false,"IslandMonetPreferenceVersion":1,"HideWhenPaused":true,"IgnoredSources":["Browser"],"PlayerFilterVersion":2,"DefaultsOnboardingVersion":0,"ExpandedTextColor":"#FFFFFF","ExpandedComponentColor":"#FFFFFF","LyricProgressColor":"#DDF6FF","SettingsTheme":"System","ControlCenterStartPage":"overview","WorkflowModules":[{"id":"builtin-thinking","name":"整理思路","minutes":5,"kind":0},{"id":"builtin-focus","name":"专注","minutes":25,"kind":1},{"id":"builtin-rest","name":"休息","minutes":5,"kind":2},{"id":"builtin-review","name":"复盘","minutes":10,"kind":3},{"id":"builtin-move","name":"活动一下","minutes":3,"kind":4},{"id":"builtin-custom","name":"自定义","minutes":10,"kind":5}],"CenterX":0.5,"TopFraction":0.08,"Display":"","OffsetMilliseconds":0,"NeteaseCdpPort":"9223","LocalFolders":[],"Motion":crate::motion::Options::default()});
+    defaults["IslandKeepVisibleEnabled"] = json!(false);
+    defaults[crate::resident::TIME] = json!(true);
+    defaults[crate::resident::SYSTEM] = json!(false);
+    defaults[crate::resident::DEVICES] = json!(false);
     defaults["MusicGlowEnabled"] = json!(false);
     defaults["TimerGlowEnabled"] = json!(false);
     defaults["UpdateGlowEnabled"] = json!(false);
@@ -9,8 +12,10 @@ pub fn defaults() -> Value {
     defaults["StartupSignatureEnabled"] = json!(true);
     defaults["StartupGreetingEnabled"] = json!(true);
     defaults["VerificationCodeEnabled"] = json!(true);
-    for key in ["WeChatMessageHintsEnabled","FeishuMessageHintsEnabled","DingTalkMessageHintsEnabled","WeComMessageHintsEnabled"] { defaults[key]=json!(true); }
+    defaults["WeChatMessageHintsEnabled"]=json!(false);
+    for key in ["FeishuMessageHintsEnabled","DingTalkMessageHintsEnabled","WeComMessageHintsEnabled"] { defaults[key]=json!(true); }
     defaults["WeatherAlertsEnabled"] = json!(true);
+    defaults["ReminderPlugins"] = json!({});
     defaults["WeatherCity"] = json!("");
     defaults["ControlCenterColorSource"] = json!("Content");
     defaults["IslandColorSource"] = json!("Content");
@@ -19,7 +24,9 @@ pub fn defaults() -> Value {
     defaults["ControlCenterMonetEnabled"] = json!(true);
     defaults["ControlCenterDynamicColorEnabled"] = json!(false);
     defaults["ControlCenterCustomColor"] = json!("#9ABFE8");
-    defaults["ProgressBarStyle"] = json!("Wavy");
+    defaults["ProgressBarGlow"] = json!(true);
+    defaults["MusicLyricGlow"] = json!(true);
+    defaults["ProgressBarStyle"] = json!("Normal");
     defaults["ProgressBarThumb"] = json!("Pill");
     defaults["ProgressBarThumbEnabled"] = json!(false);
     defaults["ProgressBarThumbSpin"] = json!(false);
@@ -29,32 +36,39 @@ pub fn defaults() -> Value {
     defaults["PlayerResponseMode"] = json!("All");
     defaults["BrowserMediaEnabled"] = json!(false);
     defaults["SelectedSources"] = json!(dotisle_domain::players::ALL);
-    defaults["IslandFontFamily"] = json!("HarmonyOS Sans SC");
+    defaults["IslandFontFamily"] = json!("Noto Sans SC");
     defaults["SettingsLightAccentColor"] = json!("#2563EB");
     defaults["SettingsDarkAccentColor"] = json!("#6EA8FF");
-    defaults["IslandMaterial"] = json!("Acrylic");
+    defaults["IslandMaterial"] = json!("LightField");
     defaults["IslandSizeMode"] = json!("Classic");
-    defaults["ClassicCapsuleMaterial"] = json!("Acrylic");
-    defaults["MiniMaterial"] = json!("Acrylic");
-    defaults["MiniExpandedMaterial"] = json!("Acrylic");
-    defaults["MiniAutoContrast"] = json!(true);
-    // Acrylic keeps the artwork as a frosted layer under the card, tuned per surface. The strip
-    // starts at zero so an existing installation looks exactly as it did before the sliders existed.
+    defaults["ClassicCapsuleMaterial"] = json!("LightField");
+    defaults["MiniMaterial"] = json!("LightField");
+    defaults["MiniExpandedMaterial"] = json!("LightField");
+    defaults["PopupMaterial"] = json!("Acrylic");
+    // 亚克力叠层参数各表面独立；凝光保持洁净底面，仅在开启动态色彩时用专辑色点缀强调与歌词高亮。
     defaults["AcrylicCardFrost"] = json!(40.);
     defaults["AcrylicCardOpacity"] = json!(60.);
     defaults["AcrylicCapsuleFrost"] = json!(40.);
     defaults["AcrylicCapsuleOpacity"] = json!(0.);
     defaults["ExpandedMonetEnabled"] = json!(true);
-    defaults["ExpandedCoverOverlay"] = json!(true);
+    defaults["ExpandedCoverOverlay"] = json!(false);
     defaults["AcrylicAdjustTarget"] = json!("Card");
-    defaults["GlassRefractionEnabled"] = json!(true);
     defaults["SoundLibraryVersion"] = json!(2);
     for p in ["Notification", "Todo", "Device"] {
         defaults[format!("{p}SoundSource")] = json!("Builtin");
     }
     defaults["CapsuleCornerRadius"] = Value::Null;
     defaults["SwipeUpHide"] = json!(true);
+    defaults["EdgeHoverRevealEnabled"] = json!(false);
+    defaults["TaskbarModeEnabled"] = json!(false);
+    defaults["TaskbarAlwaysShow"] = json!(true);
+    defaults["TaskbarStyle"] = json!("Transparent");
+    defaults["TaskbarDockAlign"] = json!("Free");
+    defaults["TaskbarPosition"] = json!(18.);
+    defaults["TaskbarWidth"] = json!(340.);
+    defaults["IslandOpacity"] = json!(100.);
     defaults["GestureTutorialSeen"] = json!(false);
+    defaults["GesturePracticeSeen"] = json!(false);
     defaults
 }
 /// The face the island actually paints with. `fontScope == "Center"` keeps the island on the
@@ -62,14 +76,14 @@ pub fn defaults() -> Value {
 pub fn resolve_render_font(s: &mut Value, path: &std::path::Path) {
     let family = s["IslandFontFamily"]
         .as_str()
-        .unwrap_or("HarmonyOS Sans SC")
+        .unwrap_or("Noto Sans SC")
         .to_string();
     let mut render = family;
     let prefs = path.with_file_name("preferences.json");
     if let Ok(raw) = std::fs::read(&prefs) {
         if let Ok(p) = serde_json::from_slice::<Value>(&raw) {
             if p["fontScope"].as_str() == Some("Center") {
-                render = "HarmonyOS Sans SC".into();
+                render = "Noto Sans SC".into();
             }
         }
     }
@@ -94,6 +108,9 @@ pub fn load(path: &std::path::Path) -> Value {
             }
         }
     }
+    if s["WeChatTaskbarWarningAccepted"] != true {
+        s["WeChatMessageHintsEnabled"] = json!(false);
+    }
     if let Some(fields) = s.as_object_mut() {
         fields.remove("IslandFluidMotion");
         fields.remove("MotionPreferenceVersion");
@@ -102,17 +119,18 @@ pub fn load(path: &std::path::Path) -> Value {
         fields.remove("NotificationCompatibility");
         fields.remove("CardMaterial");
         fields.remove("IslandGlassMaterial");
+        fields.remove("GlassRefractionEnabled");
+        fields.remove("MiniAutoContrast");
         fields.remove("MusicControlTheme");
         fields.remove("AlcoveThemeUnlocked");
+        fields.remove("IslandResidentEnabled");
     }
     // 2.0.x stored a boolean for the one optional frosted material. Carry that choice into the
-    // three-value setting once; a file that already has IslandMaterial wins over the legacy key.
+    // material setting once; a file that already has IslandMaterial wins over the legacy key.
     if !has_material {
-        s["IslandMaterial"] = json!(match legacy_material {
-            Some(true) => "Acrylic",
-            Some(false) => "Classic",
-            None => "Acrylic",
-        });
+        if let Some(glass) = legacy_material {
+            s["IslandMaterial"] = json!(if glass { "Acrylic" } else { "LightField" });
+        }
     }
     // 1.5 ships three previously opt-in features as defaults. An upgrade persists every key, so a
     // stored `false` is indistinguishable from a deliberate opt-out; migrate once, then respect it.
@@ -144,27 +162,26 @@ pub fn load(path: &std::path::Path) -> Value {
     // player nobody had heard of — 汽水音乐, PotPlayer, 洛雪 — stayed silent until the user found the
     // list. The filter is now expressed the other way round: everything responds, and the entries
     // here are the ones that do not.
-    // 5.0.1 replaces the thin Noto Sans SC default with HarmonyOS Sans SC, whose
-    // Medium/Bold faces stay legible on frosted covers. Migrate the old default
-    // once; any later choice, including switching back to Noto, is preserved.
-    if s.get("FontFaceVersion").and_then(Value::as_u64).unwrap_or(0) < 1 {
-        if s["IslandFontFamily"]
-            .as_str()
-            .is_none_or(|name| name == "Noto Sans SC")
-        {
-            s["IslandFontFamily"] = json!("HarmonyOS Sans SC");
+    // 5.2.0 统一采用可变字重 Noto Sans SC 替换多套鸿蒙静态字体包以大幅瘦身；
+    // 若用户未在本机安装 HarmonyOS Sans SC，则自动平滑迁移至 Noto Sans SC。
+    if s.get("FontFaceVersion").and_then(Value::as_u64).unwrap_or(0) < 2 {
+        if s["IslandFontFamily"].as_str().is_none_or(|name| {
+            name == "HarmonyOS Sans SC"
+                && dotisle_render::draw::Text::system_family(name).is_none()
+        }) {
+            s["IslandFontFamily"] = json!("Noto Sans SC");
         }
-        s["FontFaceVersion"] = json!(1);
+        s["FontFaceVersion"] = json!(2);
     }
     let stored_font = s["IslandFontFamily"]
         .as_str()
-        .unwrap_or("HarmonyOS Sans SC")
+        .unwrap_or("Noto Sans SC")
         .to_owned();
-    let family = if stored_font == "Noto Sans SC" || stored_font == "HarmonyOS Sans SC" {
+    let family = if stored_font == "Noto Sans SC" {
         stored_font
     } else {
         dotisle_render::draw::Text::system_family(&stored_font)
-            .unwrap_or_else(|| "HarmonyOS Sans SC".into())
+            .unwrap_or_else(|| "Noto Sans SC".into())
     };
     // Keep the user's choice in IslandFontFamily: the control centre reads it to decide its own face.
     s["IslandFontFamily"] = json!(family.clone());
@@ -201,14 +218,18 @@ pub fn load(path: &std::path::Path) -> Value {
         s["CoverBackground"] = json!(false);
     }
     s["IslandMonetPreferenceVersion"] = json!(1);
-    for key in [
-        "ExpandedMonetEnabled",
-        "ExpandedCoverOverlay",
-        "TranslationButton",
-    ] {
-        if !s[key].is_boolean() {
-            s[key] = json!(true);
-        }
+    if !s["ExpandedMonetEnabled"].is_boolean() {
+        s["ExpandedMonetEnabled"] = json!(true);
+    }
+    if !s["ExpandedCoverOverlay"].is_boolean() {
+        s["ExpandedCoverOverlay"] = json!(false);
+    }
+    migrate_materials(&stored, &mut s);
+    if !["LightField", "Acrylic"].contains(&s["PopupMaterial"].as_str().unwrap_or("")) {
+        s["PopupMaterial"] = json!("Acrylic");
+    }
+    if !s["TranslationButton"].is_boolean() {
+        s["TranslationButton"] = json!(true);
     }
     for (key, fallback) in [
         ("AcrylicCardFrost", 40.),
@@ -221,6 +242,29 @@ pub fn load(path: &std::path::Path) -> Value {
             .filter(|v| v.is_finite())
             .unwrap_or(fallback)
             .clamp(0., 100.));
+    }
+    s["IslandOpacity"] = json!(s["IslandOpacity"]
+        .as_f64()
+        .filter(|v| v.is_finite())
+        .unwrap_or(100.)
+        .clamp(25., 100.));
+    if !s["EdgeHoverRevealEnabled"].is_boolean() {
+        s["EdgeHoverRevealEnabled"] = json!(false);
+    }
+    if !s["TaskbarModeEnabled"].is_boolean() {
+        s["TaskbarModeEnabled"] = json!(false);
+    }
+    if !s["TaskbarAlwaysShow"].is_boolean() {
+        s["TaskbarAlwaysShow"] = json!(true);
+    }
+    if !["Transparent", "Pill"].contains(&s["TaskbarStyle"].as_str().unwrap_or("")) {
+        s["TaskbarStyle"] = json!("Transparent");
+    }
+    if !["Free", "Auto", "Left", "Right"].contains(&s["TaskbarDockAlign"].as_str().unwrap_or("")) {
+        s["TaskbarDockAlign"] = json!("Free");
+    }
+    if !s["Display"].is_string() {
+        s["Display"] = json!("");
     }
     for prefix in ["Notification", "Todo", "Device"] {
         if stored[format!("{prefix}SoundSource")].is_null() {
@@ -237,21 +281,20 @@ pub fn load(path: &std::path::Path) -> Value {
     if stored["SoundLibraryVersion"].as_u64().unwrap_or(0) < 2 {
         s = crate::sound::reset_builtin(&s);
     }
-    migrate_materials(&stored, &mut s);
-    if !["Acrylic", "Glass"].contains(&s["ClassicCapsuleMaterial"].as_str().unwrap_or("")) {
-        s["ClassicCapsuleMaterial"] = json!("Acrylic");
+    if !["LightField", "Acrylic"].contains(&s["ClassicCapsuleMaterial"].as_str().unwrap_or("")) {
+        s["ClassicCapsuleMaterial"] = json!("LightField");
     }
-    if !["Acrylic", "Glass"].contains(&s["MiniMaterial"].as_str().unwrap_or("")) {
-        s["MiniMaterial"] = json!("Acrylic");
+    if !["LightField", "Acrylic"].contains(&s["MiniMaterial"].as_str().unwrap_or("")) {
+        s["MiniMaterial"] = json!("LightField");
     }
-    if !["Acrylic", "Glass"].contains(&s["MiniExpandedMaterial"].as_str().unwrap_or("")) {
-        s["MiniExpandedMaterial"] = json!("Acrylic");
+    if !["LightField", "Acrylic"].contains(&s["MiniExpandedMaterial"].as_str().unwrap_or("")) {
+        s["MiniExpandedMaterial"] = json!("LightField");
     }
     if !["Classic", "Mini"].contains(&s["IslandSizeMode"].as_str().unwrap_or("")) {
         s["IslandSizeMode"] = json!("Classic");
     }
-    if !["Acrylic", "Glass"].contains(&s["IslandMaterial"].as_str().unwrap_or("")) {
-        s["IslandMaterial"] = json!("Acrylic");
+    if !["LightField", "Acrylic"].contains(&s["IslandMaterial"].as_str().unwrap_or("")) {
+        s["IslandMaterial"] = json!("LightField");
     }
     for (key, fallback) in [
         ("SettingsLightAccentColor", "#2563EB"),
@@ -268,6 +311,8 @@ pub fn load(path: &std::path::Path) -> Value {
     for (k, min, max, fallback) in [
         ("AutoCompactMaxWidth", 140., 480., 420.),
         ("CompactWidth", 140., 480., 260.),
+        ("TaskbarWidth", 220., 640., 340.),
+        ("TaskbarPosition", 0., 100., 18.),
         ("FontSize", 11., 20., 14.),
         ("CenterX", 0., 1., 0.5),
         ("TopFraction", 0., 1., 0.08),
@@ -300,6 +345,9 @@ pub fn load(path: &std::path::Path) -> Value {
         s["MusicCustomLayout"] =
             serde_json::to_value(lyric_core::custom_layout::Layout::default()).unwrap();
     }
+    if s["MusicExpandedLayout"].as_str() == Some("FluidCloud") {
+        s["MusicExpandedLayout"] = json!("SideBySide");
+    }
     if !["Separated", "SideBySide", "LyricFocus"]
         .contains(&s["MusicExpandedLayout"].as_str().unwrap_or(""))
     {
@@ -309,7 +357,7 @@ pub fn load(path: &std::path::Path) -> Value {
         .iter()
         .any(|v| v.key() == s["ProgressBarStyle"].as_str().unwrap_or(""))
     {
-        s["ProgressBarStyle"] = json!("Wavy");
+        s["ProgressBarStyle"] = json!("Normal");
     }
     if !dotisle_render::progress::ThumbStyle::ALL
         .iter()
@@ -345,25 +393,21 @@ pub fn load(path: &std::path::Path) -> Value {
 }
 /// Upgrade stored preferences once; the removed renderer is never selected at runtime.
 fn migrate_materials(stored: &Value, s: &mut Value) {
+    // Some older versions shared the mini strip and expanded preference.
+    if stored.get("MiniExpandedMaterial").is_none() {
+        if let Some(material) = stored.get("MiniMaterial").and_then(Value::as_str) {
+            s["MiniExpandedMaterial"] = json!(material);
+        }
+    }
     for key in [
         "IslandMaterial",
         "MiniMaterial",
         "MiniExpandedMaterial",
         "ClassicCapsuleMaterial",
+        "PopupMaterial",
     ] {
-        if s[key].as_str() == Some("LiquidGlass") {
-            s[key] = json!("Glass");
-        }
-    }
-    // Previously the Mini strip and its card shared one preference. Preserve that card choice
-    // for existing installations; fresh installations use acrylic for both expanded sizes.
-    if stored.get("MiniExpandedMaterial").is_none() {
-        if let Some(material) = stored.get("MiniMaterial").and_then(Value::as_str) {
-            s["MiniExpandedMaterial"] = json!(if material == "LiquidGlass" {
-                "Glass"
-            } else {
-                material
-            });
+        if matches!(s[key].as_str(), Some("Glass" | "LiquidGlass")) {
+            s[key] = json!("LightField");
         }
     }
 }
@@ -411,6 +455,7 @@ pub fn is_acrylic_value(key: &str) -> bool {
         "AcrylicCardOpacity",
         "AcrylicCapsuleFrost",
         "AcrylicCapsuleOpacity",
+        "IslandOpacity",
     ]
     .contains(&key)
 }
@@ -425,6 +470,7 @@ pub fn is_paint_setting(key: &str) -> bool {
             "ExpandedComponentColor",
             "LyricProgressColor",
             "AcrylicAdjustTarget",
+            "IslandOpacity",
         ]
         .contains(&key)
 }
@@ -439,6 +485,9 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         "CapsuleCornerRadius" => Some((0., 48.)),
         "DeviceVolume" | "NotificationVolume" | "TodoVolume" => Some((0., 100.)),
         "AutoCompactMaxWidth" | "CompactWidth" => Some((140., 480.)),
+        "TaskbarPosition" => Some((0., 100.)),
+        "TaskbarWidth" => Some((220., 640.)),
+        "IslandOpacity" => Some((25., 100.)),
         "FontSize" => Some((11., 20.)),
         "OffsetMilliseconds" => Some((-5000., 5000.)),
         "NotificationHistoryDays" => Some((1., 30.)),
@@ -468,11 +517,14 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         }
         if key == "ControlCenterColorSource" {
             settings["ControlCenterMonetEnabled"] = json!(true);
+        } else {
+            settings["ExpandedMonetEnabled"] = json!(true);
+            settings["LyricColorFromCover"] = json!(true);
         }
         json!(source)
     } else if key == "IslandFontFamily" {
         let name = value.as_str().ok_or("invalid font")?;
-        if name == "Noto Sans SC" || name == "HarmonyOS Sans SC" {
+        if name == "Noto Sans SC" {
             json!(name)
         } else {
             dotisle_render::draw::Text::system_family(name)
@@ -509,19 +561,19 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         json!(s)
     } else if key == "MiniMaterial" {
         let s = value.as_str().ok_or("invalid mini material")?;
-        if !["Acrylic", "Glass"].contains(&s) {
+        if !["LightField", "Acrylic"].contains(&s) {
             return Err("invalid mini material".into());
         }
         json!(s)
     } else if key == "ClassicCapsuleMaterial" {
         let s = value.as_str().ok_or("invalid capsule material")?;
-        if !["Acrylic", "Glass"].contains(&s) {
+        if !["LightField", "Acrylic"].contains(&s) {
             return Err("invalid capsule material".into());
         }
         json!(s)
-    } else if key == "IslandMaterial" || key == "MiniExpandedMaterial" {
+    } else if key == "IslandMaterial" || key == "MiniExpandedMaterial" || key == "PopupMaterial" {
         let s = value.as_str().ok_or("invalid material")?;
-        if !["Acrylic", "Glass"].contains(&s) {
+        if !["LightField", "Acrylic"].contains(&s) {
             return Err("invalid material".into());
         }
         json!(s)
@@ -531,6 +583,20 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         let s = value.as_str().ok_or("invalid acrylic target")?;
         if !["Card", "Capsule"].contains(&s) {
             return Err("invalid acrylic target".into());
+        }
+        json!(s)
+    } else if key == "Display" {
+        json!(value.as_str().ok_or("invalid display")?.trim())
+    } else if key == "TaskbarStyle" {
+        let s = value.as_str().ok_or("invalid taskbar style")?;
+        if !["Transparent", "Pill"].contains(&s) {
+            return Err("invalid taskbar style".into());
+        }
+        json!(s)
+    } else if key == "TaskbarDockAlign" {
+        let s = value.as_str().ok_or("invalid taskbar dock align")?;
+        if !["Free", "Auto", "Left", "Right"].contains(&s) {
+            return Err("invalid taskbar dock align".into());
         }
         json!(s)
     } else if key == "MusicGlowMode" {
@@ -543,18 +609,20 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         "MusicGlowEnabled",
         "TimerGlowEnabled",
         "UpdateGlowEnabled",
-        "GlassRefractionEnabled",
         "DynamicColorHighContrast",
         "ControlCenterMonetEnabled",
         "ControlCenterDynamicColorEnabled",
-        "MiniAutoContrast",
         "LyricColorFromCover",
         "AutoCheckUpdatesEnabled",
         "DeviceRemindersEnabled",
         "DeviceSoundEnabled",
         "SwipeActivities",
         "SwipeUpHide",
+        "EdgeHoverRevealEnabled",
+        "TaskbarModeEnabled",
+        "TaskbarAlwaysShow",
         "GestureTutorialSeen",
+        "GesturePracticeSeen",
         "TodoRemindersEnabled",
         "TodoIslandEnabled",
         "AutoCompactWidth",
@@ -581,7 +649,10 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         "AutoStart",
         "OnlineSongInfo",
         "HideWhenPaused",
-        "IslandResidentEnabled",
+        "IslandKeepVisibleEnabled",
+        crate::resident::TIME,
+        crate::resident::SYSTEM,
+        crate::resident::DEVICES,
         "NotificationsEnabled",
         "PauseNotifications",
         "NotificationClickOpenApp",
@@ -589,6 +660,8 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         "NotificationBlacklistEnabled",
         "NotificationWhitelistEnabled",
         "NotificationHistoryEnabled",
+        "ProgressBarGlow",
+        "MusicLyricGlow",
         "ProgressBarThumbEnabled",
         "ProgressBarThumbSpin",
         "BrowserMediaEnabled",
@@ -901,15 +974,15 @@ mod unified_osd_tests {
     fn mini_material_has_an_independent_clear_default_and_three_choices() {
         let d = defaults();
         assert_eq!(d["IslandSizeMode"], "Classic");
-        assert_eq!(d["IslandMaterial"], "Acrylic");
-        assert_eq!(d["MiniMaterial"], "Acrylic");
-        for value in ["Acrylic", "Glass"] {
+        assert_eq!(d["IslandMaterial"], "LightField");
+        assert_eq!(d["MiniMaterial"], "LightField");
+        for value in ["LightField", "Acrylic"] {
             let s =
                 validate_setting(json!({"key":"MiniMaterial","value":value,"settings":d})).unwrap();
             assert_eq!(s["MiniMaterial"], value);
-            assert_eq!(s["IslandMaterial"], "Acrylic");
+            assert_eq!(s["IslandMaterial"], "LightField");
         }
-        for value in [json!(true), json!("glass"), json!("LiquidGlass")] {
+        for value in [json!(true), json!("glass"), json!("Glass"), json!("LiquidGlass")] {
             assert!(
                 validate_setting(json!({"key":"MiniMaterial","value":value,"settings":d})).is_err()
             );
@@ -1074,11 +1147,11 @@ mod player_filter_tests {
 mod material_tests {
     use super::*;
     #[test]
-    fn material_defaults_to_acrylic_and_accepts_three_values() {
+    fn material_defaults_to_lightfield_and_accepts_three_values() {
         let s = defaults();
         assert_eq!(s["AutoStart"], true);
-        assert_eq!(s["IslandMaterial"], "Acrylic");
-        for value in ["Acrylic", "Glass"] {
+        assert_eq!(s["IslandMaterial"], "LightField");
+        for value in ["LightField", "Acrylic"] {
             let updated = validate_setting(
                 json!({"key":"IslandMaterial","value":value,"settings":s.clone()}),
             )
@@ -1103,14 +1176,14 @@ mod material_tests {
         assert_eq!(s["Motion"]["Duration"], 600.);
         std::fs::write(&p, r#"{"IslandGlassMaterial":false}"#).unwrap();
         let s = load(&p);
-        assert_eq!(s["IslandMaterial"], "Acrylic");
+        assert_eq!(s["IslandMaterial"], "LightField");
         std::fs::write(
             &p,
             r#"{"IslandMaterial":"Glass","IslandGlassMaterial":false}"#,
         )
         .unwrap();
         let s = load(&p);
-        assert_eq!(s["IslandMaterial"], "Glass");
+        assert_eq!(s["IslandMaterial"], "LightField");
         let _ = std::fs::remove_file(p);
     }
 }
@@ -1121,20 +1194,21 @@ mod classic_capsule_tests {
     #[test]
     fn capsule_material_is_independent_and_validated() {
         let d = defaults();
-        assert_eq!(d["ClassicCapsuleMaterial"], "Acrylic");
-        for material in ["Acrylic", "Glass"] {
+        assert_eq!(d["ClassicCapsuleMaterial"], "LightField");
+        for material in ["LightField", "Acrylic"] {
             let s = validate_setting(
                 json!({"key":"ClassicCapsuleMaterial","value":material,"settings":d}),
             )
             .unwrap();
             assert_eq!(s["ClassicCapsuleMaterial"], material);
-            assert_eq!(s["MiniMaterial"], "Acrylic");
-            assert_eq!(s["IslandMaterial"], "Acrylic");
+            assert_eq!(s["MiniMaterial"], "LightField");
+            assert_eq!(s["IslandMaterial"], "LightField");
         }
         for value in [
             json!(true),
             json!("Black"),
             json!("glass"),
+            json!("Glass"),
             json!("LiquidGlass"),
         ] {
             assert!(validate_setting(
@@ -1157,7 +1231,7 @@ mod expanded_material_tests {
         ));
         let fresh = load(&path);
         assert_eq!(fresh["HideWhenPaused"], true);
-        assert_eq!(fresh["IslandResidentEnabled"], false);
+        assert_eq!(fresh["IslandKeepVisibleEnabled"], false);
         assert_eq!(fresh["IslandSizeMode"], "Classic");
         assert_eq!(fresh["Motion"]["Radius"], 30.);
         assert_eq!(fresh["CoverBackground"], false);
@@ -1166,7 +1240,7 @@ mod expanded_material_tests {
         std::fs::write(&path, r#"{"HideWhenPaused":false,"IslandSizeMode":"Mini"}"#).unwrap();
         let existing = load(&path);
         assert_eq!(existing["HideWhenPaused"], false);
-        assert_eq!(existing["IslandResidentEnabled"], false);
+        assert_eq!(existing["IslandKeepVisibleEnabled"], false);
         assert_eq!(existing["IslandSizeMode"], "Mini");
         let _ = std::fs::remove_file(path);
     }
@@ -1175,9 +1249,9 @@ mod expanded_material_tests {
         let path =
             std::env::temp_dir().join(format!("dotisle-mini-card-{}.json", std::process::id()));
         let mut settings = defaults();
-        assert_eq!(settings["MiniExpandedMaterial"], "Acrylic");
-        for classic in ["Acrylic", "Glass"] {
-            for mini in ["Acrylic", "Glass"] {
+        assert_eq!(settings["MiniExpandedMaterial"], "LightField");
+        for classic in ["LightField", "Acrylic"] {
+            for mini in ["LightField", "Acrylic"] {
                 settings = validate_setting(
                     json!({"key":"IslandMaterial","value":classic,"settings":settings}),
                 )
@@ -1190,8 +1264,8 @@ mod expanded_material_tests {
                 settings = load(&path);
                 assert_eq!(settings["IslandMaterial"], mini);
                 assert_eq!(settings["MiniExpandedMaterial"], mini);
-                assert_eq!(settings["MiniMaterial"], "Acrylic");
-                assert_eq!(settings["ClassicCapsuleMaterial"], "Acrylic");
+                assert_eq!(settings["MiniMaterial"], "LightField");
+                assert_eq!(settings["ClassicCapsuleMaterial"], "LightField");
                 assert_eq!(
                     Material::expanded(&settings, false),
                     Material::from_setting(mini)
@@ -1202,7 +1276,7 @@ mod expanded_material_tests {
                 );
             }
         }
-        for invalid in [json!(true), json!("glass"), json!("LiquidGlass"), json!("")] {
+        for invalid in [json!(true), json!("glass"), json!("Glass"), json!("LiquidGlass"), json!("")] {
             assert!(validate_setting(
                 json!({"key":"MiniExpandedMaterial","value":invalid,"settings":settings})
             )
@@ -1218,26 +1292,28 @@ mod expanded_material_tests {
         ));
         for (stored, mini) in [
             (
-                json!({"IslandMaterial":"LiquidGlass","MiniMaterial":"LiquidGlass","ClassicCapsuleMaterial":"LiquidGlass"}),
-                "Glass",
+                json!({"IslandMaterial":"LiquidGlass","MiniMaterial":"LiquidGlass","ClassicCapsuleMaterial":"LiquidGlass","PopupMaterial":"Glass","GlassRefractionEnabled":true,"MiniAutoContrast":true}),
+                "LightField",
             ),
-            (json!({"MiniMaterial":"Classic"}), "Acrylic"),
+            (json!({"MiniMaterial":"Classic"}), "LightField"),
             (
                 json!({"MiniMaterial":"LiquidGlass","MiniExpandedMaterial":"Acrylic"}),
                 "Acrylic",
             ),
             (
                 json!({"MiniMaterial":"Glass","MiniExpandedMaterial":"invalid"}),
-                "Acrylic",
+                "LightField",
             ),
-            (json!({}), "Acrylic"),
+            (json!({}), "LightField"),
         ] {
             std::fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
             let updated = load(&path);
             assert_eq!(updated["MiniExpandedMaterial"], mini);
-            for key in ["IslandMaterial", "MiniMaterial", "ClassicCapsuleMaterial"] {
-                if stored[key] == "LiquidGlass" {
-                    assert_eq!(updated[key], "Glass");
+            assert!(updated.get("GlassRefractionEnabled").is_none());
+            assert!(updated.get("MiniAutoContrast").is_none());
+            for key in ["IslandMaterial", "MiniMaterial", "ClassicCapsuleMaterial", "PopupMaterial"] {
+                if matches!(stored[key].as_str(), Some("Glass" | "LiquidGlass")) {
+                    assert_eq!(updated[key], "LightField");
                 }
             }
             std::fs::write(&path, serde_json::to_vec(&updated).unwrap()).unwrap();
@@ -1246,24 +1322,24 @@ mod expanded_material_tests {
         let _ = std::fs::remove_file(path);
     }
     #[test]
-    fn both_capsules_accept_three_materials() {
+    fn both_capsules_accept_two_materials() {
         let mut settings = defaults();
-        assert_eq!(settings["ClassicCapsuleMaterial"], "Acrylic");
-        assert_eq!(settings["MiniMaterial"], "Acrylic");
+        assert_eq!(settings["ClassicCapsuleMaterial"], "LightField");
+        assert_eq!(settings["MiniMaterial"], "LightField");
         for key in ["ClassicCapsuleMaterial", "MiniMaterial"] {
-            for value in ["Acrylic", "Glass"] {
+            for value in ["LightField", "Acrylic"] {
                 settings =
                     validate_setting(json!({"key":key,"value":value,"settings":settings})).unwrap();
                 assert_eq!(settings[key], value);
             }
-            for invalid in [json!(true), json!("glass"), json!("LiquidGlass"), json!("")] {
+            for invalid in [json!(true), json!("glass"), json!("Glass"), json!("LiquidGlass"), json!("")] {
                 assert!(
                     validate_setting(json!({"key":key,"value":invalid,"settings":settings}))
                         .is_err()
                 );
             }
         }
-        assert_eq!(settings["IslandMaterial"], "Acrylic");
+        assert_eq!(settings["IslandMaterial"], "LightField");
     }
 }
 
@@ -1271,7 +1347,7 @@ mod expanded_material_tests {
 mod monet_preference_tests {
     use super::*;
     #[test]
-    fn all_material_defaults_are_acrylic_without_monet() {
+    fn all_material_defaults_are_lightfield_without_monet() {
         let s = defaults();
         for key in [
             "IslandMaterial",
@@ -1279,9 +1355,13 @@ mod monet_preference_tests {
             "ClassicCapsuleMaterial",
             "MiniMaterial",
         ] {
-            assert_eq!(s[key], "Acrylic");
+            assert_eq!(s[key], "LightField");
         }
+        assert_eq!(s["PopupMaterial"], "Acrylic");
         assert_eq!(s["CoverBackground"], false);
+        assert_eq!(s["ExpandedMonetEnabled"], true);
+        assert_eq!(s["LyricColorFromCover"], true);
+        assert_eq!(s["ExpandedCoverOverlay"], false);
         assert!(s.get("IslandFluidMotion").is_none());
         assert!(
             validate_setting(json!({"key":"IslandFluidMotion","value":false,"settings":s}))
@@ -1297,8 +1377,8 @@ mod monet_preference_tests {
         std::fs::write(&path,r#"{"CoverBackground":true,"IslandFluidMotion":false,"IslandMaterial":"Glass","MiniMaterial":"Classic"}"#).unwrap();
         let migrated = load(&path);
         assert_eq!(migrated["CoverBackground"], false);
-        assert_eq!(migrated["IslandMaterial"], "Glass");
-        assert_eq!(migrated["MiniMaterial"], "Acrylic");
+        assert_eq!(migrated["IslandMaterial"], "LightField");
+        assert_eq!(migrated["MiniMaterial"], "LightField");
         assert!(migrated.get("IslandFluidMotion").is_none());
         let enabled =
             validate_setting(json!({"key":"CoverBackground","value":true,"settings":migrated}))
@@ -1382,21 +1462,22 @@ mod expanded_appearance_tests {
         )
         .unwrap();
         let mut s = load(&file);
+        assert_eq!(s["PopupMaterial"], "Acrylic");
         assert_eq!(s["CoverBackground"], false);
         assert_eq!(s["ExpandedMonetEnabled"], true);
-        assert_eq!(s["ExpandedCoverOverlay"], true);
+        assert_eq!(s["LyricColorFromCover"], true);
+        assert_eq!(s["ExpandedCoverOverlay"], false);
         assert_eq!(s["AcrylicCardOpacity"], 75.);
         for key in ["ExpandedMonetEnabled", "ExpandedCoverOverlay"] {
-            s = validate_setting(json!({"key":key,"value":false,"settings":s})).unwrap();
+            s = validate_setting(json!({"key":key,"value":true,"settings":s})).unwrap();
         }
+        s = validate_setting(json!({"key":"PopupMaterial","value":"LightField","settings":s})).unwrap();
         std::fs::write(&file, serde_json::to_vec(&s).unwrap()).unwrap();
         let restored = load(&file);
-        for key in [
-            "CoverBackground",
-            "ExpandedMonetEnabled",
-            "ExpandedCoverOverlay",
-        ] {
-            assert_eq!(restored[key], false);
+        assert_eq!(restored["CoverBackground"], false);
+        assert_eq!(restored["PopupMaterial"], "LightField");
+        for key in ["ExpandedMonetEnabled", "ExpandedCoverOverlay"] {
+            assert_eq!(restored[key], true);
             assert!(
                 validate_setting(json!({"key":key,"value":"false","settings":restored})).is_err()
             );
@@ -1426,6 +1507,21 @@ mod retired_theme_tests {
         )
         .is_err());
         let _ = std::fs::remove_file(file);
+    }
+}
+
+#[cfg(test)]
+mod taskbar_layout_setting_tests {
+    use super::*;
+    #[test]
+    fn free_dock_sliders_are_accepted() {
+        let mut s = defaults();
+        s = validate_setting(json!({"key":"TaskbarPosition","value":64.,"settings":s})).unwrap();
+        assert_eq!(s["TaskbarPosition"], 64.);
+        s = validate_setting(json!({"key":"TaskbarWidth","value":420.,"settings":s})).unwrap();
+        assert_eq!(s["TaskbarWidth"], 420.);
+        assert!(validate_setting(json!({"key":"TaskbarWidth","value":900.,"settings":s.clone()})).is_err());
+        assert!(validate_setting(json!({"key":"TaskbarPosition","value":-1.,"settings":s})).is_err());
     }
 }
 
@@ -1481,7 +1577,8 @@ mod expressive_preferences {
         assert_eq!(s["ControlCenterDynamicColorEnabled"],false);
         s=validate_setting(json!({"key":"ControlCenterDynamicColorEnabled","value":true,"settings":s})).unwrap();
         s=validate_setting(json!({"key":"ControlCenterCustomColor","value":"#A9D8C2","settings":s})).unwrap();
-        for key in ["WeChatMessageHintsEnabled","FeishuMessageHintsEnabled","DingTalkMessageHintsEnabled","WeComMessageHintsEnabled"] {
+        assert_eq!(s["WeChatMessageHintsEnabled"],false);
+        for key in ["FeishuMessageHintsEnabled","DingTalkMessageHintsEnabled","WeComMessageHintsEnabled"] {
             assert_eq!(s[key],true);
             s=validate_setting(json!({"key":key,"value":false,"settings":s})).unwrap();
         }
@@ -1501,10 +1598,13 @@ mod expressive_preferences {
                 .unwrap();
         assert_eq!(s["ExpandedMonetEnabled"], true);
         assert_eq!(s["LyricColorFromCover"], true);
+        let s = validate_setting(json!({"key":"ExpandedMonetEnabled","value":false,"settings":s}))
+            .unwrap();
         let s = validate_setting(json!({"key":"LyricColorFromCover","value":false,"settings":s}))
             .unwrap();
         assert_eq!(s["ControlCenterMonetEnabled"], false);
-        assert_eq!(s["ExpandedMonetEnabled"], true);
+        assert_eq!(s["ExpandedMonetEnabled"], false);
+        assert_eq!(s["LyricColorFromCover"], false);
     }
     #[test]
     fn right_layout_and_shared_expanded_material_are_persisted() {
@@ -1515,15 +1615,15 @@ mod expressive_preferences {
         )
         .unwrap();
         let s =
-            validate_setting(json!({"key":"MiniExpandedMaterial","value":"Glass","settings":s}))
+            validate_setting(json!({"key":"MiniExpandedMaterial","value":"Acrylic","settings":s}))
                 .unwrap();
-        assert_eq!(s["IslandMaterial"], "Glass");
-        assert_eq!(s["MiniExpandedMaterial"], "Glass");
+        assert_eq!(s["IslandMaterial"], "Acrylic");
+        assert_eq!(s["MiniExpandedMaterial"], "Acrylic");
         std::fs::write(&path, serde_json::to_vec(&s).unwrap()).unwrap();
         let loaded = load(&path);
         let _ = std::fs::remove_file(path);
         assert_eq!(loaded["MusicExpandedLayout"], "LyricFocus");
-        assert_eq!(loaded["IslandMaterial"], "Glass");
+        assert_eq!(loaded["IslandMaterial"], "Acrylic");
     }
     #[test]
     fn the_default_font_survives_and_unknown_system_families_are_rejected() {
@@ -1545,7 +1645,7 @@ mod expressive_preferences {
             r#"{"IslandFontFamily":"Definitely Missing Font 123"}"#,
         )
         .unwrap();
-        assert_eq!(load(&file)["IslandFontFamily"], "HarmonyOS Sans SC");
+        assert_eq!(load(&file)["IslandFontFamily"], "Noto Sans SC");
         let _ = std::fs::remove_file(file);
     }
 }
@@ -1598,7 +1698,7 @@ mod progress_style_tests {
     #[test]
     fn both_seek_bar_choices_default_to_the_shipped_look_and_reject_unknown_values() {
         let d = defaults();
-        assert_eq!(d["ProgressBarStyle"], "Wavy");
+        assert_eq!(d["ProgressBarStyle"], "Normal");
         assert_eq!(d["ProgressBarThumb"], "Pill");
         assert_eq!(d["ProgressBarThumbEnabled"], false);
         for style in dotisle_render::progress::BarStyle::ALL {
@@ -1647,7 +1747,7 @@ mod progress_style_tests {
         ));
         std::fs::write(&file,r#"{"ProgressBarStyle":"Bouncy","ProgressBarThumb":"Star","ProgressBarThumbEnabled":"yes"}"#).unwrap();
         let loaded = load(&file);
-        assert_eq!(loaded["ProgressBarStyle"], "Wavy");
+        assert_eq!(loaded["ProgressBarStyle"], "Normal");
         assert_eq!(loaded["ProgressBarThumb"], "Pill");
         assert_eq!(loaded["ProgressBarThumbEnabled"], false);
         std::fs::write(&file, serde_json::to_vec(&loaded).unwrap()).unwrap();
@@ -1714,13 +1814,13 @@ mod resident_setting_tests {
     fn resident_is_opt_in_validated_and_persisted() {
         let path = std::env::temp_dir().join(format!("dotisle-resident-{}.json", std::process::id()));
         let mut settings = defaults();
-        assert_eq!(settings["IslandResidentEnabled"], false);
+        assert_eq!(settings["IslandKeepVisibleEnabled"], false);
         for invalid in [json!("true"), json!(1), Value::Null] {
-            assert!(validate_setting(json!({"key":"IslandResidentEnabled","value":invalid,"settings":settings})).is_err());
+            assert!(validate_setting(json!({"key":"IslandKeepVisibleEnabled","value":invalid,"settings":settings})).is_err());
         }
-        settings = validate_setting(json!({"key":"IslandResidentEnabled","value":true,"settings":settings})).unwrap();
+        settings = validate_setting(json!({"key":"IslandKeepVisibleEnabled","value":true,"settings":settings})).unwrap();
         std::fs::write(&path, serde_json::to_vec(&settings).unwrap()).unwrap();
-        assert_eq!(load(&path)["IslandResidentEnabled"], true);
+        assert_eq!(load(&path)["IslandKeepVisibleEnabled"], true);
         let _ = std::fs::remove_file(path);
     }
 }

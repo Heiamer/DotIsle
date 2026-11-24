@@ -11,6 +11,8 @@ import (
 
 func TestOverviewSwitchAndCardSelectionPersist(t *testing.T) {
 	a := newTestApp(t)
+	a.overview.loaded, a.overview.config = true, prefs.DefaultOverview()
+	a.overview.config.ScrollPlugin = true
 	tt := ui.NewTester(a.View, 1200, 800)
 	tt.Frame()
 	r, ok := tt.Find("滚动视图")
@@ -50,6 +52,31 @@ func TestOverviewSwitchAndCardSelectionPersist(t *testing.T) {
 		if key == "music" {
 			t.Fatal("disabled card not saved")
 		}
+	}
+}
+
+func TestScrollViewIsOptInPlugin(t *testing.T) {
+	a := newTestApp(t)
+	a.State["pendingPage"] = ""
+	tt := ui.NewTester(a.View, 1200, 800)
+	tt.Frame()
+	if _, ok := tt.Find("滚动视图"); ok {
+		t.Fatal("scroll view is enabled by default")
+	}
+	a.Page = PagePlugins
+	tt.Frame()
+	if err := tt.Click("启用滚动视图"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	saved, err := prefs.LoadOverview(filepath.Join(a.Data, "center-overview.json"))
+	if err != nil || !saved.ScrollPlugin {
+		t.Fatalf("scroll plugin not saved: %+v %v", saved, err)
+	}
+	a.Page = PageHome
+	tt.Frame()
+	if _, ok := tt.Find("滚动视图"); !ok {
+		t.Fatal("scroll view missing after enabling the plugin")
 	}
 }
 

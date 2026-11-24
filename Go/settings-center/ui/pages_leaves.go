@@ -52,37 +52,49 @@ type leafToggleRow struct {
 
 // leafHeading is the 21px section title, +44 advance.
 func leafHeading(c *ui.Context, p *Palette, title string, x, y, w float32) float32 {
-	Label(c, title, x, y+4, 16, p.Scheme.OnSurface, true, w)
-	return y + 44
+	Label(c, title, x+16, y+3, 14, p.Scheme.OnSurfaceVariant, true, w-32)
+	return y + 31
 }
 
 // leafToggles is the toggle panel: rows*76+12, each row 76 DIP with its switch.
 func (a *App) leafToggles(c *ui.Context, p *Palette, x, y, w float32, rows []leafToggleRow) float32 {
 	s := &p.Scheme
-	Panel(c, p, x, y, w, float32(len(rows))*76+12, s.Container)
+	settingCard(c, x, y, w, float32(len(rows))*settingToggleH, s.Container)
 	for i, row := range rows {
 		on := a.leafBool(row.key, row.def)
-		ToggleRow(c, p, row.key, x+24, y+6+float32(i)*76, w-48, row.title, row.detail, on, func() {
+		top := y + float32(i)*settingToggleH
+		if i != 0 {
+			settingSeparator(c, p, x+16, top, w-32)
+		}
+		settingToggleRow(c, p, row.key, row.title, row.detail, x+16, top, w-32, on, func() {
+			if row.key == wechatHintsKey && !on {
+				a.openWechatWarning()
+				return
+			}
 			a.pushNative(row.key, !on)
 		})
 	}
-	return y + float32(len(rows))*76 + 28
+	return y + float32(len(rows))*settingToggleH + 16
 }
 
 // leafAction is the 96px panel with a trailing tonal button, +112 advance.
 func leafAction(c *ui.Context, p *Palette, x, y, w float32, title, detail, label string, onClick func()) float32 {
 	s := &p.Scheme
-	Panel(c, p, x, y, w, 96, s.Container)
-	Label(c, title, x+24, y+16, 14, s.OnSurface, true, w-222)
-	Label(c, detail, x+24, y+48, 12, s.OnSurfaceVariant, false, w-222)
-	Button(c, p, title, x+w-176, y+26, 152, 44, label, "", true, true, onClick)
-	return y + 112
+	settingCard(c, x, y, w, 70, s.Container)
+	textY := float32(13)
+	if detail == "" {
+		textY = 25
+	}
+	Label(c, title, x+16, y+textY, 14, s.OnSurface, false, w-184)
+	Label(c, detail, x+16, y+39, 12, s.OnSurfaceVariant, false, w-184)
+	Button(c, p, title, x+w-158, y+17, 142, 36, label, "", true, true, onClick)
+	return y + 83
 }
 
 // leafChoices is the 108px choice panel with full-width chips (38 high), +124.
 func leafChoices(c *ui.Context, p *Palette, x, y, w float32, title string, options [][2]string, current string, onPick func(value string)) float32 {
 	s := &p.Scheme
-	Panel(c, p, x, y, w, 108, s.Container)
+	settingCard(c, x, y, w, 108, s.Container)
 	Label(c, title, x+24, y+14, 14, s.OnSurface, true, w-48)
 	labels := make([]string, len(options))
 	selected := -1
@@ -100,7 +112,7 @@ func leafChoices(c *ui.Context, p *Palette, x, y, w float32, title string, optio
 // right (13 bold primary), settings slider below; commits the rounded value.
 func (a *App) leafRange(c *ui.Context, p *Palette, x, y, w float32, title, key string, def, min, max float64, unit string, onCommit func(float64)) float32 {
 	s := &p.Scheme
-	Panel(c, p, x, y, w, 96, s.Container)
+	settingCard(c, x, y, w, 96, s.Container)
 	committed := a.leafFloat(key, def)
 	value := min + (max-min)*leafSliderFrac(key, committed, min, max)
 	Label(c, title, x+24, y+14, 15, s.OnSurface, false, w-160)
@@ -325,7 +337,7 @@ func (a *App) leafEditRow(c *ui.Context, p *Palette, x, y, w float32, key, title
 		st.lastNative = native
 		st.seeded = true
 	}
-	Panel(c, p, x, y, w, 96, s.Container)
+	settingCard(c, x, y, w, 96, s.Container)
 	input := ui.TextInput(c, &st.text).Absolute().Left(x + 24).Top(y + 16).Width(w - 184).Height(48).
 		FontSize(14).TextColor(Col(s.OnSurface)).Placeholder(hint)
 	fieldStyle(&input, p)
@@ -388,7 +400,7 @@ func (a *App) backgroundSettingsBody(c *ui.Context, p *Palette, x, y, w float32)
 	if !loaded {
 		height = 132
 	}
-	Panel(c, p, x, y, w, height, s.Container)
+	settingCard(c, x, y, w, height, s.Container)
 	Label(c, "自定义图片背景", x+24, y+16, 14, s.OnSurface, true, w-380)
 	Label(c, "仅用于「默认」 · 支持 PNG / JPEG / BMP", x+24, y+46, 12, s.OnSurfaceVariant, false, w-380)
 	// Action::BackgroundPick: native file dialog, then the Rust import flow
@@ -479,7 +491,7 @@ func (a *App) appearanceColorsBody(c *ui.Context, p *Palette, x, y, w float32) f
 			a.savePrefs()
 			a.pushNative("SettingsTheme", value)
 		})
-	Panel(c, p, x, y, w, 164, s.Container)
+	settingCard(c, x, y, w, 164, s.Container)
 	contrast := a.leafBool("DynamicColorHighContrast", false)
 	ToggleRow(c, p, "增强颜色对比", x+24, y+8, w-48, "增强颜色对比", "提高文字和边界的辨识度", contrast, func() {
 		a.pushNative("DynamicColorHighContrast", !contrast)
@@ -512,6 +524,7 @@ func (a *App) artworkSeed() float64 {
 // ---- tab 1 · 歌词与本地文件 (views.rs group + extra tab 1) -----------------------------
 
 func (a *App) lyricBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
+	y = a.leafToggles(c, p, x, y, w, []leafToggleRow{{"当前歌词柔光", "只在音乐展开卡片的当前歌词周围加柔光。", "MusicLyricGlow", true}})
 	s := &p.Scheme
 	// views.rs group(): title 20 bold, panel rows*80+16, 0.5px separators.
 	Label(c, "聆听偏好", x, y+5, 20, s.OnSurface, true, w)
@@ -527,7 +540,7 @@ func (a *App) lyricBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 		"使用现有音乐服务补全歌曲信息和歌词",
 	}
 	stored := [3]*bool{&a.Prefs.Translation, &a.Prefs.WordHighlight, &a.Prefs.Online}
-	Panel(c, p, x, y, w, float32(len(rows)*80+16), s.Container)
+	settingCard(c, x, y, w, float32(len(rows)*80+16), s.Container)
 	for i, row := range rows {
 		key := row[1]
 		on := a.leafBool(key, *stored[i])
@@ -543,7 +556,7 @@ func (a *App) lyricBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	}
 	y += float32(len(rows)*80+16) + 28
 	// 本地歌词 folder panel.
-	Panel(c, p, x, y, w, 88, s.Container)
+	settingCard(c, x, y, w, 88, s.Container)
 	Label(c, "本地歌词", x+24, y+16, 17, s.OnSurface, true, w-220)
 	Label(c, fmt.Sprintf("%d 个文件夹 · 支持本地歌词优先匹配", len(a.Prefs.LocalFolders)),
 		x+24, y+48, 12, s.OnSurfaceVariant, false, w-220)
@@ -557,7 +570,7 @@ func (a *App) lyricBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	// Folder list with working per-folder removal (NativeEdit LocalFolders array).
 	if len(a.Prefs.LocalFolders) > 0 {
 		h := float32(len(a.Prefs.LocalFolders))*56 + 16
-		Panel(c, p, x, y, w, h, s.Container)
+		settingCard(c, x, y, w, h, s.Container)
 		for i, folder := range a.Prefs.LocalFolders {
 			rowY := y + 8 + float32(i)*56
 			inner := ui.Box(c).Absolute().Left(x + 8).Top(rowY).Width(w - 16).Height(52).
@@ -605,9 +618,9 @@ func (a *App) notificationPrefsBody(c *ui.Context, p *Palette, x, y, w float32) 
 	})
 	y = leafHeading(c, p, "消息灵动岛", x, y, w)
 	y = a.leafToggles(c, p, x, y, w, []leafToggleRow{
-		{"微信", "仅提醒有新消息，不读取聊天内容。", "WeChatMessageHintsEnabled", true},
-		{"飞书", "仅提醒有新消息，不读取聊天内容。", "FeishuMessageHintsEnabled", true},
-		{"钉钉", "仅提醒有新消息，不读取聊天内容。", "DingTalkMessageHintsEnabled", true},
+		{"微信", "默认关闭；确认警告后才启用任务栏闪烁提醒。", wechatHintsKey, false},
+		{"飞书", "有通知正文时直接显示内容，不重复提醒有新消息。", "FeishuMessageHintsEnabled", true},
+		{"钉钉", "有通知正文时直接显示内容，不重复提醒有新消息。", "DingTalkMessageHintsEnabled", true},
 		{"企业微信", "仅提醒有新消息，不读取聊天内容。", "WeComMessageHintsEnabled", true},
 	})
 	y = leafHeading(c, p, "通知记录", x, y, w)
@@ -628,7 +641,7 @@ func (a *App) notificationPrefsBody(c *ui.Context, p *Palette, x, y, w float32) 
 func leafUpdateAction(phase string) (string, string) {
 	switch phase {
 	case "available":
-		return "下载更新", "updateDownload"
+		return "查看更新", "updateReview"
 	case "ready":
 		return "重启并安装", "updateApply"
 	case "downloading", "switching", "verifying":
@@ -725,7 +738,7 @@ func (a *App) windowBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	if family == "" {
 		family = "默认字体"
 	}
-	Panel(c, p, x, y, w, 132, s.Container)
+	settingCard(c, x, y, w, 132, s.Container)
 	Label(c, "字体作用范围", x+24, y+14, 14, s.OnSurface, true, w-48)
 	Label(c, fmt.Sprintf("当前字体：%s", family), x+24, y+40, 12, s.OnSurfaceVariant, false, w-48)
 	scopeCw := (w - 48 - 16) / 3
@@ -859,7 +872,7 @@ func (a *App) soundSection(c *ui.Context, p *Palette, x, y, w float32, index int
 		ink = s.OnSecondaryContainer
 	}
 	// Header: panel + hit area + title + detail + expand hint + preview button.
-	Panel(c, p, x, y, w, 76, func() uint32 {
+	settingCard(c, x, y, w, 76, func() uint32 {
 		if open {
 			return s.SecondaryContainer
 		}
@@ -897,7 +910,7 @@ func (a *App) soundSection(c *ui.Context, p *Palette, x, y, w float32, index int
 	})
 	// The 12-cue list: 12*56+16 panel with 52px rows and the radio circles.
 	listH := float32(len(leafSoundCues))*56 + 16
-	Panel(c, p, x, y, w, listH, s.Container)
+	settingCard(c, x, y, w, listH, s.Container)
 	for i, cue := range leafSoundCues {
 		rowY := y + 8 + float32(i)*56
 		selected := !custom && current == cue[0]
@@ -908,8 +921,10 @@ func (a *App) soundSection(c *ui.Context, p *Palette, x, y, w float32, index int
 				Radius(16).Background(Col(s.SecondaryContainer))
 		}
 		cueID := cue[0]
-		rowHit := ui.ButtonBase(c).Absolute().Left(x + 8).Top(rowY).Width(w - 16 - 96).Height(52).
-			Label("选择音色" + cue[1]).Cursor(ui.CursorPointer)
+		// The hit layer spans the row like the selected background; the 试听 button
+		// is built after it, so it stays on top and keeps its own click target.
+		rowHit := ui.ButtonBase(c).Absolute().Left(x + 8).Top(rowY).Width(w - 16).Height(52).
+			Radius(16).Label("选择音色" + cue[1]).Cursor(ui.CursorPointer)
 		hoverLayer(&rowHit, ui.Transparent, rowInk, true)
 		if rowHit.Clicked() {
 			a.command("soundSelect", map[string]any{"category": prefix, "source": "Builtin", "kind": cueID})
@@ -989,7 +1004,7 @@ func (a *App) appRulesBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 		}
 		id := leafStr(rule["id"], "")
 		enabled := rule["enabled"] == true
-		Panel(c, p, x, y, w, 164, s.Container)
+		settingCard(c, x, y, w, 164, s.Container)
 		Label(c, leafStr(rule["name"], "应用提醒"), x+24, y+14, 18, s.OnSurface, true, w-260)
 		Label(c, leafStr(rule["message"], ""), x+24, y+46, 13, s.OnSurfaceVariant, false, w-48)
 		Label(c, leafStr(rule["executablePath"], ""), x+24, y+74, 11, s.OnSurfaceVariant, false, w-48)
@@ -1024,7 +1039,7 @@ func (a *App) focusPrefsBody(c *ui.Context, p *Palette, x, y, w float32) float32
 	})
 	// 新待办默认颜色 row with the current color swatch; the full palette picker
 	// (Action::PickColor("TodoDefaultColor", …)) lands separately.
-	Panel(c, p, x, y, w, 96, s.Container)
+	settingCard(c, x, y, w, 96, s.Container)
 	Label(c, "新待办默认颜色", x+24, y+16, 14, s.OnSurface, true, w-222)
 	Label(c, "单个待办仍保留各自颜色。", x+24, y+48, 12, s.OnSurfaceVariant, false, w-222)
 	if rgb, ok := parseHexColor(a.leafString("TodoDefaultColor", "#F3D79B")); ok {
@@ -1044,7 +1059,7 @@ func (a *App) focusPrefsBody(c *ui.Context, p *Palette, x, y, w float32) float32
 
 // The 15 internal modules (dotisle_module_api::MODULES): id, label.
 var leafModules = [15][2]string{
-	{"core", "CORE 核心"}, {"settings", "控制中心"}, {"focus", "计时与流程"},
+	{"core", "CORE 核心"}, {"desktop", "桌面组件渲染"}, {"focus", "计时与流程"},
 	{"todos", "待办与快捷提醒"}, {"music", "音乐与播放器"}, {"lyrics", "歌词检索与同步"},
 	{"notifications", "通知接收"}, {"history", "通知历史"}, {"automation", "应用提醒规则"},
 	{"devices", "设备连接提醒"}, {"osd", "系统状态提示"}, {"sound", "音效"},
@@ -1086,7 +1101,7 @@ func (a *App) moduleManagerBody(c *ui.Context, p *Palette, x, y, w float32) floa
 	y += 34
 	Label(c, "只选择可信的内部 DLL。校验通过后重启安装，启动失败会恢复原模块。", x, y, 12, s.OnSurfaceVariant, false, w)
 	y += 32
-	Panel(c, p, x, y, w, 132, s.Container)
+	settingCard(c, x, y, w, 132, s.Container)
 	Label(c, leafStr(state["message"], "连接主程序后可以查看模块版本"), x+20, y+16, 13, s.OnSurface, true, w-40)
 	Button(c, p, "刷新模块", x+20, y+66, 142, 42, "刷新模块", "", !busy, !busy, func() {
 		a.command("moduleRefresh", nil)
@@ -1100,7 +1115,7 @@ func (a *App) moduleManagerBody(c *ui.Context, p *Palette, x, y, w float32) floa
 	y += 152
 	for _, mod := range leafModules {
 		id := mod[0]
-		Panel(c, p, x, y, w, 112, s.Container)
+		settingCard(c, x, y, w, 112, s.Container)
 		Label(c, mod[1], x+20, y+15, 17, s.OnSurface, true, w-365)
 		Label(c, fmt.Sprintf("dotisle_%s.dll · %s · API 1", id, a.leafModuleVersion(id)),
 			x+20, y+55, 12, s.OnSurfaceVariant, false, w-365)

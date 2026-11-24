@@ -41,7 +41,11 @@ impl Store{
             latest=latest.max(key.2);
             if !self.seen.insert(key)||policy.paused{continue}
             if !policy.permits(&id,&app_name(&id)){continue}
-            if notices.len()<8{if let Some(app)=crate::message_hints::identify(&id,&app_name(&id)){let mut notice=app.notice();notice.icon=crate::app_icon::shell_icon(&id);notices.push(notice);continue}if let Some(mut notice)=parse(&payload,&id){if !self.icons.contains_key(&id){if self.icons.len()>=64{self.icons.clear();}self.icons.insert(id.clone(),crate::app_icon::shell_icon(&id));}notice.icon=self.icons.get(&id).cloned().flatten();notices.push(notice);}}
+            if crate::message_hints::identify(&id,&app_name(&id)).is_some_and(|a|!a.uses_toast()){continue}
+            if notices.len()<8{if let Some(app)=crate::message_hints::identify(&id,&app_name(&id)).filter(|a|!a.content_only()){let mut notice=app.notice();notice.icon=crate::app_icon::shell_icon(&id);notices.push(notice);continue}if let Some(mut notice)=parse(&payload,&id){
+                if notice.icon.is_none(){if !self.icons.contains_key(&id){if self.icons.len()>=64{self.icons.clear();}let icon=crate::app_icon::shell_icon(&id);self.icons.insert(id.clone(),icon);}notice.icon=self.icons.get(&id).cloned().flatten();}
+                notices.push(notice);
+            }}
         }
         self.since=latest;self.seen.retain(|k|k.2>=latest);Ok(notices)
     }}
@@ -60,15 +64,14 @@ unsafe fn read(api:&Api,path:&Path,since:i64,policy:&Policy)->Result<Vec<Row>,St
             let key=((api.int)(statement.1,0),(api.int)(statement.1,1),(api.int)(statement.1,2));
             let id=(api.text)(statement.1,3);if id.is_null(){continue}let id=CStr::from_ptr(id.cast()).to_string_lossy().into_owned();
             let name=app_name(&id);let mut payload=vec![];
-            if !policy.paused&&policy.permits(&id,&name)&&crate::message_hints::identify(&id,&name).is_none(){payload=read_payload(api,&db,key)?;}
+            if !policy.paused&&policy.permits(&id,&name)&&crate::message_hints::identify(&id,&name).is_none_or(|a|a.content_only()){payload=read_payload(api,&db,key)?;}
             rows.push((key,id,payload));
         },
         101=>break,
         _=>return Err("通知数据库正忙或已更新，稍后自动重试".into())
     }}Ok(rows)
 }
-// Fetch content only after the metadata path has excluded all supported
-// messaging apps. Their Payload column is never selected, parsed or copied.
+// Read actual toast content only after the application policy permits it.
 unsafe fn read_payload(api:&Api,db:&Db<'_>,key:(i64,i64,i64))->Result<Vec<u8>,String>{
     let sql=CString::new(format!("SELECT Payload FROM Notification WHERE Id={} AND HandlerId={} AND ArrivalTime={} LIMIT 1",key.0,key.1,key.2)).unwrap();
     let mut raw=std::ptr::null_mut();
@@ -90,11 +93,16 @@ fn decode(bytes:&[u8])->Option<String>{
 }
 fn parse(bytes:&[u8],id:&str)->Option<Notice>{
     if bytes.is_empty()||bytes.len()>262144{return None}
+    let name=app_name(id);
+    if crate::message_hints::identify(id,&name).is_some_and(|a|!a.uses_toast()){return None}
     let xml=decode(bytes)?;let document=roxmltree::Document::parse(xml.trim_matches(['\u{feff}','\0'])).ok()?;
     if !document.root_element().has_tag_name("toast"){return None}
     let binding=document.descendants().find(|n|n.has_tag_name("binding")&&n.attribute("template")==Some("ToastGeneric")).or_else(||document.descendants().find(|n|n.has_tag_name("binding")))?;
     let text=binding.descendants().filter(|n|n.has_tag_name("text")).filter_map(|n|n.text()).map(str::trim).filter(|s|!s.is_empty()).take(8).map(|s|s.chars().take(1024).collect::<String>()).collect::<Vec<_>>();
-    let title=text.first()?.clone();Some(Notice{app_id:id.into(),app_name:app_name(id),title,body:text.into_iter().skip(1).collect::<Vec<_>>().join("\n"),icon:None})
+    let title=text.first()?.clone();let body=text.into_iter().skip(1).collect::<Vec<_>>().join("\n");
+    if crate::message_hints::identify(id,&name).is_some_and(|a|a.content_only())&&(body.trim().is_empty()||["有新消息","你有新消息","您有新消息","收到新消息","你收到一条新消息","您收到一条新消息","你收到了一条新消息","您收到了一条新消息"].contains(&body.trim().trim_end_matches(['。','！','!']))){return None}
+    let icon = crate::toast_avatar::from_binding(id, binding);
+    Some(Notice{app_id:id.into(),app_name:name,title,body,icon})
 }
 #[cfg(test)]mod tests{use super::*;
     #[test]fn messaging_metadata_works_even_when_payload_column_does_not_exist(){unsafe{
@@ -107,13 +115,20 @@ fn parse(bytes:&[u8],id:&str)->Option<Notice>{
         assert_eq!((api.open)(file.as_ptr(),&mut raw,2|4,std::ptr::null()),0);
         let db=Db(&api,raw);
         // Deliberately omit Payload: selecting any chat content must fail.
-        let schema=CString::new("CREATE TABLE NotificationHandler(RecordId INTEGER,PrimaryId TEXT);CREATE TABLE Notification(Id INTEGER,HandlerId INTEGER,ArrivalTime INTEGER,Type TEXT,[Order] INTEGER);INSERT INTO NotificationHandler VALUES(1,'Tencent.WeChat'),(2,'com.bytedance.Feishu'),(3,'DingTalk'),(4,'Tencent.WXWork');INSERT INTO Notification VALUES(1,1,100,'toast',1),(2,2,101,'toast',2),(3,3,102,'toast',3),(4,4,103,'toast',4);").unwrap();
+        let schema=CString::new("CREATE TABLE NotificationHandler(RecordId INTEGER,PrimaryId TEXT);CREATE TABLE Notification(Id INTEGER,HandlerId INTEGER,ArrivalTime INTEGER,Type TEXT,[Order] INTEGER);INSERT INTO NotificationHandler VALUES(1,'Tencent.WXWork'),(2,'com.bytedance.Feishu'),(3,'DingTalk'),(4,'Tencent.WXWork'),(5,'Tencent.WeChat'),(6,'Tencent.Weixin');INSERT INTO Notification VALUES(1,1,100,'toast',1),(2,2,101,'toast',2),(3,3,102,'toast',3),(4,4,103,'toast',4),(5,5,104,'toast',5),(6,6,105,'toast',6);").unwrap();
         assert_eq!(exec(db.1,schema.as_ptr(),None,std::ptr::null_mut(),std::ptr::null_mut()),0);drop(db);
-        let rows=read(&api,&path,0,&Policy::from_settings(&serde_json::json!({}))).unwrap();
-        assert_eq!(rows.len(),4);assert!(rows.iter().all(|row|row.2.is_empty()));
+        let rows=read(&api,&path,0,&Policy::from_settings(&serde_json::json!({"FeishuMessageHintsEnabled":false,"DingTalkMessageHintsEnabled":false}))).unwrap();
+        assert_eq!(rows.len(),6);assert!(rows.iter().all(|row|row.2.is_empty()));
         std::fs::remove_file(path).unwrap();
     }}
     #[test]fn parses_escaped_xml_and_multiple_text_lines(){let n=parse(br#"<toast><visual><binding template="ToastGeneric"><text>A &amp; B</text><text>second</text></binding></visual></toast>"#,"Example.App").unwrap();assert_eq!(n.title,"A & B");assert_eq!(n.body,"second");}
+    #[test]fn wechat_toasts_never_parse() {
+        let xml=br#"<toast><visual><binding template="ToastGeneric"><text>Sender</text><text>Actual message</text></binding></visual></toast>"#;
+        for id in ["Tencent.WeChat", "Tencent.Weixin", r"C:\Program Files\Tencent\Weixin.exe", "微信"] {
+            assert!(parse(xml,id).is_none(), "{id}");
+        }
+    }
+    #[test]fn chat_placeholders_are_discarded_while_real_body_is_preserved(){for id in ["com.bytedance.Feishu","DingTalk"]{for body in ["","有新消息","您收到了一条新消息。"]{let xml=format!("<toast><visual><binding template=\"ToastGeneric\"><text>App</text><text>{body}</text></binding></visual></toast>");assert!(parse(xml.as_bytes(),id).is_none());}let xml="<toast><visual><binding template=\"ToastGeneric\"><text>Sender</text><text>Actual message</text></binding></visual></toast>";let n=parse(xml.as_bytes(),id).unwrap();assert_eq!(n.title,"Sender");assert_eq!(n.body,"Actual message");}}
     #[test]fn rejects_malformed_oversize_and_non_toast_payloads(){assert!(parse(b"<broken>","a").is_none());assert!(parse(b"<tile />","a").is_none());assert!(parse(&vec![b'x';262145],"a").is_none());assert!(parse(br#"<!DOCTYPE toast [<!ENTITY x SYSTEM "file:///private">]><toast>&x;</toast>"#,"a").is_none());}
     #[test]fn new_store_starts_at_current_time_without_replaying_history(){let s=Store::new();assert!(s.since>116444736000000000);assert!(s.seen.is_empty());}
 }

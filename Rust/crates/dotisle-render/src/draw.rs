@@ -10,6 +10,9 @@ use vello::{
     Glyph, Scene,
 };
 
+mod lyric_halo;
+pub use lyric_halo::LyricHalo;
+
 /// A read-only memory mapping of a font file. The multi-megabyte CJK fonts stay
 /// file-backed: the pages are shareable and the memory manager can evict them
 /// under pressure, instead of pinning a private heap copy for the whole session.
@@ -138,14 +141,6 @@ const THEME_FONTS: [(&str, &str); 6] = [
     ("Source Serif 4", "SourceSerif4.ttf"),
     ("Noto Serif SC", "NotoSerifSC.ttf"),
 ];
-const HARMONY_FONTS: [(&str, &str); 6] = [
-    ("HarmonyOS Sans", "HarmonyOS_Sans_Regular.ttf"),
-    ("HarmonyOS Sans", "HarmonyOS_Sans_Medium.ttf"),
-    ("HarmonyOS Sans", "HarmonyOS_Sans_Bold.ttf"),
-    ("HarmonyOS Sans SC", "HarmonyOS_Sans_SC_Regular.ttf"),
-    ("HarmonyOS Sans SC", "HarmonyOS_Sans_SC_Medium.ttf"),
-    ("HarmonyOS Sans SC", "HarmonyOS_Sans_SC_Bold.ttf"),
-];
 pub struct Text {
     deferred_faces: Vec<(&'static str, std::path::PathBuf)>,
     system_fonts: bool,
@@ -215,10 +210,8 @@ impl Text {
             let _ = self.register(&path);
         }
     }
-    /// Bundled families load on first use; unrelated surfaces keep no CJK copies.
-    pub fn defer_harmony(&mut self, dir: &std::path::Path) {
-        self.deferred_faces.extend(HARMONY_FONTS.iter().map(|(family, file)| (*family, dir.join(file))));
-    }
+    /// 已合并为随启动加载的可变字体 NotoSansSC.ttf；保留空方法以兼容旧调用点。
+    pub fn defer_harmony(&mut self, _dir: &std::path::Path) {}
     fn ensure_script(&mut self, text: &str) {
         if self.japanese.is_some()
             && text
@@ -281,21 +274,15 @@ impl Text {
             false,
         );
     }
-    fn draw_style(
+    // Share ellipsis and fallback shaping between the crisp line and its halo.
+    fn fitted_layout_key(
         &mut self,
-        scene: &mut Scene,
         text: &str,
-        x: f64,
-        y: f64,
         size: f32,
-        argb: u32,
         weight: u16,
         max: f64,
         display: bool,
-    ) {
-        if text.is_empty() || max <= 0. {
-            return;
-        }
+    ) -> Option<(String, u32, u16, bool)> {
         let mut key = self.layout_key(text, size, weight, display);
         if self.cache[&key].width() as f64 > max {
             let chars = text.chars().collect::<Vec<_>>();
@@ -311,10 +298,30 @@ impl Text {
             }
             let fitted = format!("{}…", chars[..low].iter().collect::<String>());
             if self.measure_weighted(&fitted, size, weight) > max {
-                return;
+                return None;
             }
             key = self.layout_key(&fitted, size, weight, display);
         }
+        Some(key)
+    }
+    fn draw_style(
+        &mut self,
+        scene: &mut Scene,
+        text: &str,
+        x: f64,
+        y: f64,
+        size: f32,
+        argb: u32,
+        weight: u16,
+        max: f64,
+        display: bool,
+    ) {
+        if text.is_empty() || max <= 0. {
+            return;
+        }
+        let Some(key) = self.fitted_layout_key(text, size, weight, max, display) else {
+            return;
+        };
         let layout = &self.cache[&key];
         scene.push_clip_layer(Affine::IDENTITY, &rect(x, y - 2., max, size as f64 * 1.7));
         for line in layout.lines() {
@@ -428,7 +435,8 @@ impl Text {
             self.ensure_face(family);
             self.family = family.into();
             if family != "Google Sans Flex"
-                && !THEME_FONTS.iter().chain(HARMONY_FONTS.iter())
+                && !family.eq_ignore_ascii_case("Noto Sans SC")
+                && !THEME_FONTS.iter()
                     .any(|(name, _)| name.eq_ignore_ascii_case(family))
             {
                 self.enable_system_fonts();
@@ -1389,11 +1397,11 @@ mod deferred_font_tests {
     #[test]
     fn a_theme_loads_only_its_requested_face_once() {
         let mut text = Text::new_lazy_japanese();
-        assert_eq!(text.deferred_faces.len(), THEME_FONTS.len() + HARMONY_FONTS.len());
+        assert_eq!(text.deferred_faces.len(), THEME_FONTS.len());
         let initial = text.registered.len();
         assert!(text.face_width("Noto Serif SC", "点屿", 24., 600) > 0.);
         assert_eq!(text.registered.len(), initial + 1);
-        assert_eq!(text.deferred_faces.len(), THEME_FONTS.len() + HARMONY_FONTS.len() - 1);
+        assert_eq!(text.deferred_faces.len(), THEME_FONTS.len() - 1);
         text.face_width("Noto Serif SC", "点屿", 24., 600);
         assert_eq!(text.registered.len(), initial + 1);
         assert!(!text.system_fonts);
@@ -1406,14 +1414,14 @@ mod deferred_font_tests {
         assert!(text.japanese.is_none());
     }
     #[test]
-    fn bundled_harmony_does_not_enable_the_system_font_catalog() {
+    fn bundled_noto_does_not_enable_the_system_font_catalog() {
         let mut text = Text::new_lazy_japanese();
         let initial = text.registered.len();
-        text.set_family("HarmonyOS Sans SC");
-        assert_eq!(text.registered.len(), initial + 3);
+        text.set_family("Noto Sans SC");
+        assert_eq!(text.registered.len(), initial);
         assert!(!text.system_fonts);
-        assert!(text.face_width("HarmonyOS Sans SC", "点屿 Memory 123", 16., 600) > 0.);
-        assert_eq!(text.registered.len(), initial + 3);
+        assert!(text.face_width("Noto Sans SC", "点屿 Memory 123", 16., 600) > 0.);
+        assert_eq!(text.registered.len(), initial);
         assert!(!text.system_fonts);
     }
 }

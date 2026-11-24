@@ -184,6 +184,20 @@ pub fn stop_owned_programs(target: &Path) -> Result<()> {
 
 fn quote_target(target: &Path) -> String { paths::quote(&target.to_string_lossy()) }
 
+fn startup_command(target:&Path)->String{format!("{} --startup",quote_target(&target.join("LyricIsland.exe")))}
+
+pub fn repair_startup_in_place(target:&Path)->Result<()> {
+    let Some(run)=Key::open(RUN_KEY)? else{return Ok(())};
+    let executable=target.join("LyricIsland.exe");
+    let expected=startup_command(target);
+    if expected.encode_utf16().count()>260{return Ok(())}
+    let Some(current)=run.string(RUN_VALUE) else{return Ok(())};
+    // Do not enable a missing value, or take over a different portable copy.
+    let legacy=current.trim().trim_matches('"');
+    if paths::same_path(legacy,&executable){Key::create(RUN_KEY)?.set_string(RUN_VALUE,&expected)?;}
+    Ok(())
+}
+
 pub fn write_registration(key: &Key, target: &Path) -> Result<()> {
     let marker = payload::read_marker(target)?;
     let version = payload::marker_version(&marker);
@@ -261,7 +275,10 @@ pub fn register(target: &Path) -> Result<()> {
     };
     if let Some(error) = shortcut_error { let _ = std::fs::write(target.join("shortcut-warning.txt"), error.to_string()); }
     if let Some(run) = Key::open(RUN_KEY)? {
-        if run.string(RUN_VALUE).is_some() { run.set_string(RUN_VALUE, &quote_target(&target.join("LyricIsland.exe")))?; }
+        if run.string(RUN_VALUE).is_some() {
+            let command=startup_command(&target);
+            if command.encode_utf16().count()<=260{Key::create(RUN_KEY)?.set_string(RUN_VALUE,&command)?;}
+        }
     }
     Ok(())
 }
@@ -339,7 +356,7 @@ pub fn uninstall(target: &Path, quiet: bool, remove_data: bool, parent: u32) -> 
         if programs.exists() && std::fs::read_dir(&programs)?.next().is_none() { let _ = std::fs::remove_dir(&programs); }
     }
     if let Some(run) = Key::open(RUN_KEY)? {
-        if run.string(RUN_VALUE).is_some_and(|value| paths::starts_with_path(&value, &target)) { run.delete_value(RUN_VALUE)?; }
+        if run.string(RUN_VALUE).is_some_and(|value| paths::starts_with_path(&value, &target)) { Key::create(RUN_KEY)?.delete_value(RUN_VALUE)?; }
     }
     if !quiet { win::message_box(if keep { "点屿已卸载，用户数据已保留。" } else { "点屿及用户数据已删除。" }, "点屿", false); }
     Ok(())

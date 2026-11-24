@@ -19,7 +19,7 @@ func newTestApp(t *testing.T) *App {
 			"settings": map[string]any{
 				"SettingsTheme":                       "System",
 				"IslandSizeMode":                      "Classic",
-				"IslandFontFamily":                    "HarmonyOS Sans SC",
+				"IslandFontFamily":                    "Noto Sans SC",
 				"OffsetMilliseconds":                  float64(0),
 				"HeadphoneConnectionRemindersEnabled": true,
 				"IslandDynamicSeedColor":              "#A9E6CD",
@@ -42,7 +42,7 @@ func newTestApp(t *testing.T) *App {
 func TestNavRouting(t *testing.T) {
 	app := newTestApp(t)
 	app.openSettings(240)
-	if app.SettingsTab != 240 {
+	if app.SettingsTab != 128 {
 		t.Errorf("openSettings(240) got tab %d", app.SettingsTab)
 	}
 	app.openSettings(128)
@@ -54,7 +54,7 @@ func TestNavRouting(t *testing.T) {
 		t.Errorf("openSettings(243) got tab %d", app.SettingsTab)
 	}
 	app.openSettings(TabRoot)
-	if app.SettingsTab != TabRoot {
+	if app.SettingsTab != 8 {
 		t.Errorf("openSettings(255) got tab %d", app.SettingsTab)
 	}
 }
@@ -147,16 +147,6 @@ func TestSettingsHubName(t *testing.T) {
 	}
 }
 
-func TestSettingsHubParent(t *testing.T) {
-	for tab, parent := range map[uint8]uint8{
-		0: 240, 128: 240, 1: 241, 132: 241, 2: 242, 8: 243, 4: 244, 3: 245,
-	} {
-		if settingsHubParent(tab) != parent {
-			t.Errorf("settingsHubParent(%d) = %d, want %d", tab, settingsHubParent(tab), parent)
-		}
-	}
-}
-
 func TestWidgetKindLowerCase(t *testing.T) {
 	for _, k := range widgetKindLabels {
 		if strings.Contains(k.kind, " ") {
@@ -171,15 +161,6 @@ func TestFormatOffset(t *testing.T) {
 	}
 	if formatOffset(-100) != "-100 ms" {
 		t.Errorf("formatOffset(-100) = %q", formatOffset(-100))
-	}
-}
-
-func TestGroupEntries(t *testing.T) {
-	if len(groupEntries(240)) != 6 {
-		t.Errorf("group 240 entries = %d", len(groupEntries(240)))
-	}
-	if len(groupEntries(243)) != 1 {
-		t.Errorf("group 243 entries = %d", len(groupEntries(243)))
 	}
 }
 

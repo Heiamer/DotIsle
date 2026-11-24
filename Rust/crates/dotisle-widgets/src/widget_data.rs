@@ -147,10 +147,10 @@ impl Hub {
                     self.weather.remove(&p.id);
                 }
                 Kind::Weather => {
-                    let retry = if self.value[&p.id]["error"].is_null() {
+                    let retry = if crate::weather_forecast::complete(&self.value[&p.id]) {
                         600
                     } else {
-                        60
+                        30
                     };
                     let start = self.weather.get(&p.id).is_none_or(|(city, at, busy)| {
                         city != &p.config.city

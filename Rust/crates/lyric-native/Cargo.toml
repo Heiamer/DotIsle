@@ -1,7 +1,7 @@
 [package]
 autobins = false
 name = "lyric-native"
-version = "5.0.5"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 
@@ -20,6 +20,7 @@ lyric-backend = { path = "../lyric-backend" }
 lyric-core = { path = "../lyric-core" }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 base64.workspace = true
 roxmltree = "=0.20.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
@@ -29,7 +30,7 @@ windows = { version = "0.62", features = [
   "Win32_Storage_Packaging_Appx", "ApplicationModel", "ApplicationModel_Core", "Foundation", "Storage_Streams", "Win32_System_WinRT", "UI_ViewManagement", "Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_Com",
   "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi",
   "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_Graphics_Gdi",
-  
+
   
    "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common",
    "Win32_Graphics_DirectComposition", "Win32_Graphics_Dwm",
@@ -47,3 +48,4 @@ windows = { version = "0.62", features = [
 name = "dotisle_core"
 path = "src/main.rs"
 crate-type = ["cdylib"]
+

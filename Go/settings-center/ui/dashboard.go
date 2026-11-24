@@ -4,6 +4,7 @@ package ui
 import (
 	"fmt"
 	"github.com/egoist/mygo/ui"
+	"math"
 	"sort"
 	"strings"
 )
@@ -63,11 +64,27 @@ func (a *App) cardHeader(c *ui.Context, r overviewRect, title string) {
 }
 
 func cardBadge(c *ui.Context, p *Palette, text string, x, y, w float32, active bool) {
-	bg, fg := p.Scheme.High, p.Scheme.OnSurfaceVariant
-	if active {
-		bg, fg = mix(p.Scheme.Container, p.Scheme.Primary, .09), p.Scheme.Primary
+	bg := AlphaCol(0x111827, 0.05)
+	fg := p.Scheme.OnSurfaceVariant
+	if p.Dark {
+		bg = AlphaCol(0xFFFFFF, 0.085)
 	}
-	ui.Box(c).Absolute().Left(x).Top(y).Width(w).Height(24).Radius(12).Background(Col(bg)).IgnoreInput(true)
+	if active {
+		fg = p.Scheme.OnSurface
+	}
+	if p.HighContrast {
+		bg = Col(p.Scheme.High)
+		if active {
+			bg = Col(mix(p.Scheme.Container, p.Scheme.Primary, .12))
+			fg = p.Scheme.Primary
+		}
+	}
+	ui.Box(c).Absolute().Left(x).Top(y).Width(w).Height(24).Radius(12).Background(bg).IgnoreInput(true)
+	if active {
+		ui.Box(c).Absolute().Left(x + 9).Top(y + 9.5).Width(5).Height(5).Radius(2.5).Background(Col(0x10B981)).IgnoreInput(true)
+		CenteredText(c, text, x+6, y, w-6, 24, 10, fg, true).IgnoreInput(true)
+		return
+	}
 	CenteredText(c, text, x, y, w, 24, 10, fg, true).IgnoreInput(true)
 }
 
@@ -94,7 +111,14 @@ func (a *App) dashboardMusic(c *ui.Context, r overviewRect) {
 	if bmp := a.coverBitmap(); bmp != nil {
 		ui.Image(c, bmp).Absolute().Left(x + 20).Top(y + 52).Width(cover).Height(cover).Fit(ui.Cover).Radius(12)
 	} else {
-		ui.Box(c).Absolute().Left(x + 20).Top(y + 52).Width(cover).Height(cover).Radius(12).Background(Col(s.High))
+		coverBg := AlphaCol(0x111827, 0.045)
+		coverBorder := AlphaCol(0x111827, 0.06)
+		if p.Dark {
+			coverBg = AlphaCol(0xFFFFFF, 0.07)
+			coverBorder = AlphaCol(0xFFFFFF, 0.09)
+		}
+		ui.Box(c).Absolute().Left(x+20).Top(y+52).Width(cover).Height(cover).Radius(12).
+			Background(coverBg).Border(1, coverBorder)
 		Icon(c, "music_note", x+20+(cover-24)/2, y+52+(cover-24)/2, 24, s.OnSurfaceVariant)
 	}
 	title, artist := a.trackTitle(), a.trackArtist()
@@ -152,26 +176,61 @@ func (a *App) dashboardFocus(c *ui.Context, r overviewRect) {
 	if timer != nil {
 		progress = timer.progress()
 	}
-	widgetCircle(c, x+w-76, y+58, 52, progress, s.Primary, mix(s.Container, s.OnSurface, .08))
-	Label(c, clock, x+20, y+57, 38, s.OnSurface, true, w-100)
-	Label(c, detail, x+22, y+114, 11, s.OnSurfaceVariant, false, w-44)
+	ringInk, ringTrack := uint32(0x16181D), uint32(0xE5E7EB)
+	ringWell := AlphaCol(0x111827, 0.035)
+	if p.Dark {
+		ringInk, ringTrack = 0xF3F4F6, 0x2B2E36
+		ringWell = AlphaCol(0xFFFFFF, 0.045)
+	}
+	if p.HighContrast {
+		ringInk, ringTrack = s.Primary, mix(s.Container, s.OnSurface, .08)
+	}
+	ui.Box(c).Absolute().Left(x + w - 76).Top(y + 56).Width(56).Height(56).Radius(28).Background(ringWell).IgnoreInput(true)
+	widgetCircle(c, x+w-74, y+58, 52, progress, ringInk, ringTrack)
+	ringLabel := "就绪"
+	if timer != nil {
+		if progress > 0 {
+			ringLabel = fmt.Sprintf("%d%%", int(math.Round(progress*100)))
+		} else if timer.Running {
+			ringLabel = "进行"
+		}
+	}
+	CenteredText(c, ringLabel, x+w-74, y+73, 52, 20, 10, s.OnSurfaceVariant, true).IgnoreInput(true)
+	Label(c, clock, x+20, y+52, 42, s.OnSurface, true, w-106)
+	Label(c, detail, x+22, y+110, 11.5, s.OnSurfaceVariant, false, w-44)
 	if timer == nil {
-		chipW := (w - 56) / 3
+		trayBg := AlphaCol(0x111827, 0.04)
+		trayRim := AlphaCol(0x111827, 0.06)
+		if p.Dark {
+			trayBg = AlphaCol(0xFFFFFF, 0.055)
+			trayRim = AlphaCol(0xFFFFFF, 0.08)
+		}
+		ui.Box(c).Absolute().Left(x+20).Top(y+144).Width(w-40).Height(38).Radius(19).
+			Background(trayBg).Border(1, trayRim).IgnoreInput(true)
+		chipW := (w - 48) / 3
 		for i, minutes := range []int{15, 25, 45} {
-			xx := x + 20 + float32(i)*(chipW+8)
+			xx := x + 24 + float32(i)*chipW
 			selected := deckMinutes == minutes
-			button := ui.ButtonBase(c).Absolute().Left(xx).Top(y + 148).Width(chipW).Height(36).Radius(18).
+			button := ui.ButtonBase(c).Absolute().Left(xx).Top(y + 148).Width(chipW).Height(30).Radius(15).
 				Label(fmt.Sprintf("概览专注 %d 分钟", minutes)).Cursor(ui.CursorPointer)
 			bg, fg := ui.Transparent, s.OnSurfaceVariant
 			if selected {
-				bg, fg = Col(mix(s.Container, s.Primary, .09)), s.Primary
+				if p.HighContrast {
+					bg, fg = Col(mix(s.Container, s.Primary, .12)), s.Primary
+				} else if p.Dark {
+					bg, fg = AlphaCol(0xFFFFFF, 0.16), 0xFFFFFF
+					button.Border(1, AlphaCol(0xFFFFFF, 0.18)).Shadow(0, 1, 3, 0, AlphaCol(0x000000, 0.25))
+				} else {
+					bg, fg = Col(0xFFFFFF), 0x16181D
+					button.Border(1, AlphaCol(0x111827, 0.08)).Shadow(0, 1, 3, 0, AlphaCol(0x111827, 0.10))
+				}
 			}
 			button.Background(bg)
-			hoverLayer(&button, bg, s.Primary, true)
+			hoverLayer(&button, bg, s.OnSurface, true)
 			if button.Clicked() {
 				deckMinutes = minutes
 			}
-			button.Children(func() { CenteredText(c, fmt.Sprintf("%d 分钟", minutes), 0, 0, chipW, 36, 12, fg, selected) })
+			button.Children(func() { CenteredText(c, fmt.Sprintf("%d 分钟", minutes), 0, 0, chipW, 30, 12, fg, selected) })
 		}
 	}
 	label, icon := "开始专注", "play_arrow"
@@ -249,18 +308,41 @@ func (a *App) dashboardQuick(c *ui.Context, r overviewRect) {
 		{"深色外观", "控制中心显示主题", "dark_mode", a.Palette.Dark, a.toggleDark},
 	}
 	for i, row := range rows {
-		top := y + 54 + float32(i)*56
-		bg, fg := s.High, s.OnSurfaceVariant
+		top := y + 52 + float32(i)*66
+		rowBg := AlphaCol(0x111827, 0.032)
+		rowRim := AlphaCol(0x111827, 0.05)
+		if p.Dark {
+			rowBg = AlphaCol(0xFFFFFF, 0.045)
+			rowRim = AlphaCol(0xFFFFFF, 0.07)
+		}
 		if row.on {
-			bg, fg = s.Primary, s.OnPrimary
+			rowBg = AlphaCol(s.Primary, 0.065)
+			rowRim = AlphaCol(s.Primary, 0.16)
+			if p.Dark {
+				rowBg = AlphaCol(0xFFFFFF, 0.085)
+				rowRim = AlphaCol(0xFFFFFF, 0.16)
+			}
 		}
-		ui.Box(c).Absolute().Left(x + 20).Top(top + 6).Width(34).Height(34).Radius(17).Background(Col(bg)).IgnoreInput(true)
-		Icon(c, row.icon, x+28, top+14, 18, fg)
-		Label(c, row.title, x+60, top+4, 13, s.OnSurface, true, w-130)
-		Label(c, row.detail, x+60, top+26, 10, s.OnSurfaceVariant, false, w-130)
-		Switch(c, p, row.title, x+w-60, top+9, row.on, row.action)
-		if i < 2 {
-			ui.Box(c).Absolute().Left(x + 60).Top(top + 53).Width(w - 80).Height(1).Background(AlphaCol(s.OnSurface, .06)).IgnoreInput(true)
+		ui.Box(c).Absolute().Left(x+14).Top(top).Width(w-28).Height(58).Radius(16).
+			Background(rowBg).Border(1, rowRim).IgnoreInput(true)
+		bg := AlphaCol(0x111827, 0.055)
+		fg := s.OnSurfaceVariant
+		if p.Dark {
+			bg = AlphaCol(0xFFFFFF, 0.08)
 		}
+		if row.on {
+			if p.HighContrast {
+				bg, fg = Col(s.Primary), s.OnPrimary
+			} else if p.Dark {
+				bg, fg = Col(0xF3F4F6), 0x111316
+			} else {
+				bg, fg = Col(0x16181D), 0xFFFFFF
+			}
+		}
+		ui.Box(c).Absolute().Left(x + 24).Top(top + 12).Width(34).Height(34).Radius(12).Background(bg).IgnoreInput(true)
+		Icon(c, row.icon, x+32, top+20, 18, fg)
+		Label(c, row.title, x+68, top+10, 13.5, s.OnSurface, true, w-146)
+		Label(c, row.detail, x+68, top+32, 10.5, s.OnSurfaceVariant, false, w-146)
+		Switch(c, p, row.title, x+w-68, top+16, row.on, row.action)
 	}
 }

@@ -55,7 +55,7 @@ pub unsafe fn run(app: &mut App, out: &Path) -> Result<(), Box<dyn std::error::E
             };
             let mut scene = app.scene();
             scene.component_count = 1;
-            scene.glass_refraction = false;
+
             scene.lyric_age_ms = 1000.;
             scene.cover_age_ms = 1000.;
             scene.time_ms = 0.;
@@ -86,7 +86,7 @@ pub unsafe fn run(app: &mut App, out: &Path) -> Result<(), Box<dyn std::error::E
         scene.layout.set_compact(260., 14.);
         scene.capsule_radius = 7.;
         scene.component_count = 1;
-        scene.glass_refraction = false;
+
         scene.lyric_age_ms = 1000.;
         scene.time_ms = 0.;
         scene.glow = GlowFrame {

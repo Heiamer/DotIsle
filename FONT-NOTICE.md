@@ -1,6 +1,6 @@
-## 5.0 控制中心字体
+## 控制中心字体
 
-Go 原生控制中心使用内嵌 HarmonyOS Sans / HarmonyOS Sans SC（Regular、Medium、Bold）。许可见 `licenses/HarmonyOS-Sans-LICENSE.txt`；其他原生界面的字体说明如下。
+Go 原生控制中心与桌面组件统一使用内嵌 **Noto Sans SC**（可变字重，经 `Assets/Fonts/NotoSansSC.ttf` 随包提供）与 **Google Sans Flex**。许可见 `licenses/NotoSansSC-OFL.txt` 与 `licenses/GoogleSansFlex-OFL.txt`。
 
 # 字体与许可
 

@@ -58,6 +58,7 @@ func (a *App) prepareOpening(c *ui.Context) bool {
 	if !a.signatureEnabled() {
 		a.signaturePending = false
 		a.signatureStart = time.Time{}
+		a.resetOpeningLight()
 		return false
 	}
 	if a.signaturePending {
@@ -65,12 +66,14 @@ func (a *App) prepareOpening(c *ui.Context) bool {
 		a.signatureStart = c.Now()
 	}
 	if a.signatureStart.IsZero() {
+		a.resetOpeningLight()
 		return false
 	}
 	reduced := a.reducedMotion()
 	elapsed := c.Now().Sub(a.signatureStart).Seconds()
 	if elapsed >= signatureDuration(reduced) || c.Shortcut(0, ui.KeyEscape) {
 		a.signatureStart = time.Time{}
+		a.resetOpeningLight()
 		c.AnimationFrame()
 		return false
 	}
@@ -90,19 +93,33 @@ func (a *App) opening(c *ui.Context, w, h float32) {
 		Width(w).Height(h - TitlebarH).Background(Col(s.Surface)).Opacity(float32(alpha)).Label("跳过开屏动画")
 	if cover.Clicked() {
 		a.signatureStart = time.Time{}
+		a.resetOpeningLight()
 		c.AnimationFrame()
 		return
 	}
 	cover.Children(func() {
+		slow := sigSlow()
+		t := elapsed / slow
+		a.paintOpeningLight(c, w, h-TitlebarH, t, reduced)
+
 		wordW := min(float32(328), w-96)
 		wordH := wordW * signatureHeight / signatureWidth
-		wordY := (h - TitlebarH - wordH - 52) / 2
+		wordY := (h - TitlebarH - wordH - 36) / 2
+
 		a.drawSignature(c, (w-wordW)/2, wordY, wordW, wordH, elapsed, reduced)
-		versionAlpha := float32(1)
+
+		versionAlpha := float32(0.78)
+		versionOffset := float32(0)
 		if !reduced {
-			versionAlpha = motionEase(float32(clampF64((elapsed/sigSlow()-.62)/.22, 0, 1)))
+			vt := motionEase(float32(clampF64((t-0.66)/0.28, 0, 1)))
+			versionAlpha = vt * 0.78
+			versionOffset = 7 * (1 - vt)
+			if t > sigWrite+sigHold {
+				exitP := motionEase(float32(clampF64((t-sigWrite-sigHold)/sigExit, 0, 1)))
+				versionOffset -= 4 * exitP
+			}
 		}
-		CenteredText(c, stateString(a.State, "5.0.5", "version"), 0, wordY+wordH+28, w, 24, 12, s.OnSurfaceVariant, false).Opacity(versionAlpha)
+		CenteredText(c, stateString(a.State, "5.2.0", "version"), 0, wordY+wordH+22+versionOffset, w, 24, 12, s.OnSurfaceVariant, false).Opacity(versionAlpha)
 	})
 	c.AnimationFrame()
 }

@@ -409,26 +409,23 @@ func Request(command string, value any) (map[string]any, error) {
 	return request(command, value)
 }
 
-// Parsed snapshots are immutable. Only unused renderer counters are excluded;
+// Parsed snapshots are immutable. Only the unused render counter is excluded;
 // lyrics, commands, errors, settings and pending navigation always participate.
 func sameSnapshot(previous, next map[string]any) bool {
 	if previous == nil || next == nil {
 		return false
 	}
 	visibleLen := func(m map[string]any) int {
-		n := len(m)
-		for _, k := range []string{"renderFrames", "glassCaptures"} {
-			if _, ok := m[k]; ok {
-				n--
-			}
+		if _, ok := m["renderFrames"]; ok {
+			return len(m) - 1
 		}
-		return n
+		return len(m)
 	}
 	if visibleLen(previous) != visibleLen(next) {
 		return false
 	}
 	for key, value := range next {
-		if key == "renderFrames" || key == "glassCaptures" {
+		if key == "renderFrames" {
 			continue
 		}
 		old, ok := previous[key]

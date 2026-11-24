@@ -2,12 +2,19 @@ package ui
 
 import (
 	"dotisle/settings/prefs"
-	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
 	"path/filepath"
 )
 
-const navigationPanelW float32 = 340
+const navigationPanelW float32 = 272
+
+var navigationPages = [...]struct {
+	page int
+	icon string
+}{
+	{PageHome, "home"}, {PageWidgets, "filter_none"}, {PageFocus, "timer"},
+	{PageTodos, "checklist"}, {PageNotifications, "bell"}, {PagePlugins, "puzzle"}, {PageSettings, "settings"},
+}
 
 func sidebarIcon(c *ui.Context, name string, x, y, size float32, rgb uint32) {
 	if svg := Symbol(name); svg != nil {
@@ -49,51 +56,67 @@ func (a *App) navigation(c *ui.Context, w, h float32) {
 			return
 		}
 		menu.Children(func() {
-			outside := ui.ButtonBase(c).Absolute().Left(navigationPanelW).Top(0).
-				Width(w - navigationPanelW).Height(h).Label("收起导航").Background(ui.Transparent)
+			panelW := min(navigationPanelW, w)
+			outside := ui.ButtonBase(c).Absolute().Left(panelW).Top(0).
+				Width(w - panelW).Height(h).Label("收起导航").Background(ui.Transparent)
 			if outside.Clicked() {
 				a.navigationOpen = false
 			}
+			// 全高贴边建筑玻璃抽屉：几何严格契合 (0, 0, panelW, h) 且绝不扰动右侧页面像素；
+			// 直接绘制高密度冰白/曜石霜膜，避免动画中抓取下层画面。
 			panel := ui.Box(c).Key("navigation-panel").Absolute().Left(0).Top(0).
-				Width(navigationPanelW).Height(h).Clip().Label("侧边导航栏")
-			// Slide the material without fading its dark text or backdrop.
+				Width(panelW).Height(h).Radius(0).Clip().Label("侧边导航栏")
 			progress := appTweenValue(c, panel, "entered", 0, 1, motionStandard, a.reducedMotion())
 			panel.Translate(-24*(1-progress), 0)
-			// Keep backdrop sampling out of an opacity group, which otherwise
-			// samples an empty offscreen surface instead of the page beneath.
-			// Keep foreground absolute too, so the tint paints before the text.
-			alpha := .82
-			if c.Preferences().ReduceTransparency || c.Preferences().HighContrast {
-				alpha = 1
+			p := a.Palette
+			s := &p.Scheme
+			reduced := opticalReduced(c, &p)
+			if reduced {
+				panel.Background(Col(s.Surface)).Border(1, Col(s.Outline))
 			} else {
-				panel.Material(glass.Blur{Radius: 26})
+				panel.Background(opticalOverlayFill(&p))
+				if p.Dark {
+					panel.Shadow(8, 0, 28, -4, AlphaCol(0x000000, 0.36))
+				} else {
+					panel.Shadow(8, 0, 28, -4, AlphaCol(0x1E293B, 0.10))
+				}
 			}
 			panel.Children(func() {
-				ui.Box(c).Absolute().Fill().Background(AlphaCol(0xFFFFFF, alpha)).IgnoreInput(true)
-				ui.Box(c).Absolute().Left(navigationPanelW - 1).Top(0).Width(1).Height(h).
-					Background(AlphaCol(0x000000, .06)).IgnoreInput(true)
-				ui.Box(c).Absolute().Fill().Children(func() {
-					p := a.Palette
-					p.Scheme.OnSurface, p.Scheme.OnSurfaceVariant = 0x1D1D1F, 0x636366
-					IconButton(c, &p, "关闭导航", navigationPanelW-60, 16, 40, 40, "close", false, true, func() { a.navigationOpen = false })
-					x, y, rowH := float32(40), float32(82), float32(70)
-					for row, page := range []int{PageHome, PageWidgets, PageFocus, PageTodos, PageNotifications, PagePlugins, PageSettings} {
-						name := Pages[page]
-						item := ui.ButtonBase(c).Key("nav-" + name).Absolute().Left(x).Top(y + float32(row)*rowH).
-							Width(navigationPanelW - x - 32).Height(66).AlignItems(ui.Center).Justify(ui.Start).
-							Label("切换到" + name).Cursor(ui.CursorPointer)
-						if item.Clicked() {
-							if page == PageSettings {
-								a.openSettings(TabRoot)
-							} else {
-								a.navigate(page)
-							}
+				if !reduced {
+					ui.Box(c).Absolute().Fill().IgnoreInput(true).Draw(func(pc *ui.Painter, r ui.Rect) {
+						sheen := AlphaCol(0xFFFFFF, 0.22)
+						edge := AlphaCol(0x1E293B, 0.10)
+						if p.Dark {
+							sheen = AlphaCol(0xFFFFFF, 0.04)
+							edge = AlphaCol(0xFFFFFF, 0.12)
 						}
-						item.Children(func() {
-							ui.Text(c, name).Absolute().Left(0).Top(3).Font(textFamily(name)).FontSize(42).FontWeight(600).
-								FixedLineHeight(60).TextColor(Col(0x1D1D1F)).SingleLine().IgnoreInput(true)
-						})
-					}
+						pc.FillGradient(r, ui.LinearGradient{
+							From:  sheen,
+							To:    AlphaCol(0xFFFFFF, 0),
+							Angle: 145,
+						}, 0)
+						pc.Line(r.X+r.W-0.5, r.Y, r.X+r.W-0.5, r.Y+r.H, 1, edge)
+					})
+				}
+				Label(c, "点屿", 20, 18, 20, s.OnSurface, true, panelW-76).IgnoreInput(true)
+				Label(c, "控制中心", 20, 46, 12, s.OnSurfaceVariant, false, panelW-76).IgnoreInput(true)
+				IconButton(c, &p, "关闭导航", panelW-50, 18, 34, 34, "close", false, true, func() { a.navigationOpen = false })
+				settingSeparator(c, &p, 18, 74, panelW-36)
+				ui.Scroll(c).Key("navigation-pages").Absolute().Left(10).Top(86).
+					Width(panelW - 20).Height(max(0, h-98)).Scrollbars(false).Children(func() {
+					ui.Box(c).Width(panelW - 20).Height(float32(len(navigationPages)) * 43).Children(func() {
+						for i, entry := range navigationPages {
+							page := entry.page
+							name := Pages[page]
+							a.settingsNavItem(c, &p, "切换到"+name, name, entry.icon, panelW-20, float32(i)*43, a.Page == page, func() {
+								if page == PageSettings {
+									a.openSettings(TabRoot)
+								} else {
+									a.navigate(page)
+								}
+							})
+						}
+					})
 				})
 			})
 		})

@@ -30,6 +30,7 @@ dotisle-render = { path = "../dotisle-render" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 vello = { package = "dotisle-scene", path = "../dotisle-scene" }
 lyric-archive = { path = "../lyric-archive" }
+serde.workspace = true
 serde_json.workspace = true
 regex.workspace = true
 sha2.workspace = true

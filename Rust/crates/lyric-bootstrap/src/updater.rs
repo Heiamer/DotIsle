@@ -107,12 +107,11 @@ pub fn verify(zip: &Path, expected: &str) -> Result<()> {
 }
 
 pub fn extract(zip: &Path, stage: &Path, version: &str) -> Result<PathBuf> {
-    payload::extract_zip_file(zip, stage, &format!("LyricIsland-{version}"), payload::required_runtime(), 512 * 1024 * 1024)
+    payload::extract_update(zip, stage, version)
 }
 
-pub fn manifest_digest(manifest: &str, version: &str) -> Option<String> {
-    let name = format!("LyricIsland-{version}-Portable.zip");
-    for line in manifest.lines() {
+fn asset_digest(manifest: &str, name: &str) -> Option<String> {
+    for line in manifest.trim_start_matches('\u{feff}').lines() {
         let mut parts = line.split_whitespace();
         let digest = parts.next().unwrap_or("");
         let file = parts.next().unwrap_or("");
@@ -121,6 +120,10 @@ pub fn manifest_digest(manifest: &str, version: &str) -> Option<String> {
         }
     }
     None
+}
+
+pub fn manifest_digest(manifest: &str, version: &str) -> Option<String> {
+    asset_digest(manifest, &format!("LyricIsland-{version}-Portable.zip"))
 }
 
 pub fn domestic_pair(target: &Path, version: &str) -> Result<(String, String)> {
@@ -155,7 +158,7 @@ fn primary_pair(version:&str,preferred:&Option<(String,String)>)->(String,String
  let root=format!("{prefix}v{version}/LyricIsland-{version}");(format!("{root}-SHA256.txt"),format!("{root}-Portable.zip"))
 }
 
-pub fn download_bundle(target: &Path, version: &str, scratch: &Path, preferred: Option<(String, String)>, reporter: &mut Reporter) -> Result<()> {
+fn prepare_download(target: &Path, version: &str, scratch: &Path, preferred: Option<(String, String)>, reporter: &mut Reporter) -> Result<Option<crate::module_update::Prepared>> {
     let primary = primary_pair(version, &preferred);
     let mut errors = Vec::new();
     let mut tried = HashSet::new();
@@ -172,22 +175,37 @@ pub fn download_bundle(target: &Path, version: &str, scratch: &Path, preferred: 
         let Some((manifest_url, zip_url)) = pair else { continue };
         if !tried.insert(manifest_url.clone()) { continue; }
         reporter.report(if step == 0 { "downloading" } else { "switching" }, 0, None, if step == 0 { "开始下载" } else { "切换到备用更新源" }, true)?;
-        let attempt = (|| -> Result<()> {
+        let attempt = (|| -> Result<Option<crate::module_update::Prepared>> {
             if !official_url(&manifest_url) || !official_url(&zip_url) { return Err(Error("更新下载地址无效".into())); }
             let zip_path = scratch.join("update.zip");
             let manifest = http::get_bytes(&manifest_url, 64 * 1024)?;
-            let expected = manifest_digest(&String::from_utf8_lossy(&manifest), version).ok_or_else(|| Error("校验清单缺少更新包".into()))?;
+            let manifest = String::from_utf8_lossy(&manifest);
+            let expected = manifest_digest(&manifest, version).ok_or_else(|| Error("校验清单缺少更新包".into()))?;
             if pinned.as_ref().is_some_and(|pinned| pinned != &expected) { return Err(Error(PINNED_MISMATCH.into())); }
             pinned = Some(expected.clone());
+            let github = format!("https://github.com/Heiamer/DotIsle/releases/download/v{version}/");
+            let index = format!("LyricIsland-{version}-Modules.json");
+            if step == 0 && manifest_url.starts_with(&github) {
+                if let Some(index_hash) = asset_digest(&manifest, &index) {
+                    match crate::module_update::prepare(target, version, scratch, &github, &index, &index_hash, reporter) {
+                        Ok(prepared) => return Ok(Some(prepared)),
+                        Err(error) if error.is_cancelled() => return Err(error),
+                        Err(error) => {
+                            let _ = std::fs::write(scratch.join("component-error.txt"), error.to_string());
+                            reporter.report("switching", 0, None, "组件下载或校验失败，切换到全量更新", true)?;
+                        }
+                    }
+                }
+            }
             let (received, length) = http::download(&zip_url, &zip_path, 256 * 1024 * 1024, |received, length| {
                 reporter.report("downloading", received, length, &format!("正在下载已选版本 {version}"), false).map(|_| ())
             })?;
             reporter.report("verifying", received, length, "正在校验下载内容", true)?;
             verify(&zip_path, &expected)?;
-            Ok(())
+            Ok(None)
         })();
         match attempt {
-            Ok(()) => return Ok(()),
+            Ok(prepared) => return Ok(prepared),
             Err(error) if error.is_cancelled() => return Err(error),
             Err(error) if error.0 == PINNED_MISMATCH => return Err(error),
             Err(error) => {
@@ -216,6 +234,12 @@ pub fn apply(stage: &Path, target: &Path, backup: &Path, fail_after: usize, afte
     let mut after = after;
     let outcome = (|| -> Result<()> {
         let files = payload::relative_files(stage)?;
+        for relative in &files {
+            let destination = paths::safe_child(target, relative)?;
+            if !crate::update_cleanup::ordinary_path(target, &destination) {
+                return Err(Error(format!("更新路径包含链接：{relative}")));
+            }
+        }
         for relative in files {
             let input = stage.join(relative.replace('/', "\\"));
             let destination = target.join(relative.replace('/', "\\"));
@@ -319,7 +343,63 @@ pub fn self_test(report: &Path) -> Result<()> {
         writer.add_bytes("LyricIsland-9.9/../escape", b"bad")?;
         writer.finish()?;
         if extract(&evil, &root.join("extract"), "9.9").is_ok() { return Err(Error("unsafe ZIP accepted".into())); }
-        paths::write_json(report, &json!({"success": true, "rollback": true, "preservesData": true, "rejectsTraversal": true}))
+        // Exercise a major update that ships neither the old DLLs nor the old font set.
+        let installed = root.join("installed");
+        let user_data = installed.join("Data");
+        std::fs::create_dir_all(installed.join("Assets"))?;
+        std::fs::create_dir_all(&user_data)?;
+        std::fs::write(user_data.join("settings.json"), b"keep")?;
+        std::fs::write(installed.join("LyricIsland.exe"), b"old")?;
+        for obsolete in ["dotisle_glow.dll", "dotisle_osd.dll"] {
+            std::fs::write(installed.join(obsolete), b"shipped")?;
+        }
+        paths::write_json(&installed.join(payload::RUNTIME_INVENTORY), &json!({"schemaVersion":1,"product":"DotIsle","version":"9.8","files":{
+            "dotisle_glow.dll":lyric_archive::sha256_bytes(b"shipped"),"dotisle_osd.dll":lyric_archive::sha256_bytes(b"shipped")
+        }}))?;
+        std::fs::write(installed.join("dotisle_osd.dll"), b"user replacement")?;
+
+        for (kind, extra, corrupt, missing, wrong_version, alias) in [
+            ("valid", false, false, false, false, false), ("extra", true, false, false, false, false),
+            ("corrupt", false, true, false, false, false), ("missing", false, false, true, false, false),
+            ("wrong-version", false, false, false, true, false), ("alias", false, false, false, false, true),
+        ] {
+            let zip = root.join(format!("{kind}.zip"));
+            let mut writer = ZipWriter::create(&zip)?;
+            let inventory = json!({"schemaVersion":1,"product":"DotIsle",
+                "version": if wrong_version { "9.8" } else { "9.9" },
+                "files":{"LyricIsland.exe":lyric_archive::sha256_bytes(b"new"),"Assets/New.txt":lyric_archive::sha256_bytes(b"added")}});
+            writer.add_bytes(&format!("LyricIsland-9.9/{}", payload::RUNTIME_INVENTORY), &serde_json::to_vec(&inventory)?)?;
+            writer.add_bytes("LyricIsland-9.9/LyricIsland.exe", if corrupt { b"bad" } else { b"new" })?;
+            if !missing { writer.add_bytes("LyricIsland-9.9/Assets/New.txt", b"added")?; }
+            if extra { writer.add_bytes("LyricIsland-9.9/extra.dll", b"extra")?; }
+            if alias { writer.add_bytes("LyricIsland-9.9/assets/new.TXT", b"duplicate")?; }
+            writer.finish()?;
+            let candidate = extract(&zip, &root.join(format!("stage-{kind}")), "9.9");
+            if kind != "valid" {
+                if candidate.is_ok() { return Err(Error(format!("invalid update accepted: {kind}"))); }
+                continue;
+            }
+            let stage = candidate?;
+            let retired = crate::update_cleanup::plan(&stage, &installed)?;
+            let work = paths::temp_unique("LyricIsland.Update");
+            let mut bad_start = || Err(Error("simulated launch failure".into()));
+            if apply(&stage, &installed, &root.join("failed-start"), 0, Some(&mut bad_start)).is_ok()
+                || std::fs::read(installed.join("LyricIsland.exe"))? != b"old"
+                || !installed.join("dotisle_glow.dll").is_file() {
+                return Err(Error("launch rollback failed".into()));
+            }
+            apply(&stage, &installed, &work.join("backup"), 0, None)?;
+            std::fs::write(work.join("success.txt"), "9.9")?;
+            let cleanup = crate::update_cleanup::finish(&work, &installed, &user_data, &retired, "9.9");
+            if cleanup["success"] != true || installed.join("dotisle_glow.dll").exists()
+                || std::fs::read(installed.join("dotisle_osd.dll"))? != b"user replacement"
+                || std::fs::read(user_data.join("settings.json"))? != b"keep" {
+                return Err(Error("obsolete bundled DLL or user data cleanup failed".into()));
+            }
+        }
+        paths::write_json(report, &json!({"success": true, "rollback": true, "preservesData": true,
+            "rejectsTraversal": true, "packageInventory": true, "removedComponent": true,
+            "preservesModifiedComponent":true,"rejectsCorruptMissingExtraAliasAndWrongVersion": true}))
     })();
     let _ = std::fs::remove_dir_all(&root);
     outcome
@@ -370,13 +450,23 @@ pub fn run(args: Vec<String>) -> i32 {
         let state = shared_state();
         reporter = Some(Reporter::new(authenticated, job.clone(), nonce, pipe.clone(), state.clone()));
         let reporter = reporter.as_mut().unwrap();
-        let modular = crate::module_update::prepare(&target_path, &version, &work, reporter)?;
-        let stage = work.join("stage");
-        if !modular {
-            download_bundle(&target_path, &version, &work, preferred, reporter)?;
+        let components = prepare_download(&target_path, &version, &work, preferred, reporter)?;
+        let stage = if let Some(prepared) = &components {
+            prepared.stage.clone()
+        } else {
+            let stage = work.join("stage");
             extract(&work.join("update.zip"), &stage, &version)?;
-        }
-        crate::local_modules::validate_overlay(&target_path,&stage,&work)?;
+            // A portable archive is also the OTA payload for installed copies. Do
+            // not switch their storage mode during the transaction.
+            if !target_path.join("Portable.json").is_file() {
+                paths::remove_file_if_present(&stage.join("Portable.json"))?;
+                let path = stage.join(payload::RUNTIME_INVENTORY);
+                let mut inventory = paths::read_json(&path)?;
+                inventory["files"].as_object_mut().unwrap().remove("Portable.json");
+                paths::write_json(&path, &inventory)?;
+            }
+            stage
+        };
         let retired=crate::update_cleanup::plan(&stage,&target_path)?;
         merge_marker(&stage, &target_path, &version)?;
 
@@ -394,6 +484,7 @@ pub fn run(args: Vec<String>) -> i32 {
         stopped = true;
         wait(pid)?;
         wait(settings)?;
+        if let Some(prepared) = &components { prepared.check_unchanged(&target_path)?; }
         let confirmation_pipe = pipe.clone();
         let confirmation_version = version.clone();
         let mut after = || -> Result<()> {

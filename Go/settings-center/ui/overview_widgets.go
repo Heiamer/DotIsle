@@ -91,20 +91,47 @@ func (a *App) overviewWidget(c *ui.Context, r overviewRect) {
 	case "calendar":
 		now := time.Now()
 		c.After(time.Minute)
-		Label(c, now.Format("2006年1月"), x, y-2, 14, s.OnSurface, true, w)
+		weekdayName := []string{"周日", "周一", "周二", "周三", "周四", "周五", "周六"}[now.Weekday()]
+		Label(c, now.Format("2006年1月"), x, y-2, 15, s.OnSurface, true, w-70)
+		cardBadge(c, &a.Palette, weekdayName, x+w-52, y-4, 52, true)
 		cell := w / 7
 		for i, name := range []string{"一", "二", "三", "四", "五", "六", "日"} {
-			CenteredText(c, name, x+float32(i)*cell, y+25, cell, 18, 10, s.OnSurfaceVariant, false)
+			fg := s.OnSurfaceVariant
+			if i >= 5 {
+				fg = mix(s.OnSurfaceVariant, s.Primary, 0.25)
+			}
+			CenteredText(c, name, x+float32(i)*cell, y+25, cell, 18, 10, fg, i >= 5)
 		}
+		ui.Box(c).Absolute().Left(x + 2).Top(y + 45).Width(w - 4).Height(1).Background(AlphaCol(s.OnSurface, 0.06)).IgnoreInput(true)
 		first := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 		offset := (int(first.Weekday()) + 6) % 7
-		for day := 1; day <= first.AddDate(0, 1, -1).Day(); day++ {
+		daysCount := first.AddDate(0, 1, -1).Day()
+		rowsCount := (offset + daysCount + 6) / 7
+		rowStep := float32(22)
+		if rowsCount >= 6 {
+			rowStep = 20
+		}
+		for day := 1; day <= daysCount; day++ {
 			index := day - 1 + offset
-			xx, yy := x+float32(index%7)*cell, y+49+float32(index/7)*21
+			col := index % 7
+			xx, yy := x+float32(col)*cell, y+50+float32(index/7)*rowStep
 			fg := s.OnSurface
+			if col >= 5 {
+				fg = mix(s.OnSurface, s.OnSurfaceVariant, 0.35)
+			}
 			if day == now.Day() {
-				ui.Box(c).Absolute().Left(xx + (cell-22)/2).Top(yy).Width(22).Height(22).Radius(11).Background(Col(s.Primary)).IgnoreInput(true)
-				fg = s.OnPrimary
+				dotCol := uint32(0x16181D)
+				fg = 0xFFFFFF
+				haloCol := AlphaCol(s.Primary, 0.14)
+				if a.Palette.Dark {
+					dotCol, fg = 0xF3F4F6, 0x111316
+					haloCol = AlphaCol(0xFFFFFF, 0.12)
+				}
+				if a.Palette.HighContrast {
+					dotCol, fg = s.Primary, s.OnPrimary
+				}
+				ui.Box(c).Absolute().Left(xx + (cell-26)/2).Top(yy - 2).Width(26).Height(26).Radius(13).Background(haloCol).IgnoreInput(true)
+				ui.Box(c).Absolute().Left(xx + (cell-20)/2).Top(yy + 1).Width(20).Height(20).Radius(10).Background(Col(dotCol)).IgnoreInput(true)
 			}
 			CenteredText(c, itoa(day), xx, yy, cell, 22, 11, fg, day == now.Day())
 		}

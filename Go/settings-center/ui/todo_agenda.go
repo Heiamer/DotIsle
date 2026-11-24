@@ -30,15 +30,38 @@ func (a *App) todoAgendaRow(c *ui.Context, t goTodo, index int, x, y, w, h float
 	p, s := &a.Palette, &a.Palette.Scheme
 	today, _ := a.todoNow()
 	done := todoDone(t, today)
-	bg := mix(s.Container, s.OnSurface, .035)
-	if featured && !done {
-		bg = s.Container
+	rowBg := AlphaCol(0x111827, 0.03)
+	if p.Dark {
+		rowBg = AlphaCol(0xFFFFFF, 0.055)
 	}
-	row := ui.Box(c).Key("agenda-" + t.ID).Absolute().Left(x).Top(y).Width(w).Height(h).Radius(20).Background(Col(bg))
 	if featured && !done {
-		row.Border(1, AlphaCol(s.OnSurface, .045))
-		if !p.Dark {
-			row.Shadow(0, 2, 4, 0, AlphaCol(0, .035))
+		if p.Dark {
+			rowBg = AlphaCol(0xFFFFFF, 0.075)
+		} else {
+			rowBg = AlphaCol(0xFFFFFF, 0.92)
+		}
+	}
+	if p.HighContrast {
+		bg := mix(s.Container, s.OnSurface, .035)
+		if featured && !done {
+			bg = s.Container
+		}
+		rowBg = Col(bg)
+	}
+	if full {
+		appleWidgetSurface(c, p, overviewRect{"", x, y, w, h})
+	}
+	row := ui.Box(c).Key("agenda-" + t.ID).Absolute().Left(x).Top(y).Width(w).Height(h).Radius(20)
+	if !full {
+		row.Background(rowBg)
+		if featured && !done && !p.HighContrast {
+			if p.Dark {
+				row.Border(1, AlphaCol(0xFFFFFF, .09))
+			} else {
+				row.Border(1, AlphaCol(0x111827, .06)).Shadow(0, 2, 6, -1, AlphaCol(0x111827, .04))
+			}
+		} else if !p.HighContrast && p.Dark {
+			row.Border(1, AlphaCol(0xFFFFFF, .05))
 		}
 	}
 	row.Children(func() {
@@ -79,8 +102,15 @@ func (a *App) todoAgendaRow(c *ui.Context, t goTodo, index int, x, y, w, h float
 		check.Children(func() {
 			mark := ui.Box(c).Absolute().Left(8).Top(8).Width(20).Height(20).Radius(10).Border(1.3, AlphaCol(s.OnSurface, .24))
 			if done {
-				mark.Background(Col(s.Primary)).Border(0, ui.Transparent)
-				Icon(c, "check", 11, 11, 14, s.OnPrimary)
+				doneBg, doneFg := uint32(0x16181D), uint32(0xFFFFFF)
+				if p.Dark {
+					doneBg, doneFg = 0xF3F4F6, 0x111316
+				}
+				if p.HighContrast {
+					doneBg, doneFg = s.Primary, s.OnPrimary
+				}
+				mark.Background(Col(doneBg)).Border(0, ui.Transparent)
+				Icon(c, "check", 11, 11, 14, doneFg)
 			}
 		})
 		if full {
@@ -90,10 +120,20 @@ func (a *App) todoAgendaRow(c *ui.Context, t goTodo, index int, x, y, w, h float
 }
 
 func (a *App) todoAgendaEmpty(c *ui.Context, r overviewRect) {
-	s := &a.Palette.Scheme
-	Label(c, "0", r.x+20, r.y+48, 48, s.Primary, true, r.w-40)
-	Label(c, "今天，轻松一点。", r.x+22, r.y+119, 17, s.OnSurface, true, r.w-44)
-	Label(c, "右上角添加下一件要做的事", r.x+22, r.y+152, 11, s.OnSurfaceVariant, false, r.w-44)
+	p, s := &a.Palette, &a.Palette.Scheme
+	badgeBg := AlphaCol(s.Primary, 0.10)
+	badgeRim := AlphaCol(s.Primary, 0.22)
+	if p.Dark {
+		badgeBg = AlphaCol(s.Primary, 0.16)
+		badgeRim = AlphaCol(s.Primary, 0.30)
+	}
+	ui.Box(c).Absolute().Left(r.x+20).Top(r.y+56).Width(46).Height(46).Radius(14).
+		Background(badgeBg).Border(1, badgeRim).IgnoreInput(true)
+	Icon(c, "checklist", r.x+32, r.y+68, 22, s.Primary)
+	Label(c, "0", r.x+78, r.y+52, 40, s.OnSurface, true, r.w-100)
+	Label(c, "今日待办已清零", r.x+78, r.y+98, 11, s.OnSurfaceVariant, false, r.w-100)
+	Label(c, "今天，轻松一点。", r.x+22, r.y+126, 16, s.OnSurface, true, r.w-44)
+	Label(c, "右上角添加下一件要做的事", r.x+22, r.y+156, 11.5, s.OnSurfaceVariant, false, r.w-44)
 }
 
 func todoSummary(pending, total int) string {

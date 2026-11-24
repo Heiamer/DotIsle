@@ -20,7 +20,7 @@ func verifyDesign(output, data, cover string, coverage *[]map[string]any) error 
 			theme = "Dark"
 		}
 		return &App{Prefs: prefs.Default(), Data: data, State: map[string]any{
-			"pendingPage": "", "version": "5.0.5", "title": "此刻，正在聆听", "artist": "验收示例",
+			"pendingPage": "", "version": "5.2.0", "title": "此刻，正在聆听", "artist": "验收示例",
 			"settings":     map[string]any{"SettingsTheme": theme, "Animation": true},
 			"musicPreview": map[string]any{"coverPath": cover, "lyricFrame": map[string]any{"currentLine": "把这一刻留给自己"}},
 		}}
@@ -40,6 +40,16 @@ func verifyDesign(output, data, cover string, coverage *[]map[string]any) error 
 	defer func() { deckPos, deckTarget, deckSpringIdle = 0, 0, true }()
 	for _, dark := range []bool{false, true} {
 		a := fixture(dark)
+		a.wechatWarning = &wechatWarning{deadline: time.Now().Add(wechatWarningDelay)}
+		warning := ui.NewTester(a.View, WindowW, WindowH)
+		warning.Frame()
+		if _, ok := warning.Find("取消启用微信提醒"); !ok {
+			return fmt.Errorf("missing WeChat warning dialog controls")
+		}
+		if err := capture(fmt.Sprintf("wechat-warning-%t", dark), warning); err != nil {
+			return err
+		}
+		a = fixture(dark)
 		a.overview.loaded, a.overview.config = true, prefs.DefaultOverview()
 		a.overview.config.View = "scroll"
 		deckPos, deckTarget, deckSpringIdle = 0, 0, true

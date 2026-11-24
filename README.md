@@ -11,7 +11,7 @@
 
 Windows 10 / 11 · x64 · 原生桌面应用
 
-[下载正式版](https://github.com/Heiamer/DotIsle/releases/latest) · [V5.0.2 正式版](https://github.com/Heiamer/DotIsle/releases/tag/v5.0.2) · [更新日志](CHANGELOG.md) · [反馈问题](https://github.com/Heiamer/DotIsle/issues)
+[下载正式版](https://github.com/Heiamer/DotIsle/releases/latest) · [更新日志](CHANGELOG.md) · [反馈问题](https://github.com/Heiamer/DotIsle/issues)
 
 </div>
 
@@ -19,7 +19,7 @@ Windows 10 / 11 · x64 · 原生桌面应用
 
 音乐、日历、用机时长、专注与待办，放在同一张概览里。卡片视图方便一眼查看，滚动视图让内容逐页展开；你可以选择组件、调整排列、拖动边角改变大小，也可以增删滚动页。
 
-控制中心采用固定窗口、HarmonyOS Sans、柔和的连续曲线边角与分层阴影。导航平时收起，点击左上按钮展开左侧白色毛玻璃栏，选好页面后自动隐藏。明暗外观、背景和动效有各自的设置；动态取色 **Beta** 默认关闭，开启后使用低饱和的浅彩色。
+控制中心采用固定窗口、Google Sans Flex 与 Noto Sans SC、柔和的连续曲线边角与分层阴影。导航平时收起，点击左上按钮展开左侧白色毛玻璃栏，选好页面后自动隐藏。明暗外观、背景和动效有各自的设置；动态取色 **Beta** 默认关闭，开启后使用低饱和的浅彩色。
 
 **V5.0 已正式发布。** 5.0 统一了控制中心与桌面组件，并让概览、滚动视图和信息组件可以直接设置。更新内容与已知限制见 [发行说明](release-notes/DotIsle-5.0.2-Notes.md)。
 
@@ -30,7 +30,7 @@ Windows 10 / 11 · x64 · 原生桌面应用
 | **音乐与歌词** | 查看歌曲、封面、原文和翻译，播放暂停、切歌与调节进度。概览音乐卡使用磨砂封面背景；音乐岛的音量图标支持悬停提示与滚轮调节。具体控制能力取决于播放器接口。 |
 | **专注与计时** | 番茄钟、倒计时、秒表与多阶段流程，支持暂停、恢复及多项目。岛体可显示进行中的计时。 |
 | **待办与提醒** | 新建、编辑、完成和撤销待办，设置日期与时间提醒，也可快速记下一件小事。 |
-| **设备与通知** | 设备连接、电量不足、验证码和天气提醒进入岛体。微信、飞书、钉钉和企业微信可只提示“有新消息”，不展示消息正文。 |
+| **设备与通知** | 设备连接、电量不足、验证码和天气提醒进入岛体。微信提醒默认关闭，阅读警告至少 10 秒并确认后，才按任务栏闪烁显示「微信有新消息」，不读取正文；飞书、钉钉显示 Windows 通知正文。企业微信保留“有新消息”提示。 |
 | **桌面组件** | 时钟、日历、待办、专注、音乐、天气、便签、无线设备电量、日程倒计时、用机时长等，可独立放置和配置。 |
 | **插件积木** | 添加自己的本地插件，把文字、数值、进度等内容接到灵动岛、概览和桌面。 |
 
@@ -38,12 +38,12 @@ Windows 10 / 11 · x64 · 原生桌面应用
 
 ## 下载与开始使用
 
-从 [Releases](https://github.com/Heiamer/DotIsle/releases) 选择版本。5.0.2 正式包位于 [V5.0.2 发行页](https://github.com/Heiamer/DotIsle/releases/tag/v5.0.2)，发布前先本地构建和验收，再由 [发布工作流](.github/workflows/publish-verified-windows.yml) 核验并发布。
+从 [最新正式版](https://github.com/Heiamer/DotIsle/releases/latest) 下载点屿。使用旧版的用户请升级到 5.2.1 或更新版本；如果应用内更新不可用，请下载完整安装包。
 
 | 文件 | 用途 |
 | --- | --- |
 | `DotIsle-<版本>-Setup.exe` | 安装版，提供安装向导、开始菜单和卸载入口。 |
-| `DotIsle-<版本>-Portable.zip` | 便携版，完整解压到可写目录后运行 `LyricIsland.exe`。 |
+| `DotIsle-<版本>-Portable.7z` | 便携版，用支持 7z 的工具完整解压到可写目录后运行 `LyricIsland.exe`。 |
 | `DotIsle-<版本>-Source.zip` | 对应发行版本的源码与资源。 |
 | `DotIsle-<版本>-SHA256.txt` | 下载文件的 SHA-256 校验清单。 |
 
@@ -102,17 +102,12 @@ API v1 提供四种基本积木：`text`、`metric`、`progress`、`divider`，�
 
 本地构建请使用 [tools/li-cargo.ps1](tools/li-cargo.ps1)，控制中心依赖与工具链版本以 [go.mod](Go/settings-center/go.mod) 为准。打包入口为 [build/package_release.py](build/package_release.py)，前置检查见 [build/package_preflight.py](build/package_preflight.py)。自动检查范围不等于所有播放器、硬件和真实桌面操作均已验收。
 
+## 使用免责声明
+
+正常启动前须阅读[免责声明与数据说明](docs/DISCLAIMER.md)，滚动至文末后才能同意；不同意则退出。同意记录仅保存在本机，同意一次后软件升级及文案变更不重复弹出。
+
 ## 许可与反馈
 
 项目采用 [MIT 许可](LICENSE)。第三方与字体声明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)、[FONT-NOTICE.md](FONT-NOTICE.md) 和 [licenses](licenses/)。发行包保留相关许可原文。
 
 在 [Issues](https://github.com/Heiamer/DotIsle/issues) 反馈时，请附点屿版本、Windows 版本、播放器或设备版本、复现步骤和截图。分享日志前移除个人信息。
-
-<details>
-<summary>3.2.6 历史版本下载</summary>
-
-保留原有下载地址，供旧版本用户查找：
-
-[安装版](https://github.com/Heiamer/DotIsle/releases/download/v3.2.6/DotIsle-3.2.6-Setup.exe) · [便携版](https://github.com/Heiamer/DotIsle/releases/download/v3.2.6/DotIsle-3.2.6-Portable.zip) · [源码](https://github.com/Heiamer/DotIsle/releases/download/v3.2.6/DotIsle-3.2.6-Source.zip) · [SHA256](https://github.com/Heiamer/DotIsle/releases/download/v3.2.6/DotIsle-3.2.6-SHA256.txt) · [验证记录](https://github.com/Heiamer/DotIsle/releases/download/v3.2.6/DotIsle-3.2.6-Validation.zip) · [发行说明](https://github.com/Heiamer/DotIsle/releases/tag/v3.2.6)
-
-</details>

@@ -58,7 +58,7 @@ func (a *App) appearanceBody(c *ui.Context, p *Palette, x, y, w float32) float32
 	}
 	y += 180
 	y = a.pastelSettings(c, p, x, y, w)
-	Panel(c, p, x, y, w, 164, s.Container)
+	settingCard(c, x, y, w, 164, s.Container)
 	contrast := a.leafBool("DynamicColorHighContrast", false)
 	appearanceToggleRow(c, p, "增强颜色对比", x, y, w, 82, "增强颜色对比", "提高文字和边界的辨识度", contrast, func() { a.pushNative("DynamicColorHighContrast", !contrast) })
 	animationOn := a.leafBool("Animation", !a.Prefs.ReducedMotion)
@@ -90,21 +90,19 @@ func updateChannelLocked(phase string) bool {
 // Channel state is acknowledged by the native updater, never guessed locally.
 func (a *App) aboutBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	s := &p.Scheme
-	version := stateString(a.State, "5.0.5", "bundleVersion")
-	if version == "5.0.5" {
-		version = stateString(a.State, "5.0.5", "version")
-	}
+	version := stateString(a.State, stateString(a.State, "5.2.1", "version"), "bundleVersion")
 	u, _ := a.State["softwareUpdate"].(map[string]any)
 	phase := leafStr(u["phase"], "idle")
 	channel := stateString(a.State, "stable", "updateChannel")
 	locked := updateChannelLocked(phase)
-	Panel(c, p, x, y, w, 236, s.Container).Label("关于点屿品牌卡片")
+	settingCard(c, x, y, w, 236, s.Container).Label("关于点屿品牌卡片")
 	wordW := min(float32(220), w-80)
 	drawWordmark(c, x+(w-wordW)/2, y+26, wordW, 112, s.OnSurface)
 	CenteredText(c, "版本 "+version, x+24, y+151, w-48, 24, 14, s.OnSurfaceVariant, false)
-	CenteredText(c, "界面字体 · HarmonyOS Sans", x+24, y+192, w-48, 20, 12, s.OnSurfaceVariant, false)
+	CenteredText(c, "界面字体 · Google Sans Flex / Noto Sans SC", x+24, y+192, w-48, 20, 12, s.OnSurfaceVariant, false)
+	Button(c, p, "查看本版更新内容", x+w-142, y+184, 118, 34, "本次更新", "", true, a.releaseVersion() != "", a.openInstalledNotes)
 	y += 252
-	Panel(c, p, x, y, w, 140, s.Container)
+	settingCard(c, x, y, w, 140, s.Container)
 	Label(c, "更新渠道", x+24, y+17, 14, s.OnSurface, true, w-48)
 	options := []struct{ title, value string }{{"正式版", "stable"}, {"测试版", "beta"}}
 	for i, option := range options {
@@ -133,7 +131,7 @@ func (a *App) aboutBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	}
 	Label(c, detail, x+24, y+106, 12, s.OnSurfaceVariant, false, w-48)
 	y += 156
-	Panel(c, p, x, y, w, 204, s.Container)
+	settingCard(c, x, y, w, 204, s.Container)
 	title, ink := leafUpdateStatus(phase), s.OnSurface
 	if v := leafStr(u["version"], ""); v != "" && phase != "idle" {
 		title += "  " + v
@@ -162,7 +160,16 @@ func (a *App) aboutBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	}
 	Label(c, message, x+24, y+58, 12, s.OnSurfaceVariant, false, w-48)
 	if label, command := leafUpdateAction(phase); command != "" {
-		Button(c, p, "更新"+command, x+24, y+140, 164, 40, label, "", false, a.Connected, func() { a.command(command, nil) })
+		if command == "updateReview" && a.updateReviewLoading {
+			label = "正在读取…"
+		}
+		Button(c, p, "更新"+command, x+24, y+140, 164, 40, label, "", false, a.Connected && !a.updateReviewLoading, func() {
+			if command == "updateReview" {
+				a.openUpdateReview()
+			} else {
+				a.command(command, nil)
+			}
+		})
 		if phase == "ready" {
 			Button(c, p, "取消就绪的更新", x+200, y+140, 100, 40, "取消", "", true, true, func() { a.command("updateCancel", nil) })
 		}
@@ -170,7 +177,7 @@ func (a *App) aboutBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 		Label(c, "正在处理，请稍候…", x+24, y+152, 12, s.OnSurfaceVariant, false, w-48)
 	}
 	y += 220
-	Panel(c, p, x, y, w, 88, s.Container)
+	settingCard(c, x, y, w, 88, s.Container)
 	on := a.leafBool("AutoCheckUpdatesEnabled", true)
 	ToggleRow(c, p, "自动检查更新", x+24, y+8, w-48, "自动检查更新", "后台检查，下载和安装由你确认", on, func() { a.pushNative("AutoCheckUpdatesEnabled", !on) })
 	return y + 104
