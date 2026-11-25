@@ -14,6 +14,7 @@ mod widget_extras;
 mod widgets;
 mod verify;
 #[cfg(test)]mod abi_tests;
+#[cfg(test)]mod render_tests;
 use std::{path::PathBuf,sync::{Mutex,OnceLock,atomic::{AtomicBool,Ordering}},time::{Duration,Instant}};
 use winit::{application::ApplicationHandler,event::WindowEvent,event_loop::{ActiveEventLoop,ControlFlow,EventLoop,EventLoopProxy},platform::windows::EventLoopBuilderExtWindows,window::WindowId};
 

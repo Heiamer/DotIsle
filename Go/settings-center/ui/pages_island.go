@@ -209,6 +209,8 @@ func (a *App) islandTabSize(c *ui.Context, p *Palette, x, y, w float32) float32 
 		})
 	}
 	y += 166
+	y = a.islandToggles(c, p, x, y, w, []islandToggleRow{{
+		"计时数字等宽", "灵动岛与桌面组件的番茄钟、倒计时和秒表使用等宽数字，秒数跳动时不抖动。", "TimerMonoDigits", false}})
 	y = a.islandHeading(c, p, "歌词显示", x, y, w)
 	y = a.islandToggles(c, p, x, y, w, []islandToggleRow{
 		{"逐字高亮", "跟随演唱进度点亮原文。", "WordHighlight", true},
@@ -350,6 +352,7 @@ func (a *App) islandTabGestures(c *ui.Context, p *Palette, x, y, w float32) floa
 		{"点击任意区域展开", "点击胶囊主体展开当前活动。", "ClickAnywhereExpand", true},
 		{"左右滑动切换", "在胶囊或卡片空白处拖动，切换音乐、计时与待办。", "SwipeActivities", true},
 		{"向上拖动隐藏", "从空白处向上拖动；有通知仍会提醒，也可从托盘或边缘找回。", "SwipeUpHide", true},
+		{"隐藏后保留顶部蓝条", "隐藏时在屏幕顶部保留一条蓝色边条，表示藏匿位置，点击可恢复；关闭后完全隐藏。", "HiddenEdgeStripEnabled", false},
 		{"鼠标触碰边缘显示", "上滑隐藏后将鼠标移至屏幕顶部居中片刻浮现灵动岛（默认关闭）。", "EdgeHoverRevealEnabled", false},
 		{"自由悬浮", "允许直接按住胶囊或卡片拖动到任意位置或屏幕，并自动保存。", "Floating", false},
 		{"点击封面或歌名打开播放器", "只影响音乐卡片的封面和标题。", "MusicClickOpenApp", false},

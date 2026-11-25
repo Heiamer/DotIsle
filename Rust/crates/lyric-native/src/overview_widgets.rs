@@ -111,6 +111,9 @@ impl Store {
                 config,
                 x: 0,
                 y: 0,
+                width: 0.,
+                height: 0.,
+                hidden: false,
                 revision: 1,
             });
         }

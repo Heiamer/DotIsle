@@ -165,8 +165,24 @@ pub struct Placement {
     pub config: crate::widget_config::Config,
     pub x: i32,
     pub y: i32,
+    #[serde(default)]
+    pub width: f64,
+    #[serde(default)]
+    pub height: f64,
+    #[serde(default)]
+    pub hidden: bool,
     #[serde(default = "initial_revision")]
     pub revision: u64,
+}
+impl Placement {
+    /// Custom edge-drag size when both axes are usable, otherwise the preset tile size.
+    pub fn dimensions(&self) -> (f64, f64) {
+        if self.width >= 160. && self.height >= 120. && self.width <= 1200. && self.height <= 1200. {
+            (self.width, self.height)
+        } else {
+            self.size.dimensions()
+        }
+    }
 }
 fn initial_revision() -> u64 {
     1
@@ -188,6 +204,17 @@ fn valid(p: &Placement) -> bool {
         && p.config.validate(p.kind).is_ok()
         && (-131072..=131072).contains(&p.x)
         && (-131072..=131072).contains(&p.y)
+        && valid_size(p.width, p.height)
+}
+/// A custom size is either absent on both axes or a usable pair inside the screen budget.
+pub fn valid_size(width: f64, height: f64) -> bool {
+    if width == 0. && height == 0. {
+        return true;
+    }
+    width.is_finite()
+        && height.is_finite()
+        && (160. ..=1200.).contains(&width)
+        && (120. ..=1200.).contains(&height)
 }
 pub struct Store{session:dotisle_module_api::Session,pub items:Vec<Placement>,pub error:Option<String>}
 impl Store{

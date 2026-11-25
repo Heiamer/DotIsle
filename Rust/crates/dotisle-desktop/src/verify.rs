@@ -11,7 +11,7 @@ pub fn capture(output:&Path)->Result<(),String>{
   for dark in [false,true]{for kind in Kind::ALL.into_iter().chain([Kind::Plugin]){for size in Size::ALL{
    model.prefs.dark=dark;
    let(w,h)=size.dimensions();let name=format!("{:?}-{:?}-{dark}.png",kind,size);
-   let view=desktop_cards::render(&model,&mut text,kind,size,"verification",(-1.,-1.),false,0.,Some(0.));
+   let view=desktop_cards::render(&model,&mut text,kind,size,"verification",w,h,(-1.,-1.),false,false,0.,None,0.,Some(0.));
    for hit in &view.hits{if hit.rect.x0<0.||hit.rect.y0<0.||hit.rect.x1>w||hit.rect.y1>h{return Err(format!("hit outside {name}: {}",hit.label));}}
    gpu.capture(&view.scene,w as u32,h as u32,&output.join(&name))?;
    captures.push(json!({"file":name,"kind":kind,"size":size,"dark":dark,"width":w,"height":h,"hits":view.hits.len()}));

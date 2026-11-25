@@ -904,6 +904,18 @@ impl App {
         let id = self.components[next].clone();
         self.select_component(&id, direction);
     }
+    fn hidden_edge(&self) -> bool {
+        self.user_hidden
+            && !self.edge_revealed
+            && !self.taskbar_mode()
+            && self.practice.is_none()
+            && self.flag("HiddenEdgeStripEnabled", false)
+    }
+    fn hidden_edge_rect(&self) -> Rect {
+        let c = self.layout.capsule;
+        let width = 56.0_f64.min(c.w.max(1.));
+        Rect::new(c.x + (c.w - width) / 2., c.y, width, 5.)
+    }
     fn can_hide(&self, hit: i32) -> bool {
         self.flag("SwipeUpHide", true)
             && !self.flag("Floating", false)
@@ -912,6 +924,40 @@ impl App {
             && !self.banner.visible()
             && self.dragging.is_none()
             && (matches!(hit, 0 | 1 | 13 | 40..=42) || hit >= 1000)
+    }
+    fn enter_hidden_edge(&mut self) {
+        self.user_hidden = true;
+        self.restore_hidden = false;
+        self.edge_revealed = false;
+        self.edge_hover_since = None;
+        self.edge_leave_since = None;
+        self.dismiss_offset.set(0.);
+        if self.flag("HiddenEdgeStripEnabled", false) {
+            self.display_wanted = true;
+            self.opacity = 1.;
+            self.fade(1.);
+            self.dirty = true;
+            unsafe {
+                let _ = self.position();
+            }
+        } else {
+            self.display_wanted = false;
+            self.fade(0.);
+            self.dirty = true;
+        }
+    }
+    fn reveal_hidden_edge(&mut self) {
+        self.user_hidden = false;
+        self.edge_revealed = false;
+        self.edge_leave_since = None;
+        self.restore_hidden = false;
+        self.display_wanted = true;
+        self.manual_until = Some(Instant::now() + Duration::from_secs(6));
+        self.fade(1.);
+        self.dirty = true;
+        unsafe {
+            let _ = self.position();
+        }
     }
     fn hide_by_gesture(&mut self) {
         self.user_hidden = true;
@@ -928,7 +974,11 @@ impl App {
         self.drag_target.clear();
         self.drag_panel = None;
         self.swipe = None;
-        self.fade(0.);
+        if self.practice.is_some() {
+            self.fade(0.);
+        } else {
+            self.enter_hidden_edge();
+        }
         self.dirty = true;
     }
     /// 上滑隐藏期间收到需要展示的通知或提醒时，临时唤出灵动岛并在弹窗结束后自动恢复隐藏。
@@ -2193,11 +2243,12 @@ impl App {
             self.display_wanted = false;
             self.missing_since = None;
             self.hide_at = None;
-            self.fade(0.);
-            self.opacity = 0.;
             if self.restore_hidden {
                 self.restore_hidden = false;
-                self.user_hidden = true;
+                self.enter_hidden_edge();
+            } else {
+                self.fade(0.);
+                self.opacity = 0.;
             }
             self.dirty = true;
         }
@@ -2402,7 +2453,10 @@ impl App {
         // The click-through visual HWND retains the complete GPU surface, including
         // shadows. This separate, undrawn HWND receives input only inside the
         // animated contour. No alpha readback or cursor polling is required.
-        let (r, radius) = if self.alerts.visible(){
+        let hidden = self.hidden_edge();
+        let (r, radius) = if hidden {
+            (self.hidden_edge_rect(), 2.5)
+        } else if self.alerts.visible(){
             let(r,rad,_)=self.alerts.banner.presentation(self.start.elapsed().as_secs_f64());(r,rad)
         } else if self.banner.visible() {
             let (r, radius, _) = self.banner.presentation(self.start.elapsed().as_secs_f64());
@@ -2411,7 +2465,9 @@ impl App {
             self.shape()
         };
         let scale = GetDpiForWindow(self.hwnd).max(96) as f64 / 96.;
-        let satellite = if !self.mini()
+        let satellite = if hidden {
+            Rect::default()
+        } else if !self.mini()
             && !self.expanded
             && !self.banner.visible()
             && !self.alerts.visible()
@@ -2421,7 +2477,7 @@ impl App {
         } else {
             Rect::default()
         };
-        let key = if self.opacity < 0.01 {
+        let key = if !hidden && self.opacity < 0.01 {
             [0; 10]
         } else {
             [
@@ -2491,6 +2547,9 @@ impl App {
         let _ = self.save();
     }
     fn step_edge_reveal(&mut self, in_zone: bool, inside: bool, now: Instant) {
+        if self.hidden_edge() {
+            return;
+        }
         if self.user_hidden && !self.edge_revealed {
             if in_zone {
                 let since = *self.edge_hover_since.get_or_insert(now);
@@ -2517,7 +2576,7 @@ impl App {
                 if now.duration_since(since) >= Duration::from_millis(900) {
                     self.edge_revealed = false;
                     self.edge_leave_since = None;
-                    self.fade(0.);
+                    self.enter_hidden_edge();
                     self.dirty = true;
                 }
             }
@@ -2536,14 +2595,14 @@ impl App {
     unsafe fn toggle_island_visibility(&mut self, from_tray: bool) {
         if self.practice.is_some() && !(from_tray && self.user_hidden && self.practice_step() == Some(PracticeStep::Recover)) { return; }
         self.dismiss_offset.set(0.);
-        let _ = self.position();
         self.restore_hidden = false;
-        self.user_hidden = !self.user_hidden;
-        if !self.user_hidden {
-            self.manual_until = Some(Instant::now() + Duration::from_secs(6));
+        if self.user_hidden {
+            self.reveal_hidden_edge();
             if from_tray { self.practice_event(PracticeStep::Recover); }
+        } else {
+            self.enter_hidden_edge();
         }
-        self.fade(if self.user_hidden { 0. } else { 1. });
+        let _ = self.position();
     }
     unsafe fn activate(&mut self, id: i32) {
         if self.practice.is_some() && id != 2 {
@@ -2983,6 +3042,8 @@ impl App {
             font_family: self.settings["IslandFontFamilyRender"]
                 .as_str()
                 .unwrap_or("Noto Sans SC"),
+            timer_mono: self.flag("TimerMonoDigits", false),
+            hidden_edge: self.hidden_edge(),
             expressive_dark: true,
             mini: self.mini(),
             mini_light_field: self.settings["MiniMaterial"] == "LightField",
@@ -3228,6 +3289,10 @@ impl App {
         result
     }
     unsafe fn draw(&mut self) -> Result<()> {
+        if self.hidden_edge() {
+            self.opacity = 1.;
+            self.display_wanted = true;
+        }
         // Take the renderer to split immutable scene data from mutable graphics state.
         let showing = self.opacity > 0.001;
         // A fully transparent swapchain can leave DWM presenting the last visible
@@ -3718,7 +3783,7 @@ impl App {
             let city=self.weather_city();
             if !city.is_empty(){
                 placements.push(dotisle_domain::desktop_widgets::Placement{id:"island-weather".into(),kind:dotisle_domain::desktop_widgets::Kind::Weather,
-                    size:Default::default(),style:Default::default(),config:dotisle_domain::widget_config::Config{city,..Default::default()},x:0,y:0,revision:1});
+                    size:Default::default(),style:Default::default(),config:dotisle_domain::widget_config::Config{city,..Default::default()},x:0,y:0,width:0.,height:0.,hidden:false,revision:1});
             }
             self.widget_data.poll(&placements);
             let m=&self.widget_metrics.value;
@@ -5486,6 +5551,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     };
                     let _ = ScreenToClient(hwnd, &mut pt);
                     let s = GetDpiForWindow(hwnd).max(96) as f64 / 96.;
+                    if a.hidden_edge() {
+                        return LRESULT(if a.hidden_edge_rect().contains(pt.x as f64 / s, pt.y as f64 / s) {
+                            HTCLIENT as isize
+                        } else {
+                            HTTRANSPARENT as isize
+                        });
+                    }
                     return LRESULT(if a.hit(pt.x as f64 / s, pt.y as f64 / s) < 0 {
                         HTTRANSPARENT as isize
                     } else {
@@ -5544,7 +5616,24 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                         a.volume.wheel((wparam.0>>16) as u16 as i16);a.hover=volume::BUTTON;a.hover_since=Instant::now()-Duration::from_millis(450);a.tooltip_visible=true;a.dirty=true;return LRESULT(0);
                     }
                 }
+                WM_RBUTTONDOWN => {
+                    if a.user_hidden {
+                        a.reveal_hidden_edge();
+                    } else if a.flag("Floating", false)
+                        && a.practice.is_none()
+                        && !a.taskbar_mode()
+                        && !a.banner.visible()
+                        && !a.alerts.visible()
+                    {
+                        a.hide_by_gesture();
+                    }
+                    return LRESULT(0);
+                }
                 WM_LBUTTONDOWN => {
+                    if a.user_hidden {
+                        a.reveal_hidden_edge();
+                        return LRESULT(0);
+                    }
                     let s = GetDpiForWindow(hwnd).max(96) as f64 / 96.;
                     let x = (lparam.0 as u16 as i16) as f64 / s;
                     let y = ((lparam.0 >> 16) as u16 as i16) as f64 / s;
@@ -5597,6 +5686,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     return LRESULT(0);
                 }
                 WM_MOUSEMOVE => {
+
                     let scale = GetDpiForWindow(hwnd).max(96) as f64 / 96.;
                     if let Some((down_pt, start_cursor, bounds)) = a.float_drag_arm {
                         let cx = (lparam.0 as u16 as i16) as i32;
@@ -8596,7 +8686,8 @@ mod transient_exit_tests {
         a.banner.tick(r, rad, 1., false, false, a.base_needed());
         a.finish_transient();
         assert!(a.user_hidden && !a.restore_hidden);
-        assert_eq!(a.opacity, 0.);
+        assert!(a.hidden_edge());
+        assert_eq!(a.opacity, 1.);
     }
     #[test]
     fn edge_hover_reveal_defaults_off_and_respects_dwell_and_auto_hide() {
@@ -8617,7 +8708,7 @@ mod transient_exit_tests {
         a.step_edge_reveal(false, false, t0 + Duration::from_millis(300));
         assert!(a.edge_revealed);
         a.step_edge_reveal(false, false, t0 + Duration::from_millis(1300));
-        assert!(!a.edge_revealed && a.fade_to == 0.);
+        assert!(!a.edge_revealed && a.fade_to == 1. && a.user_hidden);
     }
 }
 
@@ -8731,7 +8822,7 @@ mod resident_tests {
     fn verification_restores_manual_hide_even_when_residency_is_enabled() {
         let mut a=idle();a.restore_hidden=true;a.user_hidden=false;a.opacity=1.;
         a.finish_transient();
-        assert!(a.user_hidden && !a.restore_hidden);assert_eq!(a.opacity,0.);
+        assert!(a.user_hidden && !a.restore_hidden);assert!(a.hidden_edge());assert_eq!(a.opacity,1.);
     }
     #[test]
     fn residency_does_not_override_explicit_hide() {

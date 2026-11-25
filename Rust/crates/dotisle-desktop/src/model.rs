@@ -8,8 +8,9 @@ pub enum Page { Home, Todos, Focus, Widgets, Notifications, Settings }
 #[derive(Clone, Debug)]
 pub enum Action {
     Navigate(Page), EditTodo(Option<String>), ToggleTodo(String),
-    WidgetFocus, WidgetConfigure(String), WidgetRemove(String),
-    WidgetResize(String, desktop_widgets::Size), WidgetLaunch(String),
+    TodoInlineEdit(Option<String>), TodoField(crate::views::TodoField), TodoSave, TodoCancel,
+    WidgetFocus, WidgetConfigure(String), WidgetRemove(String), WidgetHide(String),
+    WidgetRestore(String), WidgetResize(String, desktop_widgets::Size), WidgetLaunch(String),
     Timer(String, &'static str), QuickFocus, Media(&'static str),
 }
 #[derive(Default)]
@@ -76,8 +77,11 @@ impl Model {
             Action::EditTodo(id)=>self.native_command("settings",json!({"action":"todoEdit","id":id.unwrap_or_default()})),
             Action::WidgetConfigure(id)=>self.native_command("settings",json!({"action":"widgetConfigure","id":id})),
             Action::WidgetRemove(id)=>self.native_command("widgetRemove",json!({"id":id})),
-            Action::WidgetResize(id,size)=>self.native_command("widgetUpdate",json!({"id":id,"size":size})),
+            Action::WidgetHide(id)=>self.native_command("widgetUpdate",json!({"id":id,"hidden":true})),
+            Action::WidgetRestore(id)=>self.native_command("widgetUpdate",json!({"id":id,"hidden":false})),
+            Action::WidgetResize(id,size)=>self.native_command("widgetUpdate",json!({"id":id,"size":size,"width":0.,"height":0.})),
             Action::WidgetLaunch(id)=>self.native_command("widgetLaunch",json!({"id":id})),
+            Action::TodoInlineEdit(_)|Action::TodoField(_)|Action::TodoSave|Action::TodoCancel=>{},
             Action::ToggleTodo(id)=>{
                 let done=self.todos.items.iter().find(|t|t.id==id).is_some_and(|t|t.done(&todos::Now::local()));
                 self.native_command("todoComplete",json!({"id":id,"completed":!done}));

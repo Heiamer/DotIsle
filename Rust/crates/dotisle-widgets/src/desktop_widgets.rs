@@ -166,11 +166,46 @@ pub struct Placement {
     pub config: crate::widget_config::Config,
     pub x: i32,
     pub y: i32,
+    #[serde(default)]
+    pub width: f64,
+    #[serde(default)]
+    pub height: f64,
+    #[serde(default)]
+    pub hidden: bool,
     #[serde(default = "initial_revision")]
     pub revision: u64,
 }
+impl Placement {
+    /// Custom edge-drag size when both axes are usable, otherwise the preset tile size.
+    pub fn dimensions(&self) -> (f64, f64) {
+        if valid_size(self.width, self.height) && self.width > 0. {
+            (self.width, self.height)
+        } else {
+            self.size.dimensions()
+        }
+    }
+}
 fn initial_revision() -> u64 {
     1
+}
+fn size_axis(v: &Value, key: &str, default: f64) -> Result<f64, String> {
+    match v.get(key) {
+        None => Ok(default),
+        Some(v) => v
+            .as_f64()
+            .filter(|n| n.is_finite() && (0. ..=1200.).contains(n))
+            .ok_or_else(|| "组件尺寸无效".into()),
+    }
+}
+/// A custom size is either absent on both axes or a usable pair inside the screen budget.
+pub fn valid_size(width: f64, height: f64) -> bool {
+    if width == 0. && height == 0. {
+        return true;
+    }
+    width.is_finite()
+        && height.is_finite()
+        && (160. ..=1200.).contains(&width)
+        && (120. ..=1200.).contains(&height)
 }
 fn coordinate(v: &Value, key: &str, default: i32) -> Result<i32, String> {
     match v.get(key) {
@@ -189,6 +224,7 @@ fn valid(p: &Placement) -> bool {
         && p.config.validate(p.kind).is_ok()
         && (-131072..=131072).contains(&p.x)
         && (-131072..=131072).contains(&p.y)
+        && valid_size(p.width, p.height)
 }
 pub struct Store {
     path: PathBuf,
@@ -258,6 +294,12 @@ impl Store {
             .map_err(|_| "组件配置无效")?
             .unwrap_or_default();
         config.validate(kind)?;
+        let width = size_axis(value, "width", 0.)?;
+        let height = size_axis(value, "height", 0.)?;
+        if !valid_size(width, height) {
+            return Err("组件尺寸无效".into());
+        }
+        let hidden = value.get("hidden").and_then(|v| v.as_bool()).unwrap_or(false);
         let x = coordinate(value, "x", 64 + self.items.len() as i32 * 24)?;
         let y = coordinate(value, "y", 80 + self.items.len() as i32 * 24)?;
         self.serial = self.serial.wrapping_add(1);
@@ -274,6 +316,9 @@ impl Store {
             config,
             x,
             y,
+            width,
+            height,
+            hidden,
             revision: 1,
         });
         if let Err(e) = self.persist() {
@@ -307,11 +352,31 @@ impl Store {
             .map_err(|_| "组件配置无效")?
             .unwrap_or_else(|| old.config.clone());
         config.validate(old.kind)?;
+        let (width, height) = if value.get("width").is_some() || value.get("height").is_some() {
+            (
+                size_axis(value, "width", 0.)?,
+                size_axis(value, "height", 0.)?,
+            )
+        } else if value.get("size").is_some() {
+            (0., 0.)
+        } else {
+            (old.width, old.height)
+        };
+        if !valid_size(width, height) {
+            return Err("组件尺寸无效".into());
+        }
+        let hidden = value
+            .get("hidden")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(old.hidden);
         if old.x == x
             && old.y == y
             && old.size == size
             && old.style == style
             && old.config == config
+            && old.width == width
+            && old.height == height
+            && old.hidden == hidden
         {
             return Ok(());
         }
@@ -321,6 +386,9 @@ impl Store {
         p.size = size;
         p.style = style;
         p.config = config;
+        p.width = width;
+        p.height = height;
+        p.hidden = hidden;
         p.revision = p.revision.saturating_add(1);
         if let Err(e) = self.persist() {
             self.items[index] = old;
@@ -618,6 +686,26 @@ mod tests {
         assert_eq!(cpu_usage((100, 200, 100), (100, 200, 100)), None);
         assert_eq!(cpu_usage((100, 200, 100), (90, 250, 150)), None);
         assert_eq!(cpu_usage((0, 0, 0), (110, 50, 50)), None);
+    }
+    #[test]
+    fn custom_size_and_hidden_roundtrip_and_preset_clears_them() {
+        let path = temporary("custom-size");
+        let mut s = Store::new(path.clone());
+        let id = s
+            .add(&json!({"kind":"todos","width":420.,"height":300.,"hidden":true}))
+            .unwrap();
+        assert_eq!(s.items[0].dimensions(), (420., 300.));
+        let restored = Store::new(path.clone());
+        assert!(restored.error.is_none());
+        assert_eq!(restored.items[0].width, 420.);
+        assert_eq!(restored.items[0].height, 300.);
+        assert!(restored.items[0].hidden);
+        s.update(&json!({"id":id,"hidden":false})).unwrap();
+        s.update(&json!({"id":id,"size":"large"})).unwrap();
+        assert_eq!(s.items[0].width, 0.);
+        assert_eq!(s.items[0].dimensions(), Size::Large.dimensions());
+        assert!(s.update(&json!({"id":id,"width":50.,"height":50.})).is_err());
+        let _ = std::fs::remove_file(path);
     }
 }
 

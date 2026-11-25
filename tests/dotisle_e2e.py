@@ -211,6 +211,7 @@ def main():
         ("NotificationWhitelistEnabled", True, True),
         ("HeadphoneConnectionRemindersEnabled", False, False),
         ("TodoRemindersEnabled", False, False),
+        ("TimerMonoDigits", True, True),
         ("TodoIslandEnabled", False, False),
         ("FocusCountUp", True, True),
         ("FocusPauseOnLock", True, True),
@@ -222,7 +223,7 @@ def main():
         ("CompactTranslation", False, False),
         ("ChineseTwoLine", False, False),
         ("TranslationButton", False, False),
-        ("MiniAutoContrast", False, False),
+
         ("CoverBackground", True, True),
         ("ExpandedMonetEnabled", False, False),
         ("LyricColorFromCover", False, False),
@@ -269,7 +270,7 @@ def main():
                        ("SystemStateHintPlacement", "Island"), ("IslandFontFamily", "Noto Sans SC"),
                        ("HideWhenPaused", True), ("HoverExpand", False), ("Floating", False),
                        ("ControlCenterColorSource", "Content"), ("DynamicColorHighContrast", False),
-                       ("OffsetMilliseconds", 0), ("TodoRemindersEnabled", True)]:
+                       ("OffsetMilliseconds", 0), ("TodoRemindersEnabled", True), ("TimerMonoDigits", False)]:
         upd(key, value)
 
     # ---- 2. toggleVisibility 翻转 ----------------------------------------

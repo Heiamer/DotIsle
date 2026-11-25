@@ -196,7 +196,7 @@ impl Text {
             .iter()
             .map(|(family, file)| (*family, dir.join(file)))
             .collect();
-        text.defer_harmony(&dir);
+
         text.japanese = Some(dir.join("NotoSansJP.ttf"));
         text
     }
@@ -210,8 +210,7 @@ impl Text {
             let _ = self.register(&path);
         }
     }
-    /// 已合并为随启动加载的可变字体 NotoSansSC.ttf；保留空方法以兼容旧调用点。
-    pub fn defer_harmony(&mut self, _dir: &std::path::Path) {}
+
     fn ensure_script(&mut self, text: &str) {
         if self.japanese.is_some()
             && text
@@ -446,6 +445,12 @@ impl Text {
             self.ink_cache.clear();
         }
     }
+    /// Bundled families can be selected without installing them system-wide.
+    pub fn bundled_family(name: &str) -> bool {
+        THEME_FONTS
+            .iter()
+            .any(|(family, _)| family.eq_ignore_ascii_case(name.trim()))
+    }
     /// Canonical installed family name, case-insensitively matched; `None` for unknown fonts.
     pub fn system_family(name: &str) -> Option<String> {
         static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
@@ -511,6 +516,41 @@ impl Text {
             false,
         );
         scene.pop_layer();
+    }
+    /// Fixed-baseline line painted with an explicit family, keeping the UI cache untouched.
+    pub fn line_face(
+        &mut self,
+        scene: &mut Scene,
+        family: &str,
+        text: &str,
+        r: Rect,
+        size: f32,
+        argb: u32,
+        weight: u16,
+        align: f64,
+    ) {
+        if text.is_empty() || r.width() <= 0. || r.height() <= 0. {
+            return;
+        }
+        let width = self.face_width(family, text, size, weight).min(r.width());
+        let key = self.layout_key(text, size, weight, false);
+        let baseline = self.cache[&key]
+            .lines()
+            .next()
+            .map(|l| l.metrics().baseline as f64)
+            .unwrap_or(size as f64 * 0.8);
+        let y = r.center().y + size as f64 * 0.34 - baseline;
+        self.draw_face_fixed(
+            scene,
+            family,
+            text,
+            r.x0 + (r.width() - width) * align,
+            y,
+            size,
+            argb,
+            weight,
+            r.width(),
+        );
     }
     /// Shaped layout for an explicit face. It lives in its own cache so the pinned
     /// default metrics used by every other text node are never invalidated.
@@ -1423,5 +1463,19 @@ mod deferred_font_tests {
         assert!(text.face_width("Noto Sans SC", "点屿 Memory 123", 16., 600) > 0.);
         assert_eq!(text.registered.len(), initial);
         assert!(!text.system_fonts);
+    }
+    #[test]
+    fn bundled_mono_families_exist_and_space_mono_digits_share_one_advance() {
+        assert!(Text::bundled_family("space mono"));
+        assert!(Text::bundled_family("Doto"));
+        assert!(!Text::bundled_family("Noto Sans SC"));
+        let mut text = Text::new_lazy_japanese();
+        let widths = ('0'..='9')
+            .map(|ch| text.face_width("Space Mono", &ch.to_string(), 24., 600))
+            .collect::<Vec<_>>();
+        let max = widths.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let min = widths.iter().cloned().fold(f64::INFINITY, f64::min);
+        assert!(min > 0.);
+        assert!(max - min < 0.01, "digit advances differ: {widths:?}");
     }
 }

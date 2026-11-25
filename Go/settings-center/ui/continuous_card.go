@@ -46,10 +46,10 @@ func continuousCardStyle(e *ui.Element, p *Palette, rgb uint32, radius float32) 
 	sheenFrom := AlphaCol(0xFFFFFF, 0.34)
 	spot := AlphaCol(0xFFFFFF, 0.38)
 	if dark {
-		fill = AlphaCol(0x161921, 0.80)
-		border = AlphaCol(0xFFFFFF, 0.13)
-		sheenFrom = AlphaCol(0xFFFFFF, 0.045)
-		spot = AlphaCol(0xFFFFFF, 0.07)
+		fill = AlphaCol(0x161921, 0.82)
+		border = ui.Transparent
+		sheenFrom = ui.Transparent
+		spot = AlphaCol(0xFFFFFF, 0.025)
 	}
 	if highContrast {
 		hcFill := Col(rgb)

@@ -15,7 +15,7 @@ const fontSample = "海边来信 · 让好音乐陪你"
 
 const defaultIslandFont = "Noto Sans SC"
 
-var builtinFamilies = []string{defaultIslandFont}
+var builtinFamilies = []string{defaultIslandFont, "Space Mono", "Doto"}
 
 var systemFamiliesCache []string
 
@@ -122,6 +122,7 @@ func (a *App) fontPickerView(c *ui.Context, w, h float32) {
 	visible := 9
 	rows := []string{}
 	for _, family := range builtinFamilies {
+		ensurePreviewFont(family)
 		if p.query == "" || containsFold(family, p.query) {
 			rows = append(rows, family)
 		}

@@ -89,8 +89,8 @@ func (a *App) opening(c *ui.Context, w, h float32) {
 	elapsed := c.Now().Sub(a.signatureStart).Seconds()
 	_, alpha := sigInk(elapsed, reduced)
 	s := &a.Palette.Scheme
-	cover := ui.ButtonBase(c).Key("opening-cover").Absolute().Left(0).Top(TitlebarH).
-		Width(w).Height(h - TitlebarH).Background(Col(s.Surface)).Opacity(float32(alpha)).Label("跳过开屏动画")
+	cover := ui.ButtonBase(c).Key("opening-cover").Absolute().Left(0).Top(0).
+		Width(w).Height(h).Background(Col(s.Surface)).Opacity(float32(alpha)).Label("跳过开屏动画")
 	if cover.Clicked() {
 		a.signatureStart = time.Time{}
 		a.resetOpeningLight()
@@ -100,11 +100,11 @@ func (a *App) opening(c *ui.Context, w, h float32) {
 	cover.Children(func() {
 		slow := sigSlow()
 		t := elapsed / slow
-		a.paintOpeningLight(c, w, h-TitlebarH, t, reduced)
+		a.paintOpeningLight(c, w, h, t, reduced)
 
 		wordW := min(float32(328), w-96)
 		wordH := wordW * signatureHeight / signatureWidth
-		wordY := (h - TitlebarH - wordH - 36) / 2
+		wordY := (h - wordH - 36) / 2
 
 		a.drawSignature(c, (w-wordW)/2, wordY, wordW, wordH, elapsed, reduced)
 
@@ -119,7 +119,7 @@ func (a *App) opening(c *ui.Context, w, h float32) {
 				versionOffset -= 4 * exitP
 			}
 		}
-		CenteredText(c, stateString(a.State, "5.2.0", "version"), 0, wordY+wordH+22+versionOffset, w, 24, 12, s.OnSurfaceVariant, false).Opacity(versionAlpha)
+		CenteredText(c, stateString(a.State, "5.2.2", "version"), 0, wordY+wordH+22+versionOffset, w, 24, 12, s.OnSurfaceVariant, false).Opacity(versionAlpha)
 	})
 	c.AnimationFrame()
 }

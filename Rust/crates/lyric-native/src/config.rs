@@ -1,6 +1,8 @@
 use serde_json::{json, Value};
 pub fn defaults() -> Value {
     let mut defaults = json!({"AutoCheckUpdatesEnabled":true,"LyricColorFromCover":true,"DeviceRemindersEnabled":true,"DeviceSoundEnabled":true,"DeviceSound":"Connect","DeviceSoundPath":"","DeviceVolume":55.,"HeadphoneConnectionRemindersEnabled":true,"SpeakerConnectionRemindersEnabled":true,"GamepadConnectionRemindersEnabled":true,"MouseConnectionRemindersEnabled":false,"KeyboardConnectionRemindersEnabled":false,"DeviceDisconnectRemindersEnabled":true,"SystemStateHintsEnabled":true,"SystemStateHintPlacement":"Island","CapsLockHintEnabled":true,"NumLockHintEnabled":true,"MicrophoneMuteHintEnabled":true,"TouchpadHintEnabled":true,"SwipeActivities":true,"AutoCompactMaxWidth":420.,"TodoDefaultColor":"#F3D79B","TodoRemindersEnabled":true,"TodoIslandEnabled":true,"AutoCompactWidth":true,"CompactTranslation":true,"ChineseTwoLine":true,"NotificationSoundEnabled":true,"TodoSoundEnabled":true,"NotificationSound":"Soft","TodoSound":"Bell","NotificationSoundPath":"","TodoSoundPath":"","QuickReminderHotkey":"","FocusCountUp":false,"FocusPauseOnLock":false,"AppEntryRemindersEnabled":false,"AppUsageRemindersEnabled":false,"NotificationVolume":35.,"TodoVolume":45.,"CompactWidth":260.,"FontSize":14.,"Floating":false,"Translation":true,"TranslationButton":true,"Animation":true,"HoverExpand":false,"ClickAnywhereExpand":true,"NotificationsEnabled":true,"PauseNotifications":false,"NotificationClickOpenApp":true,"MusicClickOpenApp":false,"MusicExpandedLayout":"SideBySide","NotificationWhitelistEnabled":false,"NotificationBlacklistEnabled":false,"NotificationBlockedApps":[],"NotificationAllowedApps":["QQNT","QQ"],"NotificationHistoryEnabled":true,"NotificationHistoryDays":7,"WordHighlight":true,"AlwaysOnTop":true,"AutoStart":true,"OnlineSongInfo":true,"CoverBackground":false,"IslandMonetPreferenceVersion":1,"HideWhenPaused":true,"IgnoredSources":["Browser"],"PlayerFilterVersion":2,"DefaultsOnboardingVersion":0,"ExpandedTextColor":"#FFFFFF","ExpandedComponentColor":"#FFFFFF","LyricProgressColor":"#DDF6FF","SettingsTheme":"System","ControlCenterStartPage":"overview","WorkflowModules":[{"id":"builtin-thinking","name":"整理思路","minutes":5,"kind":0},{"id":"builtin-focus","name":"专注","minutes":25,"kind":1},{"id":"builtin-rest","name":"休息","minutes":5,"kind":2},{"id":"builtin-review","name":"复盘","minutes":10,"kind":3},{"id":"builtin-move","name":"活动一下","minutes":3,"kind":4},{"id":"builtin-custom","name":"自定义","minutes":10,"kind":5}],"CenterX":0.5,"TopFraction":0.08,"Display":"","OffsetMilliseconds":0,"NeteaseCdpPort":"9223","LocalFolders":[],"Motion":crate::motion::Options::default()});
+    defaults["TimerMonoDigits"] = json!(false);
+    defaults["HiddenEdgeStripEnabled"] = json!(false);
     defaults["IslandKeepVisibleEnabled"] = json!(false);
     defaults[crate::resident::TIME] = json!(true);
     defaults[crate::resident::SYSTEM] = json!(false);
@@ -177,7 +179,9 @@ pub fn load(path: &std::path::Path) -> Value {
         .as_str()
         .unwrap_or("Noto Sans SC")
         .to_owned();
-    let family = if stored_font == "Noto Sans SC" {
+    let family = if stored_font == "Noto Sans SC"
+        || dotisle_render::draw::Text::bundled_family(&stored_font)
+    {
         stored_font
     } else {
         dotisle_render::draw::Text::system_family(&stored_font)
@@ -524,7 +528,7 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         json!(source)
     } else if key == "IslandFontFamily" {
         let name = value.as_str().ok_or("invalid font")?;
-        if name == "Noto Sans SC" {
+        if name == "Noto Sans SC" || dotisle_render::draw::Text::bundled_family(name) {
             json!(name)
         } else {
             dotisle_render::draw::Text::system_family(name)
@@ -645,6 +649,8 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         "HoverExpand",
         "ClickAnywhereExpand",
         "WordHighlight",
+        "TimerMonoDigits",
+        "HiddenEdgeStripEnabled",
         "AlwaysOnTop",
         "AutoStart",
         "OnlineSongInfo",
@@ -1632,6 +1638,13 @@ mod expressive_preferences {
         )
         .unwrap();
         assert_eq!(s["IslandFontFamily"], "Noto Sans SC");
+        for name in ["Space Mono", "Doto"] {
+            assert_eq!(
+                validate_setting(json!({"key":"IslandFontFamily","value":name,"settings":defaults()}))
+                    .unwrap()["IslandFontFamily"],
+                name
+            );
+        }
         for name in ["Definitely Missing Font 123", ""] {
             assert!(validate_setting(
                 json!({"key":"IslandFontFamily","value":name,"settings":defaults()})

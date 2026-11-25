@@ -58,32 +58,7 @@ fn paint_shell(ui: &mut Ui, r: Rect, accent: u32, dark: bool) {
         Affine::IDENTITY,
         &grad,
         None,
-        &RoundedRect::from_rect(r, 24.),
-    );
-    let inner = r.inset(-1.0);
-    let inner_rim = if dark {
-        draw::alpha(0xFFFFFF, 0.09)
-    } else {
-        draw::alpha(0xFFFFFF, 0.85)
-    };
-    ui.scene.stroke(
-        &Stroke::new(1.0),
-        Affine::IDENTITY,
-        inner_rim,
-        None,
-        &RoundedRect::from_rect(inner, 23.),
-    );
-    let outer_rim = if dark {
-        draw::alpha(0xFFFFFF, 0.11)
-    } else {
-        draw::alpha(0x0F172A, 0.09)
-    };
-    ui.scene.stroke(
-        &Stroke::new(1.0),
-        Affine::IDENTITY,
-        outer_rim,
-        None,
-        &RoundedRect::from_rect(r, 24.),
+        &draw::continuous_rect(r, 24.),
     );
 }
 
@@ -284,7 +259,9 @@ pub fn render(
                 .filter(|t| !t.done(&now))
                 .collect::<Vec<_>>();
             items.sort_by_key(|t| (&t.date, &t.time));
-            if items.is_empty() {
+            if let Some(editor) = state.editor.as_ref() {
+                todo_editor(ui, r, x, y, w, editor, accent, dark, fg, muted, state.time);
+            } else if items.is_empty() {
                 subtle_tile(
                     ui,
                     rect(x, y + 34., w, if small { 76. } else { 88. }),
@@ -296,10 +273,37 @@ pub fn render(
                 ui.icon(Icon::Check, x + 15., y + 57., 18., accent);
                 ui.label("暂无待办任务", x + 46., y + 52., 13., fg, true, w - 58.);
                 ui.label("一切安排就绪", x + 46., y + 73., 10., muted, false, w - 58.);
+                if large {
+                    ui.button(
+                        rect(x, r.y1 - 48., w, 34.),
+                        "新建待办",
+                        Some(Icon::Plus),
+                        Action::TodoInlineEdit(None),
+                        true,
+                        true,
+                    );
+                }
             } else {
-                let rows = if large { 4 } else if small { 1 } else { 2 };
-                for (i, todo) in items.iter().take(rows).enumerate() {
-                    let yy = y + 27. + i as f64 * 55.;
+                let row_h = crate::desktop_cards::TODO_ROW;
+                let top = y + 27.;
+                let bottom = if large { r.y1 - 50. } else { r.y1 - 6. };
+                let (visible, max_scroll) = crate::desktop_cards::todo_metrics(
+                    r.width() + 16.,
+                    r.height() + 16.,
+                    size,
+                    items.len(),
+                );
+                let scroll = state.scroll.clamp(0., max_scroll);
+                let vp = rect(x - 4., top - 4., w + 8., (bottom - top).max(24.));
+                // 列表滚动时裁掉越过卡片内容区的行，滚动条固定在右侧。
+                ui.scene
+                    .push_clip_layer(Affine::IDENTITY, &RoundedRect::from_rect(vp, 14.));
+                let first = (scroll / row_h).floor() as usize;
+                for (i, todo) in items.iter().enumerate().skip(first).take(visible + 1) {
+                    let yy = top + i as f64 * row_h - scroll;
+                    if yy > bottom {
+                        break;
+                    }
                     let row = rect(x - 4., yy, w + 8., 49.);
                     let row_accent = [0x57BFFF, 0x9A8BEB, 0xFF9EAD, 0x34C77B][i % 4];
                     subtle_tile(ui, row, 15., row_accent, dark);
@@ -314,35 +318,60 @@ pub fn render(
                         false,
                         w - 48.,
                     );
+                    let edit_action = if large {
+                        Action::TodoInlineEdit(Some(todo.id.clone()))
+                    } else {
+                        Action::EditTodo(Some(todo.id.clone()))
+                    };
                     ui.hit(
-                        rect(x + 12., yy, w - 44., 49.),
+                        rect(x + 12., yy, w - 50., 49.).intersect(vp),
                         "编辑待办",
-                        Action::EditTodo(Some(todo.id.clone())),
+                        edit_action,
                         true,
                     );
-                    ui.icon_button(
-                        rect(r.x1 - 44., yy + 9., 30., 30.),
-                        Icon::Check,
-                        "完成待办",
-                        Action::ToggleTodo(todo.id.clone()),
-                        false,
+                    let check = rect(r.x1 - 44., yy + 9., 30., 30.);
+                    if check.y1 <= bottom + 4. {
+                        ui.icon_button(
+                            check,
+                            Icon::Check,
+                            "完成待办",
+                            Action::ToggleTodo(todo.id.clone()),
+                            false,
+                            true,
+                        );
+                    }
+                }
+                ui.scene.pop_layer();
+                if max_scroll > 0.5 {
+                    let bar_x = r.x1 - 5.;
+                    let track_top = top + 2.;
+                    let track_h = (bottom - top - 4.).max(20.);
+                    let ratio = ((bottom - top) / ((bottom - top) + max_scroll)).clamp(0.18, 0.9);
+                    let thumb_h = (track_h * ratio).max(18.);
+                    let thumb_y = track_top + (track_h - thumb_h) * (scroll / max_scroll);
+                    let track = if dark { 0x1FFFFFFF } else { 0x140F172A };
+                    let bar = if dark { 0x66FFFFFF } else { 0x5C0F172A };
+                    draw::fill_rounded(ui.scene, rect(bar_x, track_top, 4., track_h), 2., track);
+                    draw::fill_rounded(ui.scene, rect(bar_x, thumb_y, 4., thumb_h), 2., bar);
+                }
+                if large {
+                    ui.button(
+                        rect(x, r.y1 - 48., w, 34.),
+                        "新建待办",
+                        Some(Icon::Plus),
+                        Action::TodoInlineEdit(None),
+                        true,
                         true,
                     );
                 }
             }
-            if large {
-                ui.button(
-                    rect(x, r.y1 - 48., w, 34.),
-                    "新建待办",
-                    Some(Icon::Plus),
-                    Action::EditTodo(None),
-                    true,
-                    true,
-                );
-            }
         }
         Kind::Focus => {
             let timer = m.current_timer();
+            let mono = m.native_state["settings"]["TimerMonoDigits"]
+                .as_bool()
+                .unwrap_or(false);
+            let clock_face = if mono { "Space Mono" } else { "Noto Sans SC" };
             let (clock, detail, progress) = if let Some(t) = timer {
                 (t.clock(), t.subtitle(), t.progress())
             } else {
@@ -357,7 +386,11 @@ pub fn render(
             draw::ring(ui.scene, (cx, cy), ring / 2., 1., track_col, if large { 5. } else { 4. });
             draw::ring(ui.scene, (cx, cy), ring / 2., progress, accent, if large { 5. } else { 4. });
             if large {
-                ui.center(&clock, rect(x, cy - 30., w, 56.), 42., fg, true);
+                if mono {
+                    ui.center_face(clock_face, &clock, rect(x, cy - 30., w, 56.), 42., fg, true);
+                } else {
+                    ui.center(&clock, rect(x, cy - 30., w, 56.), 42., fg, true);
+                }
                 ui.center(&detail, rect(x, cy + 28., w, 20.), 11., muted, false);
             } else {
                 if !small {
@@ -370,15 +403,21 @@ pub fn render(
                     };
                     ui.center(&center_txt, rect(cx - ring / 2., cy - 10., ring, 20.), 10., muted, true);
                 }
-                ui.label(
-                    &clock,
-                    x,
-                    y + 23.,
-                    if small { 28. } else { 37. },
-                    fg,
-                    true,
-                    if small { w - ring - 8. } else { w - ring - 14. },
-                );
+                let clock_size = if small { 28. } else { 37. };
+                let clock_max = if small { w - ring - 8. } else { w - ring - 14. };
+                if mono {
+                    ui.label_face(clock_face, &clock, x, y + 23., clock_size, fg, true, clock_max);
+                } else {
+                    ui.label(
+                        &clock,
+                        x,
+                        y + 23.,
+                        clock_size,
+                        fg,
+                        true,
+                        clock_max,
+                    );
+                }
                 ui.label(
                     &detail,
                     x,
@@ -807,6 +846,184 @@ pub fn render(
             true,
         );
     }
+}
+
+fn todo_editor(
+    ui: &mut Ui,
+    r: Rect,
+    x: f64,
+    y: f64,
+    w: f64,
+    editor: &crate::views::TodoEdit,
+    accent: u32,
+    dark: bool,
+    fg: u32,
+    muted: u32,
+    time: f64,
+) {
+    let panel_top = y + 30.;
+    let panel_h = (r.y1 - panel_top - 10.).max(110.);
+    subtle_tile(ui, rect(x, panel_top, w, panel_h), 16., accent, dark);
+    ui.label(
+        if editor.id.is_some() { "编辑待办" } else { "新建待办" },
+        x + 12.,
+        panel_top + 10.,
+        13.,
+        fg,
+        true,
+        w - 24.,
+    );
+    let fw = (w - 20.).max(60.);
+    let title = rect(x + 10., panel_top + 50., fw, 44.);
+    editor_field(
+        ui,
+        title,
+        crate::views::TodoField::Title,
+        &editor.title,
+        editor.field,
+        &editor.preedit,
+        accent,
+        dark,
+        fg,
+        muted,
+        time,
+    );
+    if panel_h >= 200. {
+        let half = ((fw - 8.) / 2.).max(40.);
+        let date = rect(x + 10., panel_top + 100., half, 34.);
+        let clock = rect(x + 18. + half, panel_top + 100., half, 34.);
+        editor_field(
+            ui,
+            date,
+            crate::views::TodoField::Date,
+            &editor.date,
+            editor.field,
+            &editor.preedit,
+            accent,
+            dark,
+            fg,
+            muted,
+            time,
+        );
+        editor_field(
+            ui,
+            clock,
+            crate::views::TodoField::Time,
+            &editor.time,
+            editor.field,
+            &editor.preedit,
+            accent,
+            dark,
+            fg,
+            muted,
+            time,
+        );
+    }
+    if let Some(error) = &editor.error {
+        ui.label(error, x + 12., r.y1 - 66., 10., 0xD93025, false, w - 24.);
+    }
+    let bw = (fw - 8.) / 2.;
+    ui.button(
+        rect(x + 10., r.y1 - 44., bw, 34.),
+        "取消",
+        None,
+        Action::TodoCancel,
+        true,
+        true,
+    );
+    ui.button(
+        rect(x + 18. + bw, r.y1 - 44., bw, 34.),
+        "保存",
+        None,
+        Action::TodoSave,
+        false,
+        true,
+    );
+}
+
+fn editor_field(
+    ui: &mut Ui,
+    r: Rect,
+    field: crate::views::TodoField,
+    value: &str,
+    active: crate::views::TodoField,
+    preedit: &str,
+    accent: u32,
+    dark: bool,
+    fg: u32,
+    muted: u32,
+    time: f64,
+) {
+    let on = field == active;
+    let fill = if on {
+        mix(ui.s.container, accent, 0.10)
+    } else {
+        mix(ui.s.container, 0x0F172A, if dark { 0.05 } else { 0.035 })
+    };
+    draw::fill_rounded(ui.scene, r, 10., fill);
+    let rim = if on {
+        draw::alpha(accent, 1.)
+    } else {
+        draw::alpha(0x0F172A, 0.10)
+    };
+    ui.scene.stroke(
+        &Stroke::new(if on { 1.4 } else { 0.8 }),
+        Affine::IDENTITY,
+        rim,
+        None,
+        &RoundedRect::from_rect(r, 10.),
+    );
+    let ty = r.y0 + (r.height() - 16.) / 2.;
+    let composed = if preedit.is_empty() {
+        value.to_owned()
+    } else {
+        format!("{value}{preedit}")
+    };
+    if composed.is_empty() {
+        ui.label(
+            match field {
+                crate::views::TodoField::Title => "输入待办标题",
+                crate::views::TodoField::Date => "2026-11-25",
+                crate::views::TodoField::Time => "18:30",
+            },
+            r.x0 + 10.,
+            ty,
+            12.,
+            muted,
+            false,
+            r.width() - 20.,
+        );
+    } else {
+        ui.label(&composed, r.x0 + 10., ty, 12., fg, false, r.width() - 20.);
+    }
+    if !preedit.is_empty() {
+        let base = ui.measure_alpha(value, 12., false);
+        let width = ui.measure_alpha(preedit, 12., false).max(1.);
+        let available = (r.width() - 20. - base).max(0.);
+        if available > 0.5 {
+            draw::fill_rounded(
+                ui.scene,
+                rect(
+                    r.x0 + 10. + base.min(r.width() - 20.),
+                    r.y0 + r.height() - 8.,
+                    width.min(available),
+                    1.,
+                ),
+                0.5,
+                accent,
+            );
+        }
+    }
+    if on && (time * 2.).rem_euclid(2.) < 1. {
+        let tw = ui.measure_alpha(&composed, 12., false).min(r.width() - 22.);
+        draw::fill_rounded(
+            ui.scene,
+            rect(r.x0 + 10. + tw, r.y0 + 9., 1.4, r.height() - 18.),
+            0.7,
+            accent,
+        );
+    }
+    ui.hit(r, "编辑字段", Action::TodoField(field), true);
 }
 
 pub(crate) fn week_days(date: dotisle_domain::desktop_widgets::Date) -> [u32; 7] {

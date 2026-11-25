@@ -27,16 +27,10 @@ def copy_runtime_assets(source, target):
     # Keep archival branding and repository metadata in the source archive only.
     source = source.resolve()
     omitted = {'ShaderCache', '.gitattributes', 'LyricIsland-v2.ico', 'LyricIsland-v2.png'}
-    # No runtime registers these legacy faces. Existing user-selected HarmonyOS
-    # faces still work when installed in Windows; otherwise Noto is the fallback.
-    legacy_fonts = {f'HarmonyOS_Sans_{locale}{weight}.ttf'
-                    for locale in ('', 'SC_') for weight in ('Regular', 'Medium', 'Bold')}
     def ignore(directory, names):
         relative = Path(directory).relative_to(source)
         if relative == Path('.'):
             return omitted.intersection(names)
-        if relative == Path('Fonts'):
-            return legacy_fonts.intersection(names)
         return ()
     shutil.copytree(source, target, ignore=ignore)
 

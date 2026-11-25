@@ -5,6 +5,7 @@ use crate::{App,renderer::Renderer,layout::{self,Rect},motion::Frame,activities:
 pub unsafe fn run(a:&mut App,dir:&Path)->Result<(),Box<dyn std::error::Error>>{
  std::fs::create_dir_all(dir)?;a.renderer=None;a.opacity=1.;a.frame=Frame::expanded();a.lyric="晚风轻轻，音乐刚好 · 君に届け".into();
  if let Ok(v)=std::env::var("DOTISLE_FONT_FAMILY"){a.settings["IslandFontFamily"]=json!(v.clone());a.settings["IslandFontFamilyRender"]=json!(v);}
+ if let Ok(v)=std::env::var("DOTISLE_TIMER_MONO"){a.settings["TimerMonoDigits"]=json!(v!="0"&&!v.is_empty());}
  if let Ok(v)=std::env::var("DOTISLE_TRANSPORT_THEME"){a.settings["TransportTheme"]=json!(v);}
  if let Ok(v)=std::env::var("DOTISLE_PROGRESS_STYLE"){a.settings["ProgressBarStyle"]=json!(v);}
  if let Ok(v)=std::env::var("DOTISLE_PROGRESS_THUMB"){a.settings["ProgressBarThumb"]=json!(v);a.settings["ProgressBarThumbEnabled"]=json!(true);}

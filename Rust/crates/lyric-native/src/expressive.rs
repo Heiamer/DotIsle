@@ -132,7 +132,11 @@ impl Renderer{
 
     // 中央纯净高对比等宽倒计时大数字 + 副标题（直接悬浮于主玻璃面）
     let clock_sz=if clock.len()>8{31.}else if clock.len()>5{38.}else{46.};
-    self.text_at(clock,Rect::new(24.,52.,w-48.,54.),clock_sz,600,ink,0.5);
+    if s.timer_mono {
+        self.text_mono(clock,Rect::new(24.,52.,w-48.,54.),clock_sz,600,ink,0.5);
+    } else {
+        self.text_at(clock,Rect::new(24.,52.,w-48.,54.),clock_sz,600,ink,0.5);
+    }
     self.text_at(&p.subtitle,Rect::new(28.,109.,w-56.,18.),11.5,400,muted,0.5);
 
     // 与音乐布局一致的极细 3.5px 曜光流光进度条

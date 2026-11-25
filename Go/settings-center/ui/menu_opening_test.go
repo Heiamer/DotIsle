@@ -146,7 +146,7 @@ func TestOpeningPureTypographyCascadeAndNoPill(t *testing.T) {
 			wordW := min(float32(328), float32(WindowW)-96)
 			wordH := wordW * signatureHeight / signatureWidth
 			wordX := (float32(WindowW) - wordW) / 2
-			wordY := float32(TitlebarH) + (float32(WindowH)-TitlebarH-wordH-36)/2
+			wordY := (float32(WindowH) - wordH - 36) / 2
 
 			measureInk := func() int {
 				img := tt.Image()

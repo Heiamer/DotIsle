@@ -97,7 +97,7 @@ impl Renderer {
         // Register the Japanese fallback only when text first requires it.
         let japanese = font.with_file_name("NotoSansJP.ttf");
         text.defer_japanese(japanese);
-        if let Some(dir) = font.parent() { text.defer_harmony(dir); }
+
         Ok(Self {
             transport_ink: None,
             window: hwnd,
@@ -227,6 +227,21 @@ impl Renderer {
         // Baseline anchoring keeps every installed family at the same optical centre.
         self.text.line_fixed(
             &mut self.canvas,
+            text,
+            vr(r),
+            size as f32,
+            c,
+            weight.clamp(0, 1000) as u16,
+            align,
+        );
+    }
+    fn text_mono(&mut self, text: &str, r: Rect, size: f64, weight: i32, c: u32, align: f64) {
+        if r.w <= 0. || r.h <= 0. {
+            return;
+        }
+        self.text.line_face(
+            &mut self.canvas,
+            "Space Mono",
             text,
             vr(r),
             size as f32,
@@ -1176,7 +1191,18 @@ impl Renderer {
             let tw = (c.w - 46.).max(40.);
             let top_txt = self.elided_line(&p.value, tw, 12.0, 600);
             let sub_txt = self.elided_line(&p.title, tw, 10.0, 400);
-            self.text_at(&top_txt, Rect::new(badge_r.x + badge_r.w + 8., c.y + 4.0, tw, 16.5), 12.0, 600, ink, 0.);
+            if p.kind == 1 && s.timer_mono {
+                self.text_mono(
+                    &p.value,
+                    Rect::new(badge_r.x + badge_r.w + 8., c.y + 4.0, tw, 16.5),
+                    12.0,
+                    600,
+                    ink,
+                    0.,
+                );
+            } else {
+                self.text_at(&top_txt, Rect::new(badge_r.x + badge_r.w + 8., c.y + 4.0, tw, 16.5), 12.0, 600, ink, 0.);
+            }
             self.text_at(&sub_txt, Rect::new(badge_r.x + badge_r.w + 8., c.y + 20.5, tw, 13.5), 10.0, 400, muted, 0.);
             return;
         }
@@ -1385,18 +1411,31 @@ impl Renderer {
                 .panel
                 .map(|p| format!("{}  {}", p.title, p.value))
                 .unwrap_or_else(|| s.lyric.to_string());
-            self.text_at(
-                &label,
-                Rect::new(c.x + 22., c.y, c.w - 44., c.h),
-                crate::compact::mini_font_size(s.font_size),
-                500,
-                if s.mini_light_field {
-                    s.mini_ink
-                } else {
-                    0xff000000 | tones.on_surface
-                },
-                0.5,
-            );
+            let mini_font = crate::compact::mini_font_size(s.font_size);
+            let mini_ink = if s.mini_light_field {
+                s.mini_ink
+            } else {
+                0xff000000 | tones.on_surface
+            };
+            if s.timer_mono && s.panel.is_some_and(|p| p.kind == 1) {
+                self.text_mono(
+                    &label,
+                    Rect::new(c.x + 22., c.y, c.w - 44., c.h),
+                    mini_font,
+                    500,
+                    mini_ink,
+                    0.5,
+                );
+            } else {
+                self.text_at(
+                    &label,
+                    Rect::new(c.x + 22., c.y, c.w - 44., c.h),
+                    mini_font,
+                    500,
+                    mini_ink,
+                    0.5,
+                );
+            }
             return;
         }
         if let Some(p) = s.panel {
@@ -1437,14 +1476,25 @@ impl Renderer {
                     0.,
                 );
             } else {
-                self.text_at(
-                    &p.value,
-                    Rect::new(c.x + 40., cy - 17., c.w - 70., 19.),
-                    14.,
-                    600,
-                    0xff000000 | tones.on_surface,
-                    0.5,
-                );
+                if p.kind == 1 && s.timer_mono {
+                    self.text_mono(
+                        &p.value,
+                        Rect::new(c.x + 40., cy - 17., c.w - 70., 19.),
+                        14.,
+                        600,
+                        0xff000000 | tones.on_surface,
+                        0.5,
+                    );
+                } else {
+                    self.text_at(
+                        &p.value,
+                        Rect::new(c.x + 40., cy - 17., c.w - 70., 19.),
+                        14.,
+                        600,
+                        0xff000000 | tones.on_surface,
+                        0.5,
+                    );
+                }
                 self.text_at(
                     &p.title,
                     Rect::new(c.x + 40., cy + 3., c.w - 70., 13.),
@@ -2807,6 +2857,15 @@ impl Renderer {
         self.gpu.capture_frame(&canvas, 1.5, (f64::from(width)*1.5).ceil() as u32, 42).map_err(err)
     }
     fn paint_scene(&mut self, s: &Scene<'_>) {
+        if s.hidden_edge {
+            self.canvas = VScene::new();
+            let c = s.layout.capsule;
+            let width = 56.0_f64.min(c.w.max(1.));
+            let bar = Rect::new(c.x + (c.w - width) / 2., c.y, width, 5.);
+            let color = 0xd8000000 | (s.tool_theme.fill & 0x00ff_ffff);
+            dotisle_render::draw::fill_rounded(&mut self.canvas, vr(bar), 2.5, color);
+            return;
+        }
         self.text.set_family(s.font_family);
         self.prepare_dynamic(s);
         let (mut themed, compact) = cover_scenes(s, Some(self.paint_palette));
@@ -3323,6 +3382,8 @@ pub struct Scene<'a> {
     pub dynamic_custom_seed: u32,
     pub dynamic_high_contrast: bool,
     pub font_family: &'a str,
+    pub timer_mono: bool,
+    pub hidden_edge: bool,
     pub expressive_dark: bool,
     pub mini: bool,
     pub mini_light_field: bool,

@@ -38,7 +38,7 @@ Windows 10 / 11 · x64 · 原生桌面应用
 
 ## 下载与开始使用
 
-从 [最新正式版](https://github.com/Heiamer/DotIsle/releases/latest) 下载点屿。使用旧版的用户请升级到 5.2.1 或更新版本；如果应用内更新不可用，请下载完整安装包。
+从 [最新正式版](https://github.com/Heiamer/DotIsle/releases/latest) 下载点屿。使用旧版的用户请升级到 5.2.2 或更新版本；如果应用内更新不可用，请下载完整安装包。
 
 | 文件 | 用途 |
 | --- | --- |
