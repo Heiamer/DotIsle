@@ -63,11 +63,17 @@ impl Spring {
             return changed;
         }
         let dt = dt.clamp(0., 0.1);
-        let w = 24.;
-        let b = self.velocity + w * self.value;
-        let e = (-w * dt).exp();
-        self.value = (self.value + b * dt) * e;
-        self.velocity = (self.velocity - w * b * dt) * e;
+        // 欠阻尼磁性吸附弹簧（zeta = 0.82），组件滑切落位更清脆灵动
+        let w = 20.5_f64;
+        let z = 0.82_f64;
+        let wd = w * (1. - z * z).sqrt();
+        let a = self.value;
+        let b = (self.velocity + z * w * a) / wd;
+        let e = (-z * w * dt).exp();
+        let (sin_t, cos_t) = (wd * dt).sin_cos();
+        let env = a * cos_t + b * sin_t;
+        self.value = e * env;
+        self.velocity = e * (-z * w * env + wd * (b * cos_t - a * sin_t));
         true
     }
 }

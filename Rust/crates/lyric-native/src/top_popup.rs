@@ -69,9 +69,11 @@ pub struct Overlay {
     renderer: Option<Renderer>,
     content: Option<Content>,
     opacity: f64,
-    from: f64,
+    alpha_vel: f64,
+    motion: f64,
+    motion_vel: f64,
     target: f64,
-    began: Instant,
+    last_tick: Instant,
     until: Instant,
     animate: bool,
     dirty: bool,
@@ -89,9 +91,11 @@ impl Overlay {
             renderer: None,
             content: None,
             opacity: 0.,
-            from: 0.,
+            alpha_vel: 0.,
+            motion: 0.,
+            motion_vel: 0.,
             target: 0.,
-            began: now,
+            last_tick: now,
             until: now,
             animate: true,
             dirty: false,
@@ -276,12 +280,20 @@ impl Overlay {
     fn start_motion(&mut self, animate: bool, hold_ms: u64) {
         let now = Instant::now();
         self.animate = animate;
-        self.from = self.opacity;
         self.target = 1.;
-        self.began = now;
+        self.last_tick = now;
         self.until = now + Duration::from_millis(hold_ms);
         self.dirty = true;
         self.was_left = unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 };
+    }
+
+    /// 将剪贴板复制的真实结果同步到顶部弹窗提示，避免失败时误报成功。
+    pub fn set_copy_feedback(&mut self, ok: bool, detail: String) {
+        if let Some(Content::Alert { alert, .. }) = self.content.as_mut() {
+            alert.detail = if ok { "已复制验证码".into() } else { detail };
+            self.until = Instant::now() + Duration::from_millis(if ok { 1600 } else { 2400 });
+            self.dirty = true;
+        }
     }
 
     pub unsafe fn set_theme(&mut self, theme: MaterialTheme) -> Result<()> {
@@ -298,6 +310,9 @@ impl Overlay {
     pub unsafe fn clear(&mut self) {
         self.content = None;
         self.opacity = 0.;
+        self.alpha_vel = 0.;
+        self.motion = 0.;
+        self.motion_vel = 0.;
         self.target = 0.;
         self.dirty = false;
         self.idle = Instant::now();
@@ -318,6 +333,8 @@ impl Overlay {
         let mut emitted = None;
         let interactive = self.content.as_ref().is_some_and(Content::interactive);
         let now = Instant::now();
+        let dt = now.duration_since(self.last_tick).as_secs_f64().clamp(0., 0.05);
+        self.last_tick = now;
 
         if interactive && self.target > 0. {
             let mut pt = POINT::default();
@@ -343,20 +360,15 @@ impl Overlay {
                         if !close.contains(lx, ly) {
                             emitted = Some(Event::ClickNotice(notice.clone(), todo.clone()));
                         }
-                        self.from = self.opacity;
                         self.target = 0.;
-                        self.began = now;
                     }
                     Some(Content::Alert { alert, .. }) => {
                         if let Some(code) = &alert.code {
                             emitted = Some(Event::CopyCode(code.clone()));
-                            alert.detail = "已复制验证码".into();
-                            self.until = now + Duration::from_millis(1600);
+                            self.until = now + Duration::from_millis(1800);
                             self.dirty = true;
                         } else {
-                            self.from = self.opacity;
                             self.target = 0.;
-                            self.began = now;
                         }
                     }
                     _ => {}
@@ -365,42 +377,73 @@ impl Overlay {
         }
 
         if now >= self.until && self.target > 0. {
-            self.from = self.opacity;
             self.target = 0.;
-            self.began = now;
         }
-        let dur = if self.target > 0. { 0.18 } else { 0.14 };
-        let t = if self.animate {
-            (now.duration_since(self.began).as_secs_f64() / dur).min(1.)
+        let (next_a, next_m) = if self.animate {
+            let step = |val: &mut f64, vel: &mut f64, target: f64, w: f64, z: f64| {
+                if dt <= 0. {
+                    return;
+                }
+                let d = *val - target;
+                if z < 1. {
+                    let wd = w * (1. - z * z).sqrt();
+                    let b = (*vel + z * w * d) / wd;
+                    let e = (-z * w * dt).exp();
+                    let (s, c) = (wd * dt).sin_cos();
+                    let env = d * c + b * s;
+                    *val = target + e * env;
+                    *vel = e * (-z * w * env + wd * (b * c - d * s));
+                } else {
+                    let b = *vel + w * d;
+                    let e = (-w * dt).exp();
+                    *val = target + (d + b * dt) * e;
+                    *vel = (*vel - w * b * dt) * e;
+                }
+            };
+            let (mw, mz) = if self.target > 0. { (21.0, 0.78) } else { (25.0, 0.95) };
+            let (aw, az) = if self.target > 0. { (24.0, 1.0) } else { (28.0, 1.0) };
+            let (mut a, mut av, mut m, mut mv) = (self.opacity, self.alpha_vel, self.motion, self.motion_vel);
+            step(&mut a, &mut av, self.target, aw, az);
+            step(&mut m, &mut mv, self.target, mw, mz);
+            self.alpha_vel = av;
+            self.motion_vel = mv;
+            (a.clamp(0., 1.), m)
         } else {
-            1.
+            self.alpha_vel = 0.;
+            self.motion_vel = 0.;
+            (self.target, self.target)
         };
-        let value = self.from + (self.target - self.from) * (1. - (1. - t).powi(3));
+        let settled = (next_a - self.target).abs() < 0.002
+            && self.alpha_vel.abs() < 0.02
+            && (next_m - self.target).abs() < 0.002
+            && self.motion_vel.abs() < 0.02;
 
-        if (value - self.opacity).abs() > 0.0001 || self.dirty {
-            self.opacity = value;
+        if (next_a - self.opacity).abs() > 0.0001 || (next_m - self.motion).abs() > 0.0001 || self.dirty {
+            self.opacity = next_a;
+            self.motion = next_m;
             self.dirty = false;
             if let (Some(renderer), Some(content)) = (&mut self.renderer, &self.content) {
                 let mut r = content.rect();
                 if self.animate {
-                    r.y -= 8. * (1. - value);
+                    r.y -= 14. * (1. - next_m);
                 }
                 let surface = crate::surface::Surface::expanded(self.theme.material, self.theme.cover_background);
                 match content {
                     Content::Notice { notice, radius, .. } => {
-                        renderer.render_top_popup(Some(notice), None, None, r, *radius, value, surface, true)?;
+                        renderer.render_top_popup(Some(notice), None, None, r, *radius, next_a, surface, true)?;
                     }
                     Content::Alert { alert, radius, .. } => {
-                        renderer.render_top_popup(None, Some(alert), None, r, *radius, value, surface, true)?;
+                        renderer.render_top_popup(None, Some(alert), None, r, *radius, next_a, surface, true)?;
                     }
                     Content::Osd { notice, radius, .. } => {
-                        renderer.render_top_popup(None, None, Some(notice), r, *radius, value, surface, true)?;
+                        renderer.render_top_popup(None, None, Some(notice), r, *radius, next_a, surface, true)?;
                     }
                 }
             }
         }
-        if t >= 1. {
+        if settled {
             self.opacity = self.target;
+            self.motion = self.target;
             if self.target == 0. {
                 self.clear();
             }

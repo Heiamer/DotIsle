@@ -25,8 +25,12 @@ fn path()->PathBuf{
     }
     PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap_or_default()).join("Microsoft/Windows/Notifications/wpndatabase.db")
 }
-type Stamp=(Option<(SystemTime,u64)>,Option<(SystemTime,u64)>);
-fn stamp(path:&Path)->Stamp{let info=|p:&Path|std::fs::metadata(p).ok().and_then(|m|m.modified().ok().map(|t|(t,m.len())));(info(path),info(&PathBuf::from(format!("{}-wal",path.to_string_lossy()))))}
+type Stamp=(Option<(SystemTime,u64)>,Option<(SystemTime,u64)>,Option<(SystemTime,u64)>);
+fn stamp(path:&Path)->Stamp{
+    let info=|p:&Path|std::fs::metadata(p).ok().and_then(|m|m.modified().ok().map(|t|(t,m.len())));
+    let raw=path.to_string_lossy();
+    (info(path),info(&PathBuf::from(format!("{raw}-wal"))),info(&PathBuf::from(format!("{raw}-shm"))))
+}
 pub struct Store{icons:HashMap<String,Option<Vec<u8>>>,last_read:Instant,stamp:Option<Stamp>,since:i64,seen:HashSet<(i64,i64,i64)>,api:Option<Api>}
 impl Store{
     pub fn new()->Self{Self{icons:HashMap::new(),last_read:Instant::now()-Duration::from_secs(2),stamp:None,since:filetime(),seen:HashSet::new(),api:None}}
@@ -34,8 +38,10 @@ impl Store{
     pub fn poll(&mut self,policy:&Policy)->Result<Vec<Notice>,String>{unsafe{
         if self.api.is_none(){self.api=Some(Api::load()?);}
         let api=self.api.as_ref().unwrap();let path=path();
-        let current=stamp(&path);if self.stamp.as_ref()==Some(&current)&&self.last_read.elapsed()<Duration::from_secs(2){return Ok(vec![])}
-        let rows=read(api,&path,self.since,policy)?;self.stamp=Some(current);self.last_read=Instant::now();
+        let current=stamp(&path);
+        // 文件元信息未变化时兜底周期压缩至 500ms，防止 NTFS/WAL 元数据延迟更新漏检新验证码
+        if self.stamp.as_ref()==Some(&current)&&self.last_read.elapsed()<Duration::from_millis(500){return Ok(vec![])}
+        let rows=read_with_retry(api,&path,self.since,policy)?;self.stamp=Some(current);self.last_read=Instant::now();
         let mut notices=vec![];let mut latest=self.since;
         for (key,id,payload) in rows{
             latest=latest.max(key.2);
@@ -47,28 +53,49 @@ impl Store{
                 notices.push(notice);
             }}
         }
-        self.since=latest;self.seen.retain(|k|k.2>=latest);Ok(notices)
+        self.since=latest;
+        // 保留近 10 秒的已处理主键，配合 2 秒回看窗防止晚落盘记录漏检且零重复
+        self.seen.retain(|k|k.2>=latest.saturating_sub(100_000_000));
+        Ok(notices)
     }}
 }
 type Row=((i64,i64,i64),String,Vec<u8>);
+enum ReadErr{Busy(String),Fatal(String)}
+unsafe fn read_with_retry(api:&Api,path:&Path,since:i64,policy:&Policy)->Result<Vec<Row>,String>{
+    for attempt in 0..3 {
+        match read_inner(api,path,since,policy) {
+            Ok(rows)=>return Ok(rows),
+            Err(ReadErr::Busy(_)) if attempt<2 => std::thread::sleep(Duration::from_millis(25)),
+            Err(ReadErr::Busy(e)|ReadErr::Fatal(e))=>return Err(e),
+        }
+    }
+    unreachable!()
+}
 unsafe fn read(api:&Api,path:&Path,since:i64,policy:&Policy)->Result<Vec<Row>,String>{
-    let file=CString::new(path.to_string_lossy().as_bytes()).map_err(|_|"通知数据库路径无效")?;let mut raw=std::ptr::null_mut();
+    read_with_retry(api,path,since,policy)
+}
+unsafe fn read_inner(api:&Api,path:&Path,since:i64,policy:&Policy)->Result<Vec<Row>,ReadErr>{
+    let file=CString::new(path.to_string_lossy().as_bytes()).map_err(|_|ReadErr::Fatal("通知数据库路径无效".into()))?;let mut raw=std::ptr::null_mut();
     // SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX. Never CREATE, READWRITE, backup or checkpoint.
-    if (api.open)(file.as_ptr(),&mut raw,1|0x8000,std::ptr::null())!=0{if !raw.is_null(){(api.close)(raw);}return Err("通知数据库暂不可读，请稍后重试或反馈错误".into())}
-    let db=Db(api,raw);(api.busy)(db.1,100);
-    let sql=CString::new(format!("SELECT n.Id,n.HandlerId,n.ArrivalTime,h.PrimaryId FROM Notification n JOIN NotificationHandler h ON n.HandlerId=h.RecordId WHERE n.Type='toast' AND n.ArrivalTime>={since} AND n.ArrivalTime<={} ORDER BY n.ArrivalTime,n.[Order] LIMIT 256",filetime()+300000000)).unwrap();
-    let mut raw=std::ptr::null_mut();if (api.prepare)(db.1,sql.as_ptr(),-1,&mut raw,std::ptr::null_mut())!=0{if !raw.is_null(){(api.finalize)(raw);}return Err("此 Windows 版本的通知格式尚不兼容，请稍后重试或反馈错误".into())}
+    let rc=(api.open)(file.as_ptr(),&mut raw,1|0x8000,std::ptr::null());
+    if rc!=0{if !raw.is_null(){(api.close)(raw);}let msg="通知数据库暂不可读，请稍后重试或反馈错误".into();return Err(if rc==5||rc==6{ReadErr::Busy(msg)}else{ReadErr::Fatal(msg)})}
+    let db=Db(api,raw);(api.busy)(db.1,250);
+    // 向前回看 2 秒（20_000_000 个 100ns 刻度），防止系统时间戳乱序或晚落盘通知丢失
+    let lookback=since.saturating_sub(20_000_000);
+    let sql=CString::new(format!("SELECT n.Id,n.HandlerId,n.ArrivalTime,h.PrimaryId FROM Notification n JOIN NotificationHandler h ON n.HandlerId=h.RecordId WHERE n.Type='toast' AND n.ArrivalTime>={lookback} AND n.ArrivalTime<={} ORDER BY n.ArrivalTime,n.[Order] LIMIT 256",filetime()+300000000)).unwrap();
+    let mut raw=std::ptr::null_mut();if (api.prepare)(db.1,sql.as_ptr(),-1,&mut raw,std::ptr::null_mut())!=0{if !raw.is_null(){(api.finalize)(raw);}return Err(ReadErr::Fatal("此 Windows 版本的通知格式尚不兼容，请稍后重试或反馈错误".into()))}
     let statement=Statement(api,raw);let mut rows=vec![];
     loop{match (api.step)(statement.1){
         100=>{
             let key=((api.int)(statement.1,0),(api.int)(statement.1,1),(api.int)(statement.1,2));
             let id=(api.text)(statement.1,3);if id.is_null(){continue}let id=CStr::from_ptr(id.cast()).to_string_lossy().into_owned();
             let name=app_name(&id);let mut payload=vec![];
-            if !policy.paused&&policy.permits(&id,&name)&&crate::message_hints::identify(&id,&name).is_none_or(|a|a.content_only()){payload=read_payload(api,&db,key)?;}
+            if !policy.paused&&policy.permits(&id,&name)&&crate::message_hints::identify(&id,&name).is_none_or(|a|a.content_only()){payload=read_payload(api,&db,key).map_err(ReadErr::Fatal)?;}
             rows.push((key,id,payload));
         },
         101=>break,
-        _=>return Err("通知数据库正忙或已更新，稍后自动重试".into())
+        5|6=>return Err(ReadErr::Busy("通知数据库正忙，稍后自动重试".into())),
+        _=>return Err(ReadErr::Fatal("通知数据库正忙或已更新，稍后自动重试".into()))
     }}Ok(rows)
 }
 // Read actual toast content only after the application policy permits it.
@@ -88,8 +115,16 @@ fn app_name(id:&str)->String{
     })
 }
 fn decode(bytes:&[u8])->Option<String>{
-    if bytes.starts_with(&[255,254]){Some(String::from_utf16_lossy(&bytes[2..].chunks_exact(2).map(|c|u16::from_le_bytes([c[0],c[1]])).collect::<Vec<_>>()))}
-    else{std::str::from_utf8(bytes).ok().map(str::to_owned)}
+    let text=if bytes.starts_with(&[0xFF,0xFE]){
+        String::from_utf16_lossy(&bytes[2..].chunks_exact(2).map(|c|u16::from_le_bytes([c[0],c[1]])).collect::<Vec<_>>())
+    }else if bytes.starts_with(&[0xFE,0xFF]){
+        String::from_utf16_lossy(&bytes[2..].chunks_exact(2).map(|c|u16::from_be_bytes([c[0],c[1]])).collect::<Vec<_>>())
+    }else if bytes.starts_with(&[0xEF,0xBB,0xBF]){
+        std::str::from_utf8(&bytes[3..]).ok()?.to_owned()
+    }else{
+        std::str::from_utf8(bytes).ok()?.to_owned()
+    };
+    Some(text.trim_matches(['\u{feff}','\0']).to_owned())
 }
 fn parse(bytes:&[u8],id:&str)->Option<Notice>{
     if bytes.is_empty()||bytes.len()>262144{return None}
@@ -98,7 +133,15 @@ fn parse(bytes:&[u8],id:&str)->Option<Notice>{
     let xml=decode(bytes)?;let document=roxmltree::Document::parse(xml.trim_matches(['\u{feff}','\0'])).ok()?;
     if !document.root_element().has_tag_name("toast"){return None}
     let binding=document.descendants().find(|n|n.has_tag_name("binding")&&n.attribute("template")==Some("ToastGeneric")).or_else(||document.descendants().find(|n|n.has_tag_name("binding")))?;
-    let text=binding.descendants().filter(|n|n.has_tag_name("text")).filter_map(|n|n.text()).map(str::trim).filter(|s|!s.is_empty()).take(8).map(|s|s.chars().take(1024).collect::<String>()).collect::<Vec<_>>();
+    let mut text=binding.descendants().filter(|n|n.has_tag_name("text")).map(|n|n.descendants().filter(|c|c.is_text()).filter_map(|c|c.text()).collect::<String>()).map(|s|s.trim().to_owned()).filter(|s|!s.is_empty()).take(8).map(|s|s.chars().take(1024).collect::<String>()).collect::<Vec<_>>();
+    // 部分系统/应用通知将关键主题写在 <header title="...">，缺失或独立时补充到标题前段
+    if let Some(header_title)=document.descendants().find(|n|n.has_tag_name("header")).and_then(|n|n.attribute("title")).map(str::trim).filter(|s|!s.is_empty()){
+        if text.is_empty(){
+            text.push(header_title.to_owned());
+        }else if !text[0].contains(header_title){
+            text[0]=format!("{header_title} · {}",text[0]);
+        }
+    }
     let title=text.first()?.clone();let body=text.into_iter().skip(1).collect::<Vec<_>>().join("\n");
     if crate::message_hints::identify(id,&name).is_some_and(|a|a.content_only())&&(body.trim().is_empty()||["有新消息","你有新消息","您有新消息","收到新消息","你收到一条新消息","您收到一条新消息","你收到了一条新消息","您收到了一条新消息"].contains(&body.trim().trim_end_matches(['。','！','!']))){return None}
     let icon = crate::toast_avatar::from_binding(id, binding);
@@ -131,4 +174,12 @@ fn parse(bytes:&[u8],id:&str)->Option<Notice>{
     #[test]fn chat_placeholders_are_discarded_while_real_body_is_preserved(){for id in ["com.bytedance.Feishu","DingTalk"]{for body in ["","有新消息","您收到了一条新消息。"]{let xml=format!("<toast><visual><binding template=\"ToastGeneric\"><text>App</text><text>{body}</text></binding></visual></toast>");assert!(parse(xml.as_bytes(),id).is_none());}let xml="<toast><visual><binding template=\"ToastGeneric\"><text>Sender</text><text>Actual message</text></binding></visual></toast>";let n=parse(xml.as_bytes(),id).unwrap();assert_eq!(n.title,"Sender");assert_eq!(n.body,"Actual message");}}
     #[test]fn rejects_malformed_oversize_and_non_toast_payloads(){assert!(parse(b"<broken>","a").is_none());assert!(parse(b"<tile />","a").is_none());assert!(parse(&vec![b'x';262145],"a").is_none());assert!(parse(br#"<!DOCTYPE toast [<!ENTITY x SYSTEM "file:///private">]><toast>&x;</toast>"#,"a").is_none());}
     #[test]fn new_store_starts_at_current_time_without_replaying_history(){let s=Store::new();assert!(s.since>116444736000000000);assert!(s.seen.is_empty());}
+    #[test]fn decodes_utf8_bom_utf16be_and_header_title_entities(){
+        let utf8_bom=[b"\xEF\xBB\xBF".as_slice(),r#"<toast><header id="1" title="安全中心"/><visual><binding template="ToastGeneric"><text>验证码 &amp; 提醒</text><text>您的验证码为 482910</text></binding></visual></toast>"#.as_bytes()].concat();
+        let n=parse(&utf8_bom,"Example.Auth").unwrap();
+        assert_eq!(n.title,"安全中心 · 验证码 & 提醒");
+        assert_eq!(n.body,"您的验证码为 482910");
+        let utf16_be:Vec<u8>=[0xFEu8,0xFF].into_iter().chain("你好".encode_utf16().flat_map(|u|u.to_be_bytes())).collect();
+        assert_eq!(decode(&utf16_be).as_deref(),Some("你好"));
+    }
 }

@@ -52,6 +52,7 @@ mod liquid_preview;
 mod liquid_timer;
 mod m3e_preview;
 mod motion;
+mod morph_transition;
 mod notifications;
 mod osd;
 mod progress;
@@ -332,6 +333,7 @@ struct App {
     last_left: bool,
     user_hidden: bool,
     hidden_mini: bool,
+    island_morph: morph_transition::IslandMorph,
     // A verification code surfaced while the island was manually hidden; the
     // hidden state returns once its alert is gone.
     restore_hidden: bool,
@@ -621,6 +623,7 @@ impl App {
             last_left: false,
             user_hidden: false,
             hidden_mini: false,
+            island_morph: morph_transition::IslandMorph::new(),
             restore_hidden: false,
             display_wanted: demo,
             missing_since: None,
@@ -935,6 +938,38 @@ impl App {
         let width = 56.0_f64.min(c.w.max(1.));
         Rect::new(c.x + (c.w - width) / 2., c.y, width, 5.)
     }
+    /// 蓝条视觉保持 56×5，点击热区垂直方向扩展至 14dp、水平各扩 6dp，避免过细难触发。
+    fn hidden_edge_hit_rect(&self) -> Rect {
+        let bar = self.hidden_edge_rect();
+        let x = (bar.x - 6.).max(0.);
+        let y = (bar.y - 3.).max(0.);
+        let w = (bar.w + 12.).min((self.layout.host.w - x).max(1.));
+        let h = 14.0_f64.min((self.layout.host.h - y).max(1.));
+        Rect::new(x, y, w, h)
+    }
+    fn capsule_corner_radius(&self, h: f64) -> f64 {
+        if self.layout.anchor_bottom {
+            8.0
+        } else {
+            self.settings["CapsuleCornerRadius"]
+                .as_f64()
+                .unwrap_or(h / 2.)
+                .clamp(0., h / 2.)
+        }
+    }
+    /// 捕获当前壳体实时视觉几何与混合权重，用于无缝启动或中途打断四向形变。
+    fn live_morph_origin(&self, now: f64) -> (Rect, f64, f64, f64) {
+        if self.island_morph.active() {
+            let p = self.island_morph.presentation(now, self.layout.host);
+            return (p.rect, p.radius, p.strip_mix, p.mini_mix);
+        }
+        if self.hidden_edge() {
+            return (self.hidden_edge_rect(), 2.5, 1., 0.);
+        }
+        let (rect, rad) = self.shape();
+        let mini_mix = if self.mini() { 1. } else { 0. };
+        (rect, rad, 0., mini_mix)
+    }
     fn can_hide(&self, hit: i32) -> bool {
         self.hide_trigger() == "SwipeUp"
             && !self.flag("TaskbarModeEnabled", false)
@@ -944,6 +979,19 @@ impl App {
             && (matches!(hit, 0 | 1 | 13 | 40..=42) || hit >= 1000)
     }
     fn enter_hidden_edge(&mut self) {
+        let now = self.start.elapsed().as_secs_f64();
+        let was_visible = self.opacity > 0.01 && !self.taskbar_mode();
+        let (from_rect, from_radius, from_strip, from_mini) = self.live_morph_origin(now);
+        let collapse_ms = self.options().collapse_duration;
+
+        // 若从展开态直接隐藏，复位卡片展开状态并沿用当前大轮廓直接缩成蓝条/Mini
+        if self.expanded || self.frame.card_reveal > 0.001 {
+            self.expanded = false;
+            self.held = false;
+            self.transition = None;
+            self.frame = Frame::hidden(self.options());
+        }
+
         self.user_hidden = true;
         self.restore_hidden = false;
         self.edge_revealed = false;
@@ -953,6 +1001,7 @@ impl App {
         let display = self.hidden_display().to_owned();
         self.hidden_mini = display == "Mini";
         if display == "None" {
+            self.island_morph.cancel();
             self.display_wanted = false;
             self.fade(0.);
         } else {
@@ -966,9 +1015,50 @@ impl App {
             if display != "None" {
                 let _ = window_level::apply(self.visual_hwnd, self.hwnd, true, false);
             }
+            if display == "Strip" && was_visible && self.hidden_edge() {
+                let target_rect = self.hidden_edge_rect();
+                self.island_morph.transition(
+                    from_rect,
+                    from_radius,
+                    from_strip,
+                    from_mini,
+                    morph_transition::IslandMode::Strip,
+                    target_rect,
+                    2.5,
+                    now,
+                    self.flag("Animation", true),
+                    collapse_ms,
+                );
+            } else if display == "Mini" && was_visible && self.hidden_mini_mode() {
+                let (tw, th) = self
+                    .measure_compact_layout()
+                    .unwrap_or((self.compact_base(), 14.));
+                self.compact_size = compact::Resize::new(tw, th);
+                self.layout.set_compact(tw, th);
+                let target_rect = self.layout.capsule;
+                let target_rad = self.capsule_corner_radius(th);
+                self.island_morph.transition(
+                    from_rect,
+                    from_radius,
+                    from_strip,
+                    from_mini,
+                    morph_transition::IslandMode::Mini,
+                    target_rect,
+                    target_rad,
+                    now,
+                    self.flag("Animation", true),
+                    collapse_ms,
+                );
+            }
         }
     }
     fn reveal_hidden_edge(&mut self) {
+        let now = self.start.elapsed().as_secs_f64();
+        let was_morphable = !self.taskbar_mode()
+            && (self.hidden_edge() || self.hidden_mini_mode() || self.island_morph.active());
+        let (from_rect, from_radius, from_strip, from_mini) = self.live_morph_origin(now);
+        let expand_ms = self.options().duration;
+
         self.user_hidden = false;
         self.hidden_mini = false;
         self.edge_revealed = false;
@@ -984,6 +1074,33 @@ impl App {
         unsafe {
             let _ = self.position();
             let _ = window_level::apply(self.visual_hwnd, self.hwnd, self.effective_topmost(), false);
+            if was_morphable {
+                let default_h = if self.mini() { 14. } else { 40. };
+                let (tw, th) = self
+                    .measure_compact_layout()
+                    .unwrap_or((self.compact_base(), default_h));
+                self.compact_size = compact::Resize::new(tw, th);
+                self.layout.set_compact(tw, th);
+                let to_mode = if self.mini() {
+                    morph_transition::IslandMode::Mini
+                } else {
+                    morph_transition::IslandMode::Normal
+                };
+                let target_rect = self.layout.capsule;
+                let target_rad = self.capsule_corner_radius(th);
+                self.island_morph.transition(
+                    from_rect,
+                    from_radius,
+                    from_strip,
+                    from_mini,
+                    to_mode,
+                    target_rect,
+                    target_rad,
+                    now,
+                    self.flag("Animation", true),
+                    expand_ms,
+                );
+            }
         }
     }
     fn hide_by_gesture(&mut self) {
@@ -1005,6 +1122,7 @@ impl App {
             if self.practice_step() == Some(PracticeStep::Recover) {
                 self.enter_hidden_edge();
             } else {
+                self.island_morph.cancel();
                 self.fade(0.);
             }
         } else {
@@ -1023,6 +1141,7 @@ impl App {
         {
             return false;
         }
+        self.island_morph.cancel();
         self.restore_hidden = true;
         self.user_hidden = false;
         self.hidden_mini = false;
@@ -1840,12 +1959,11 @@ impl App {
         if self.mini() {
             return String::new();
         }
-        compact::secondary(
+        compact::normalize_line(compact::secondary(
             &self.snapshot,
             self.flag("CompactTranslation", true),
             self.flag("ChineseTwoLine", false),
-        )
-        .to_string()
+        ))
     }
     fn compact_base(&self) -> f64 {
         self.settings["CompactWidth"]
@@ -2131,11 +2249,11 @@ impl App {
                 let _ = tx.send((version, result));
             });
         }
-        let lyric = compact::primary(&self.snapshot).to_string();
+        let lyric = compact::normalize_line(compact::primary(&self.snapshot));
         if lyric != self.lyric {
-            let t = (self.lyric_start.elapsed().as_secs_f64() / 0.18).min(1.);
-            self.outgoing_opacity = t;
-            self.outgoing_y = 4. * (1. - t).powi(3);
+            let t = (self.lyric_start.elapsed().as_secs_f64() / 0.24).min(1.);
+            self.outgoing_opacity = 1. - (1. - t).powi(4);
+            self.outgoing_y = 5. * (1. - t).powi(4);
             self.previous_lyric = std::mem::replace(&mut self.lyric, lyric);
             self.lyric_start = Instant::now();
         }
@@ -2485,19 +2603,23 @@ impl App {
         // The click-through visual HWND retains the complete GPU surface, including
         // shadows. This separate, undrawn HWND receives input only inside the
         // animated contour. No alpha readback or cursor polling is required.
-        let hidden = self.hidden_edge();
-        let (r, radius) = if hidden {
-            (self.hidden_edge_rect(), 2.5)
+        let now = self.start.elapsed().as_secs_f64();
+        let morph = self.island_morph.presentation(now, self.layout.host);
+        let hidden = self.hidden_edge() && !morph.active;
+        let (r, radius) = if morph.active && !self.alerts.visible() && !self.banner.visible() {
+            (morph.rect, morph.radius)
+        } else if hidden {
+            (self.hidden_edge_hit_rect(), 2.5)
         } else if self.alerts.visible(){
-            let(r,rad,_)=self.alerts.banner.presentation(self.start.elapsed().as_secs_f64());(r,rad)
+            let(r,rad,_)=self.alerts.banner.presentation(now);(r,rad)
         } else if self.banner.visible() {
-            let (r, radius, _) = self.banner.presentation(self.start.elapsed().as_secs_f64());
+            let (r, radius, _) = self.banner.presentation(now);
             (r, radius)
         } else {
             self.shape()
         };
         let scale = GetDpiForWindow(self.hwnd).max(96) as f64 / 96.;
-        let satellite = if hidden {
+        let satellite = if hidden || morph.active {
             Rect::default()
         } else if !self.mini()
             && !self.expanded
@@ -3076,6 +3198,9 @@ impl App {
                 .unwrap_or("Noto Sans SC"),
             timer_mono: self.flag("TimerMonoDigits", false),
             hidden_edge: self.hidden_edge(),
+            morph: self
+                .island_morph
+                .presentation(self.start.elapsed().as_secs_f64(), self.layout.host),
             expressive_dark: true,
             mini: self.mini(),
             mini_light_field: self.settings["MiniMaterial"] == "LightField",
@@ -3321,7 +3446,7 @@ impl App {
         result
     }
     unsafe fn draw(&mut self) -> Result<()> {
-        if self.hidden_edge() || self.hidden_mini_mode() {
+        if self.hidden_edge() || self.hidden_mini_mode() || self.island_morph.active() {
             self.opacity = 1.;
             self.display_wanted = true;
         }
@@ -3714,7 +3839,9 @@ impl App {
                 }
             }
             Some(top_popup::Event::CopyCode(code)) => {
-                let _ = verification_code::copy(&code, self.hwnd);
+                let res = verification_code::copy(&code, self.hwnd);
+                self.top_popup
+                    .set_copy_feedback(res.is_ok(), res.err().unwrap_or_default());
             }
             None => {}
         }
@@ -3932,11 +4059,26 @@ impl App {
                     if notice.app_id.eq_ignore_ascii_case("WeChat") { continue }
                     let policy = notifications::Policy::from_settings(&self.settings);
                     if policy.should_show() && policy.permits(&notice.app_id, &notice.app_name) {
-                        let code=if self.flag("VerificationCodeEnabled",true){verification_code::extract(&notice.title,&notice.body)}else{None};
+                        let code = if self.flag("VerificationCodeEnabled", true) {
+                            verification_code::extract_from_notice(
+                                &notice.app_name,
+                                &notice.title,
+                                &notice.body,
+                            )
+                        } else {
+                            None
+                        };
                         if let Some(code)=code{
                             if !self.session_locked{
-                                if self.wake_for_transient_notice(){
-                                    self.alerts.enqueue(capsule_alert::Alert::verification(&notice.app_id,&notice.app_name,code));
+                                let alert=capsule_alert::Alert::verification(&notice.app_id,&notice.app_name,code);
+                                if !self.taskbar_mode()&&self.alerts.visible(){
+                                    let (base,rad)=self.shape();
+                                    let now=self.start.elapsed().as_secs_f64();
+                                    if self.alerts.preempt_or_enqueue(alert,base,rad,self.layout.host.w,self.layout.capsule.y,now,self.flag("Animation",true)){
+                                        self.hide_at=None;self.fade(1.);self.dirty=true;
+                                    }
+                                }else if self.wake_for_transient_notice(){
+                                    self.alerts.enqueue(alert);
                                 }
                             }
                         }else{
@@ -4049,15 +4191,19 @@ impl App {
             if !self.base_needed() { self.fade(0.); }
         }
         if (self.opacity - self.fade_to).abs() > 0.00001 {
+            let appearing = self.fade_to > self.fade_from;
+            let dur = if appearing { 0.22 } else { 0.17 };
             let t = if self.flag("Animation", true) {
-                (self.fade_start.elapsed().as_secs_f64() / 0.2).min(1.)
+                (self.fade_start.elapsed().as_secs_f64() / dur).min(1.)
             } else {
                 1.
             };
-            // A symmetric sine starts slow, and an appearing surface is exactly what the eye
-            // is locked onto at that instant. The fluid curve decelerates into place instead,
-            // so the island is already most of the way visible by the time it is noticed.
-            let eased = motion::cubic_out(t);
+            // Apple 非对称显隐曲线：淡入使用 Quintic 四次缓出迅速聚焦，淡出平稳收束
+            let eased = if appearing {
+                1. - (1. - t).powi(4)
+            } else {
+                motion::cubic_out(t)
+            };
             self.opacity = self.fade_from + (self.fade_to - self.fade_from) * eased;
             self.dirty = true;
         }
@@ -4343,6 +4489,22 @@ impl App {
         if self.compact_size.moving() && self.compact_size.tick(dt, self.options().duration) {
             self.layout
                 .set_compact(self.compact_size.width, self.compact_size.height);
+            self.dirty = true;
+        }
+        if self.island_morph.active() {
+            let now = self.start.elapsed().as_secs_f64();
+            match self.island_morph.mode() {
+                morph_transition::IslandMode::Strip => {
+                    self.island_morph.update_target(self.hidden_edge_rect(), 2.5, now);
+                }
+                morph_transition::IslandMode::Normal | morph_transition::IslandMode::Mini => {
+                    let target_rect = self.layout.capsule;
+                    let target_rad = self.capsule_corner_radius(target_rect.h);
+                    self.island_morph.update_target(target_rect, target_rad, now);
+                }
+            }
+            let _ = self.island_morph.tick(now);
+            let _ = unsafe { self.sync_input_region() };
             self.dirty = true;
         }
         // 任务栏模式每 200ms 复核一次任务栏几何与 Z-Order（防被 Windows 任务栏遮盖/吞掉、适配系统深浅与对齐切换）
@@ -5354,6 +5516,7 @@ impl App {
                 ) {
                     if matches!(key, "TaskbarModeEnabled" | "TaskbarAlwaysShow") {
                         if self.taskbar_mode() {
+                            self.island_morph.cancel();
                             self.user_hidden = false;
                             self.hidden_mini = false;
                             self.edge_revealed = false;
@@ -5449,9 +5612,47 @@ impl App {
                 if let Some(b) = &self.backend {
                     b.apply(self.settings.clone());
                 }
+                let size_mode_origin = if r["value"]["key"] == "IslandSizeMode"
+                    && !self.taskbar_mode()
+                    && !self.user_hidden
+                    && self.opacity > 0.01
+                {
+                    let now = self.start.elapsed().as_secs_f64();
+                    let (rect, rad, sm, mm) = self.live_morph_origin(now);
+                    let was_mini = old["IslandSizeMode"].as_str() == Some("Mini");
+                    Some((now, rect, rad, sm, if mm > 0.5 || was_mini { 1. } else { 0. }))
+                } else {
+                    None
+                };
                 if let Err(e) = self.position() {
                     self.error = Some(e.to_string());
                     return json!({"success":false,"message":e.to_string()});
+                }
+                if let Some((now, from_rect, from_rad, from_strip, from_mini)) = size_mode_origin {
+                    let default_h = if self.mini() { 14. } else { 40. };
+                    let (tw, th) = unsafe { self.measure_compact_layout() }
+                        .unwrap_or((self.compact_base(), default_h));
+                    self.compact_size = compact::Resize::new(tw, th);
+                    self.layout.set_compact(tw, th);
+                    let to_mode = if self.mini() {
+                        morph_transition::IslandMode::Mini
+                    } else {
+                        morph_transition::IslandMode::Normal
+                    };
+                    let target_rect = self.layout.capsule;
+                    let target_rad = self.capsule_corner_radius(th);
+                    self.island_morph.transition(
+                        from_rect,
+                        from_rad,
+                        from_strip,
+                        from_mini,
+                        to_mode,
+                        target_rect,
+                        target_rad,
+                        now,
+                        self.flag("Animation", true),
+                        self.options().duration,
+                    );
                 }
                 if r["value"]["key"] == "SystemStateHintPlacement" {
                     unsafe {
@@ -5590,14 +5791,23 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     };
                     let _ = ScreenToClient(hwnd, &mut pt);
                     let s = GetDpiForWindow(hwnd).max(96) as f64 / 96.;
-                    if a.hidden_edge() {
-                        return LRESULT(if a.hidden_edge_rect().contains(pt.x as f64 / s, pt.y as f64 / s) {
+                    let (px, py) = (pt.x as f64 / s, pt.y as f64 / s);
+                    if a.island_morph.active() && !a.alerts.visible() && !a.banner.visible() {
+                        let p = a.island_morph.presentation(a.start.elapsed().as_secs_f64(), a.layout.host);
+                        return LRESULT(if inside_round_rect(p.rect, p.radius, px, py) {
                             HTCLIENT as isize
                         } else {
                             HTTRANSPARENT as isize
                         });
                     }
-                    return LRESULT(if a.hit(pt.x as f64 / s, pt.y as f64 / s) < 0 {
+                    if a.hidden_edge() {
+                        return LRESULT(if a.hidden_edge_hit_rect().contains(px, py) {
+                            HTCLIENT as isize
+                        } else {
+                            HTTRANSPARENT as isize
+                        });
+                    }
+                    return LRESULT(if a.hit(px, py) < 0 {
                         HTTRANSPARENT as isize
                     } else {
                         HTCLIENT as isize
@@ -7316,12 +7526,16 @@ fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 || app.banner.visible()
                 || app.osd_banner.visible()
                 || app.alerts.visible()
+                || app.top_popup.visible()
+                || app.bottom_osd.visible()
+                || app.island_morph.active()
+                || app.compact_size.moving()
                 || app.opacity > 0.001
                     && (app.snapshot["isPlaying"] == true || app.auxiliary_state().0)
                     && app.flag("Animation", true)
                 || app.transition.is_some()
                 || (app.opacity - app.fade_to).abs() > 0.00001
-                || app.lyric_start.elapsed() < Duration::from_millis(180);
+                || app.lyric_start.elapsed() < Duration::from_millis(250);
             // Pace before drawing: Present(1) already waits for the compositor, so
             // this only spends what is left of the frame budget.
             // Only an interaction, a transition, a fade or an arriving lyric needs the panel
@@ -7331,6 +7545,8 @@ fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 || app.liquid_timer_visible()
                 || app.feedback_moving
                 || app.transition.is_some()
+                || app.island_morph.active()
+                || app.compact_size.moving()
                 || app.swipe.is_some_and(|s| s.active)
                 || app.dragging.is_some()
                 || app.hide_drag.is_some_and(|d| d.active)
@@ -7338,8 +7554,10 @@ fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 || app.banner.visible()
                 || app.osd_banner.visible()
                 || app.alerts.visible()
+                || app.top_popup.visible()
+                || app.bottom_osd.visible()
                 || app.switching
-                || app.lyric_start.elapsed() < Duration::from_millis(180);
+                || app.lyric_start.elapsed() < Duration::from_millis(250);
             if animating {
                 if interactive {
                     pacer.wait();
@@ -8139,6 +8357,41 @@ mod hide_gesture_tests {
         }
         assert!(!seen.contains(&PracticeStep::Swipe), "{seen:?}");
         assert!(seen.contains(&PracticeStep::Hide) && seen.contains(&PracticeStep::Recover));
+    }
+    #[test]
+    fn four_way_island_strip_and_mini_morphs_start_smoothly_and_interrupt_cleanly() {
+        let mut a = App::new(PathBuf::new(), PathBuf::new(), true);
+        a.opacity = 1.;
+        a.settings["Animation"] = json!(true);
+
+        // 1. 灵动岛 -> 蓝条
+        a.settings["HiddenDisplay"] = json!("Strip");
+        a.hide_by_gesture();
+        assert!(a.user_hidden && a.hidden_edge() && a.island_morph.active());
+        assert_eq!(a.island_morph.mode(), morph_transition::IslandMode::Strip);
+
+        // 2. 中途立即点按蓝条 -> 还原灵动岛（连续不跳变）
+        let t_mid = a.start.elapsed().as_secs_f64();
+        let before = a.island_morph.presentation(t_mid, a.layout.host);
+        a.reveal_hidden_edge();
+        assert!(!a.user_hidden && !a.hidden_edge() && a.island_morph.active());
+        assert_eq!(a.island_morph.mode(), morph_transition::IslandMode::Normal);
+        let after = a.island_morph.presentation(t_mid, a.layout.host);
+        assert!((before.rect.w - after.rect.w).abs() < 2.0);
+
+        // 3. 灵动岛展开态右键直缩 -> Mini 岛
+        a.expanded = true;
+        a.held = true;
+        a.frame = Frame::expanded();
+        a.settings["HiddenDisplay"] = json!("Mini");
+        a.hide_by_gesture();
+        assert!(!a.expanded && !a.held && a.hidden_mini_mode() && a.island_morph.active());
+        assert_eq!(a.island_morph.mode(), morph_transition::IslandMode::Mini);
+
+        // 4. Mini 岛右键还原 -> 灵动岛
+        a.reveal_hidden_edge();
+        assert!(!a.user_hidden && !a.hidden_mini_mode() && a.island_morph.active());
+        assert_eq!(a.island_morph.mode(), morph_transition::IslandMode::Normal);
     }
 }
 

@@ -25,6 +25,10 @@ impl Stability{
   now-self.since>=if shrinking{shrink}else{grow}
  }
 }
+/// 折叠连续空白字符为单个空格并去除首尾空白，避免源歌词脏空格挤出省略号。
+pub fn normalize_line(s:&str)->String{
+ s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
 /// A whitespace-only lyric is missing content, not a visible line.
 pub fn primary(snapshot:&Value)->&str{
  snapshot["frame"]["currentLine"].as_str().map(str::trim).filter(|s|!s.is_empty())
@@ -150,5 +154,9 @@ pub fn capsule_height(font_size:f64,line_spacing:f64,scale:f64,double:bool)->f64
   assert_eq!(primary(&json!({"track":null})),"打开播放器，开始一首音乐");
   assert_eq!(primary(&json!({"track":{"title":" "},"frame":{"currentLine":" "}})),"打开播放器，开始一首音乐");
   assert_eq!(primary(&json!({"frame":{"currentLine":"此刻的旋律"}})),"此刻的旋律");
+ }
+ #[test]fn normalize_line_collapses_dirty_spaces(){
+  assert_eq!(normalize_line("那安慰我的样子                                                                            哄我别哭"),"那安慰我的样子 哄我别哭");
+  assert_eq!(normalize_line("  hello   world  "),"hello world");
  }
 }

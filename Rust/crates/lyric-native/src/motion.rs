@@ -21,7 +21,7 @@ impl Frame {
     pub fn values(self)->[f64;8] { [self.capsule_scale_y,self.card_reveal,self.card_offset_y,self.card_opacity,self.card_scale,self.card_blur,self.content_opacity,self.content_offset_y] }
 }
 
-const FLUID_SCALE_FLOOR:f64=0.98;
+const FLUID_SCALE_FLOOR: f64 = 0.95;
 
 #[derive(Clone,Copy)]
 pub struct Transition{origin:Frame,tangent:Frame,options:Options,reduced:bool,frequency:f64,ratio:f64,pub end:Frame,pub duration_ms:f64}
@@ -32,10 +32,22 @@ impl Transition{
         options.spring.stiffness=clean(options.spring.stiffness,420.,1.,100000.);
         options.spring.damping=clean(options.spring.damping,30.,0.,10000.);
         let requested=clean(if expanded{options.duration}else{options.collapse_duration},480.,40.,5000.);
-        let frequency=(options.spring.stiffness/options.spring.mass).sqrt()*360./requested;
-        let ratio=(options.spring.damping/(2.*(options.spring.stiffness*options.spring.mass).sqrt())).max(1.);
-        let slow=frequency/(ratio+(ratio*ratio-1.).sqrt());
-        let duration_ms=if reduced{120.}else if options.curve.is_some(){requested}else{12000./slow};
+        let frequency=(options.spring.stiffness/options.spring.mass).sqrt()*380./requested;
+        let raw_ratio=options.spring.damping/(2.*(options.spring.stiffness*options.spring.mass).sqrt());
+        // 对标 Apple Dynamic Island：展开态保留克制的欠阻尼弹性，收起态更利落干脆
+        let ratio=if expanded{(raw_ratio*0.96).clamp(0.74,1.6)}else{(raw_ratio*1.06).clamp(0.84,1.8)};
+        let duration_ms=if reduced{
+            120.
+        }else if options.curve.is_some(){
+            requested
+        }else if ratio<1.-1e-5{
+            ((-0.0005_f64.ln())/(ratio*frequency)*1000.).clamp(240.,700.)
+        }else if (ratio-1.).abs()<=1e-5{
+            ((-0.0005_f64.ln())/frequency*1000.).clamp(240.,720.)
+        }else{
+            let slow=frequency/(ratio+(ratio*ratio-1.).sqrt());
+            (7600./slow).clamp(240.,740.)
+        };
         Self{origin,tangent,options,reduced,frequency,ratio,end:if expanded{Frame::expanded()}else{Frame::hidden(options)},duration_ms}
     }
     pub fn sample(&self,ms:f64)->Frame{self.at(ms).0}
@@ -74,15 +86,33 @@ impl Transition{
         (frame(values),frame(rates))
     }
     fn channels(&self,p:f64,v:f64)->([f64;8],[f64;8]){
-        let q=p.clamp(0.,1.);let (opacity,d_opacity)=step(q,0.16,0.72);let (text,d_text)=step(q,0.24,0.90);
-        let (size,d_size)=step(q,0.,0.76);let (focus,d_focus)=step(q,0.10,0.82);let lift=self.options.gap+10.;
-        ([1.,p.clamp(0.,1.035),lift*(q-1.),opacity,FLUID_SCALE_FLOOR+(1.-FLUID_SCALE_FLOOR)*size,6.*(1.-focus),text,6.*(1.-text)],
-         [0.,v,lift*v,d_opacity*v,(1.-FLUID_SCALE_FLOOR)*d_size*v,-6.*d_focus*v,d_text*v,-6.*d_text*v])
+        let q=p.clamp(0.,1.);let over=(p-q).clamp(-0.015,0.045);
+        let (opacity,d_opacity)=step(q,0.12,0.68);let (text,d_text)=step(q,0.24,0.86);
+        let (size,d_size)=step(q,0.,0.74);let (focus,d_focus)=step(q,0.10,0.80);let lift=self.options.gap+10.;
+        let scale=FLUID_SCALE_FLOOR+(1.-FLUID_SCALE_FLOOR)*size+over.max(0.)*0.16;
+        let d_scale=(1.-FLUID_SCALE_FLOOR)*d_size*v+if p>1.&&p<1.045{0.16*v}else{0.};
+        let d_reveal=if p>-0.015&&p<1.045{v}else{0.};
+        let d_offset=if p>0.&&p<1.{lift*v}else{0.};
+        ([1.,p.clamp(-0.015,1.045),lift*(q-1.),opacity,scale,6.*(1.-focus),text,6.*(1.-text)],
+         [0.,d_reveal,d_offset,d_opacity*v,d_scale,-6.*d_focus*v,d_text*v,-6.*d_text*v])
     }
 }
 fn frame(v:[f64;8])->Frame{Frame{capsule_scale_y:v[0],card_reveal:v[1],card_offset_y:v[2],card_opacity:v[3],card_scale:v[4],card_blur:v[5],content_opacity:v[6],content_offset_y:v[7]}}
 fn damped(displacement:f64,velocity:f64,frequency:f64,ratio:f64,time:f64)->(f64,f64){
-    if (ratio-1.).abs()<1e-6{let linear=velocity+frequency*displacement;let decay=(-frequency*time).exp();return ((displacement+linear*time)*decay,(linear-frequency*(displacement+linear*time))*decay)}
+    if (ratio-1.).abs()<1e-5{
+        let linear=velocity+frequency*displacement;
+        let decay=(-frequency*time).exp();
+        return ((displacement+linear*time)*decay,(linear-frequency*(displacement+linear*time))*decay);
+    }
+    if ratio<1.{
+        let wd=frequency*(1.-ratio*ratio).sqrt();
+        let a=displacement;
+        let b=(velocity+ratio*frequency*displacement)/wd;
+        let decay=(-ratio*frequency*time).exp();
+        let (sin_t,cos_t)=(wd*time).sin_cos();
+        let env=a*cos_t+b*sin_t;
+        return (decay*env,decay*(-ratio*frequency*env+wd*(b*cos_t-a*sin_t)));
+    }
     let separation=(ratio*ratio-1.).sqrt();let slow=-frequency/(ratio+separation);let fast=-frequency*(ratio+separation);
     let slow_weight=(velocity-fast*displacement)/(slow-fast);let fast_weight=displacement-slow_weight;
     let a=slow_weight*(slow*time).exp();let b=fast_weight*(fast*time).exp();(a+b,slow*a+fast*b)
@@ -156,12 +186,14 @@ impl Activity {
         let close=Transition::new(false,Frame::expanded(),o,Frame::default(),false);
         assert_eq!(close.sample(close.duration_ms).values(),Frame::hidden(o).values());
     }
-    #[test] fn fluid_is_monotonic_and_never_opens_from_zero() {
+    #[test] fn fluid_has_subtle_apple_overshoot_and_never_opens_from_zero() {
         let o=Options::default();let t=Transition::new(true,Frame::hidden(o),o,Frame::default(),false);
-        let mut previous=-1.;
-        for i in 0..=400{let f=t.sample(i as f64);assert!(f.card_reveal>=previous-1e-9);previous=f.card_reveal;
+        let mut max_reveal=0.0_f64;
+        for i in 0..=500{let f=t.sample(i as f64);max_reveal=max_reveal.max(f.card_reveal);
+            assert!(f.card_reveal>=-0.015&&f.card_reveal<=1.045,"reveal out of bounds: {}",f.card_reveal);
             assert!(f.card_scale>=FLUID_SCALE_FLOOR-1e-9,"scale dipped to {}",f.card_scale);
             assert!((0.0..=1.0).contains(&f.card_opacity));}
+        assert!(max_reveal>1.005,"expected subtle Apple spring overshoot, got {max_reveal}");
     }
     /// Contents must not be readable before the container has room for them.
     #[test] fn fluid_contents_trail_the_outline() {

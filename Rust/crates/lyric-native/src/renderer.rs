@@ -867,12 +867,13 @@ impl Renderer {
             .measure_weighted(text, size as f32, weight)
             .min(r.w);
         let x = r.x + (r.w - width) * align;
-        let phase = if s.animate {
-            (s.lyric_age_ms / 180.).clamp(0., 1.)
+        let raw_phase = if s.animate {
+            (s.lyric_age_ms / 240.).clamp(0., 1.)
         } else {
             1.
         };
-        let y = r.y + 4. * (1. - phase).powi(3);
+        let phase = 1. - (1. - raw_phase).powi(4);
+        let y = r.y + 5. * (1. - phase);
         let glyph_box = vr(Rect::new(x, y, width, r.h));
         let boundary = x + width * s.highlight.clamp(0., 1.);
         if s.lyric_glow && s.has_track && width > 0. && phase > 0.001 {
@@ -944,11 +945,12 @@ impl Renderer {
         let y = c.y + (c.h - h) / 2.;
         let right_reserve = 70.;
         let viewport = Rect::new(c.x + 40., y, (c.w - right_reserve).max(20.), line);
-        let phase = if s.animate {
-            (s.lyric_age_ms / 180.).clamp(0., 1.)
+        let raw_phase = if s.animate {
+            (s.lyric_age_ms / 240.).clamp(0., 1.)
         } else {
             1.
         };
+        let phase = 1. - (1. - raw_phase).powi(4);
         if phase < 1. && !s.previous_lyric.is_empty() {
             self.clip(
                 Rect::new(viewport.x, c.y, viewport.w, c.h),
@@ -957,7 +959,7 @@ impl Renderer {
             );
             self.text_at(
                 s.previous_lyric,
-                Rect::new(viewport.x, y - 5. * phase, viewport.w, line),
+                Rect::new(viewport.x, y - 5.5 * phase, viewport.w, line),
                 s.font_size,
                 500,
                 0xff000000 | tones.on_surface,
@@ -1317,12 +1319,13 @@ impl Renderer {
 
         let main_elided = self.elided_line(main_raw, text_w, 12.5, 600);
         let sub_elided = self.elided_line(sub_raw, text_w, 10.0, 400);
-        let phase = if s.animate {
-            (s.lyric_age_ms / 180.).clamp(0., 1.)
+        let raw_phase = if s.animate {
+            (s.lyric_age_ms / 240.).clamp(0., 1.)
         } else {
             1.
         };
-        let main_y = c.y + 3.5 + 2.5 * (1. - phase).powi(3);
+        let phase = 1. - (1. - raw_phase).powi(4);
+        let main_y = c.y + 3.5 + 3.0 * (1. - phase);
         let main_box = Rect::new(text_x, main_y, text_w, 16.5);
 
         if has_real_lyric && s.highlight > 0.005 {
@@ -2857,7 +2860,7 @@ impl Renderer {
         self.gpu.capture_frame(&canvas, 1.5, (f64::from(width)*1.5).ceil() as u32, 42).map_err(err)
     }
     fn paint_scene(&mut self, s: &Scene<'_>) {
-        if s.hidden_edge {
+        if s.hidden_edge && !s.morph.active {
             self.canvas = VScene::new();
             let c = s.layout.capsule;
             let width = 56.0_f64.min(c.w.max(1.));
@@ -2881,14 +2884,23 @@ impl Renderer {
             self.previous_cover = None;
         }
         self.canvas = VScene::new();
-        let (base, base_radius) =
+        let is_popup = s.notification.is_some() || s.osd.is_some() || s.alert.is_some();
+        let morph_live = s.morph.active && !is_popup;
+        let (base, base_radius) = if morph_live {
+            (s.morph.rect, s.morph.radius)
+        } else {
             s.layout
-                .morph_shape_with_radii(s.frame.card_reveal, s.capsule_radius, s.radius);
-        let p = s.frame.card_reveal;
-        let (card_softness, compact_softness) = crate::motion::content_softness(
-            p,
-            s.animate && !s.drag_active && s.notification.is_none() && s.osd.is_none() && s.alert.is_none(),
-        );
+                .morph_shape_with_radii(s.frame.card_reveal, s.capsule_radius, s.radius)
+        };
+        let p = if morph_live { 0. } else { s.frame.card_reveal };
+        let (card_softness, compact_softness) = if morph_live {
+            (0., s.morph.softness)
+        } else {
+            crate::motion::content_softness(
+                p,
+                s.animate && !s.drag_active && s.notification.is_none() && s.osd.is_none() && s.alert.is_none(),
+            )
+        };
         let (shape, radius) = if s.alert.is_some(){
             (s.alert_rect,s.alert_radius)
         }else if s.notification.is_some() {
@@ -2924,16 +2936,23 @@ impl Renderer {
             .then(|| expanded_card_path(shape, radius, p));
         self.clip(s.layout.host, 0., s.opacity * transient_alpha as f32);
         self.clip(s.layout.host, 0., s.background_opacity);
-        let is_popup = s.notification.is_some() || s.osd.is_some() || s.alert.is_some();
         let is_taskbar_widget = s.layout.anchor_bottom && p < 0.01 && !is_popup;
         let shadow_mul = if is_taskbar_widget {
             0.
         } else if s.layout.anchor_bottom {
             (p * 1.4).clamp(0., 1.)
+        } else if morph_live {
+            s.morph.shadow_mul
         } else {
             1.
         };
-        let base_shadow_a = if s.mini && p < 0.01 { 0x0a } else { 0x38 };
+        let base_shadow_a = if morph_live {
+            0x38
+        } else if s.mini && p < 0.01 {
+            0x0a
+        } else {
+            0x38
+        };
         let shadow = color(((base_shadow_a as f64 * shadow_mul).round() as u32) << 24);
         if shadow_mul > 0.01 {
             // 将外投影晕散半径收束至 24dp 宿主安全边距以内，彻底消除左右与底部矩形裁切黑线并降低离屏开销
@@ -2945,7 +2964,12 @@ impl Renderer {
                 13. / 3.,
             );
         }
-        if !s.mini && !is_taskbar_widget && !is_popup {
+        let allow_glow = if morph_live {
+            s.morph.strip_mix < 0.45 && s.morph.mini_mix < 0.45
+        } else {
+            !s.mini
+        };
+        if allow_glow && !is_taskbar_widget && !is_popup {
             let accent = self.m3(s).primary;
             crate::island_glow::paint(&mut self.canvas, vr(shape), radius, accent, s.glow);
         }
@@ -2969,6 +2993,41 @@ impl Renderer {
         }
         if is_taskbar_widget {
             self.taskbar_widget_surface(shape, radius, s);
+        } else if morph_live && s.morph.strip_mix > 0.002 {
+            // 灵动岛与蓝条之间的液态材质交叉融合：避免出现硬切闪烁
+            let island_alpha = (1. - s.morph.strip_mix).clamp(0., 1.) as f32;
+            if island_alpha > 0.004 {
+                self.clip(shape, radius, island_alpha);
+                self.material_surface_impl(
+                    shape,
+                    radius,
+                    surface,
+                    curve.as_ref(),
+                    LightFieldCtx {
+                        time_ms: s.time_ms,
+                        reveal: s.frame.card_reveal,
+                        cover_age_ms: s.cover_age_ms,
+                        animate: s.animate,
+                    },
+                );
+                self.canvas.pop_layer();
+            }
+            let strip_alpha = s.morph.strip_mix.clamp(0., 1.) as f32;
+            if strip_alpha > 0.004 {
+                self.clip(shape, radius, strip_alpha);
+                let bar_color = 0xd8000000 | (s.tool_theme.fill & 0x00ff_ffff);
+                dotisle_render::draw::fill_rounded(&mut self.canvas, vr(shape), radius, bar_color);
+                if s.morph.strip_mix < 0.96 {
+                    dotisle_render::draw::outline_rounded(
+                        &mut self.canvas,
+                        vr(shape),
+                        radius,
+                        0x38ffffff,
+                        0.75,
+                    );
+                }
+                self.canvas.pop_layer();
+            }
         } else {
             self.material_surface_impl(
                 shape,
@@ -2985,7 +3044,11 @@ impl Renderer {
         }
         self.paint_palette = saved_palette;
         self.canvas.pop_layer();
-        let alpha = crate::motion::content_weights(s.frame).0 * music_alpha;
+        let alpha = if morph_live {
+            0.
+        } else {
+            crate::motion::content_weights(s.frame).0 * music_alpha
+        };
         if alpha > 0.001 {
             let part = self.collect(|a| {
                 let w = s.layout.card.w;
@@ -3048,64 +3111,108 @@ impl Renderer {
         }
         let alpha = crate::motion::content_weights(s.frame).1 * music_alpha;
         if alpha > 0.001 {
-            let part = self.collect(|a| {
-                let w = s.layout.capsule.w;
-                if s.drag_active {
-                    let mut neighbor = compact;
-                    neighbor.panel = s.drag_panel;
-                    let layer = a.collect(|a| a.compact_view(&neighbor));
-                    a.canvas.append(
-                        &layer,
-                        Some(Affine::translate((
-                            s.swipe_offset - s.swipe_offset.signum() * w,
-                            0.,
-                        ))),
+            if morph_live {
+                // 双轨交叉淡化：经典胶囊与 Mini 胶囊在各自的稳定排版框内渲染，
+                // 再由实时形变轮廓居中裁剪并辅以微柔焦，文字绝不被挤扁或跳行。
+                let paint_track = |this: &mut Self, mut track_scene: Scene<'_>, is_mini: bool, track_alpha: f32| {
+                    if track_alpha <= 0.004 {
+                        return;
+                    }
+                    track_scene.mini = is_mini;
+                    let target_w = s.layout.capsule.w.max(shape.w);
+                    let target_h = if is_mini { 14. } else { s.layout.capsule.h.max(40.) };
+                    let ref_box = Rect::new(
+                        shape.x + (shape.w - target_w) / 2.,
+                        shape.y + (shape.h - target_h) / 2.,
+                        target_w,
+                        target_h,
                     );
-                }
-                if s.switching && s.switch_outgoing {
-                    let mut old = compact;
-                    old.panel = s.previous_panel;
-                    let layer = a.collect(|a| a.compact_view(&old));
-                    a.canvas.append(
-                        &layer,
-                        Some(Affine::translate((
-                            s.switch_offset - s.switch_direction * w + s.swipe_offset,
-                            0.,
-                        ))),
-                    );
-                }
-                let layer = a.collect(|a| a.compact_view(&compact));
-                a.canvas.append(
-                    &layer,
-                    Some(Affine::translate((s.switch_offset + s.swipe_offset, 0.))),
-                );
-            });
-            if let Some(path) = &curve {
-                self.canvas.push_layer(Mix::Normal, alpha as f32, Affine::IDENTITY, path);
+                    track_scene.layout.capsule = ref_box;
+                    track_scene.capsule_radius = target_h / 2.;
+                    let part = this.collect(|a| a.compact_view(&track_scene));
+                    this.clip(shape, radius, track_alpha);
+                    if compact_softness > 0. {
+                        this.canvas.push_gaussian_layer(
+                            Affine::IDENTITY,
+                            &vr(shape).inflate(5., 5.),
+                            compact_softness,
+                        );
+                    }
+                    this.canvas.append(&part, None);
+                    if compact_softness > 0. {
+                        this.canvas.pop_layer();
+                    }
+                    this.canvas.pop_layer();
+                };
+                paint_track(self, compact, false, (alpha as f32) * s.morph.classic_alpha);
+                paint_track(self, compact, true, (alpha as f32) * s.morph.mini_alpha);
             } else {
-                self.clip(shape, radius, alpha as f32);
-            }
-            if compact_softness > 0. {
-                self.canvas.push_gaussian_layer(
-                    Affine::IDENTITY,
-                    &vr(shape).inflate(5., 5.),
-                    compact_softness,
+                let part = self.collect(|a| {
+                    let w = s.layout.capsule.w;
+                    if s.drag_active {
+                        let mut neighbor = compact;
+                        neighbor.panel = s.drag_panel;
+                        let layer = a.collect(|a| a.compact_view(&neighbor));
+                        a.canvas.append(
+                            &layer,
+                            Some(Affine::translate((
+                                s.swipe_offset - s.swipe_offset.signum() * w,
+                                0.,
+                            ))),
+                        );
+                    }
+                    if s.switching && s.switch_outgoing {
+                        let mut old = compact;
+                        old.panel = s.previous_panel;
+                        let layer = a.collect(|a| a.compact_view(&old));
+                        a.canvas.append(
+                            &layer,
+                            Some(Affine::translate((
+                                s.switch_offset - s.switch_direction * w + s.swipe_offset,
+                                0.,
+                            ))),
+                        );
+                    }
+                    let layer = a.collect(|a| a.compact_view(&compact));
+                    a.canvas.append(
+                        &layer,
+                        Some(Affine::translate((s.switch_offset + s.swipe_offset, 0.))),
+                    );
+                });
+                if let Some(path) = &curve {
+                    self.canvas.push_layer(Mix::Normal, alpha as f32, Affine::IDENTITY, path);
+                } else {
+                    self.clip(shape, radius, alpha as f32);
+                }
+                if compact_softness > 0. {
+                    self.canvas.push_gaussian_layer(
+                        Affine::IDENTITY,
+                        &vr(shape).inflate(5., 5.),
+                        compact_softness,
+                    );
+                }
+                self.canvas.append(
+                    &part,
+                    Some(Affine::translate((
+                        base.x - s.layout.capsule.x,
+                        base.y - s.layout.capsule.y,
+                    ))),
                 );
-            }
-            self.canvas.append(
-                &part,
-                Some(Affine::translate((
-                    base.x - s.layout.capsule.x,
-                    base.y - s.layout.capsule.y,
-                ))),
-            );
-            if compact_softness > 0. {
+                if compact_softness > 0. {
+                    self.canvas.pop_layer();
+                }
                 self.canvas.pop_layer();
             }
-            self.canvas.pop_layer();
         }
-        if !s.mini && s.component_count > 1 && s.notification.is_none() && s.osd.is_none() && s.alert.is_none() {
-            self.clip(s.layout.host, 0., s.background_opacity);
+        let sat_vis = if morph_live {
+            ((1. - s.morph.strip_mix) * (1. - s.morph.mini_mix)).clamp(0., 1.) as f32
+        } else if s.mini {
+            0.
+        } else {
+            1.
+        };
+        if sat_vis > 0.01 && s.component_count > 1 && s.notification.is_none() && s.osd.is_none() && s.alert.is_none() {
+            self.clip(s.layout.host, 0., s.background_opacity * sat_vis);
             self.satellite(&compact);
             self.canvas.pop_layer();
         }
@@ -3384,6 +3491,7 @@ pub struct Scene<'a> {
     pub font_family: &'a str,
     pub timer_mono: bool,
     pub hidden_edge: bool,
+    pub morph: crate::morph_transition::MorphPresentation,
     pub expressive_dark: bool,
     pub mini: bool,
     pub mini_light_field: bool,

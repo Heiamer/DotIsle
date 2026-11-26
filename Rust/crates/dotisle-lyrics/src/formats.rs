@@ -13,11 +13,26 @@ pub fn time(s:&str)->Option<u64>{
 }
 fn number(s:&str)->Option<u64>{s.parse().ok().filter(|v|*v<=86_400_000)}
 fn adjusted(t:u64,offset:i64)->u64{t.saturating_add_signed(offset)}
+fn collapse_inline_whitespace(s:&str)->String{
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+fn collapse_word_whitespace(s:&str)->String{
+    let mut out=String::with_capacity(s.len());
+    let mut prev_space=false;
+    for c in s.chars(){
+        if c.is_whitespace(){
+            if !prev_space{out.push(' ');prev_space=true;}
+        }else{
+            out.push(c);prev_space=false;
+        }
+    }
+    out
+}
 pub fn parse(payload:&Payload)->Result<Lyrics,String>{
  if payload.instrumental{return Ok(Lyrics::instrumental())}if payload.original.len()>LIMIT{return Err("lyric exceeds size limit".into())}
  let plain=match payload.format{Format::Krc=>if payload.original.lines().any(|l|HEAD.is_match(l)){payload.original.trim_start_matches('\u{feff}').to_owned()}else{crate::crypto::krc_text(payload.original.as_bytes())?},Format::Qrc=>{if payload.original.trim().bytes().all(|b|b.is_ascii_hexdigit())&&!payload.original.trim().is_empty(){crate::crypto::qrc_text(payload.original.trim())?}else{payload.original.clone()}},_=>payload.original.clone()};
  let plain=if payload.format==Format::Qrc&&plain.contains("LyricContent="){qrc_body(&plain)?}else{plain};
- let mut lyrics=match payload.format{Format::Lrc=>lrc(&plain),Format::Qrc if !plain.lines().any(|l|HEAD.is_match(l))=>lrc(&plain),Format::Qrc|Format::Yrc|Format::Krc=>word_lines(&plain,payload.format),Format::Ttml=>ttml(&plain)?,Format::Text=>Lyrics{lines:plain.lines().filter(|l|!l.trim().is_empty()).map(|l|Cue{text:l.to_owned(),..Default::default()}).collect(),timed:false,instrumental:false}};
+ let mut lyrics=match payload.format{Format::Lrc=>lrc(&plain),Format::Qrc if !plain.lines().any(|l|HEAD.is_match(l))=>lrc(&plain),Format::Qrc|Format::Yrc|Format::Krc=>word_lines(&plain,payload.format),Format::Ttml=>ttml(&plain)?,Format::Text=>Lyrics{lines:plain.lines().map(collapse_inline_whitespace).filter(|l|!l.is_empty()).map(|text|Cue{text,..Default::default()}).collect(),timed:false,instrumental:false}};
  lyrics.finalize();if !payload.translation.trim().is_empty(){let translated=if payload.translation.contains("LyricContent="){qrc_body(&payload.translation).unwrap_or_default()}else{payload.translation.clone()};let mut translated=if translated.lines().any(|l|HEAD.is_match(l)){word_lines(&translated,Format::Qrc)}else{lrc(&translated)};translated.finalize();merge_translations(&mut lyrics,&translated)}
  if payload.format==Format::Krc{if let Some(language)=plain.lines().find_map(|l|l.strip_prefix("[language:").and_then(|s|s.strip_suffix(']'))){krc_translations(&mut lyrics,language);}}
  if lyrics.lines.len()<=2&&lyrics.lines.iter().any(|l|l.text.contains("纯音乐")||l.text.to_lowercase().contains("instrumental")){lyrics.instrumental=true;}
@@ -35,8 +50,8 @@ pub fn lrc(input:&str)->Lyrics{
  for row in input.trim_start_matches('\u{feff}').lines().take(50_000){
   let stamps=LRC.captures_iter(row).collect::<Vec<_>>();let Some(last)=stamps.last()else{continue};let body=row[last.get(0).unwrap().end()..].trim();
   for stamp in &stamps{let Some(at)=time(&format!("{}:{}",&stamp[1],stamp[2].replacen('.',".",1).replacen(':',".",1)))else{continue};let at=adjusted(at,offset);let tags=ANGLE.captures_iter(body).collect::<Vec<_>>();let mut words=Vec::new();
-   for(i,tag)in tags.iter().enumerate(){let text_end=tags.get(i+1).map(|t|t.get(0).unwrap().start()).unwrap_or(body.len());let text=body[tag.get(0).unwrap().end()..text_end].to_owned();let Some(start)=time(&tag[1])else{continue};let end=tags.get(i+1).and_then(|t|time(&t[1])).unwrap_or(start+500);if !text.is_empty(){words.push(Word{at:adjusted(start,offset),until:adjusted(end,offset),text});}}
-   let text=ANGLE.replace_all(body,"").to_string();if let Some(old)=lines.iter_mut().find(|l:&&mut Cue|l.at==at){if !text.is_empty()&&old.text!=text{old.translation=Some(text)}}else{lines.push(Cue{at,text,words,..Default::default()});}
+   for(i,tag)in tags.iter().enumerate(){let text_end=tags.get(i+1).map(|t|t.get(0).unwrap().start()).unwrap_or(body.len());let text=collapse_word_whitespace(&body[tag.get(0).unwrap().end()..text_end]);let Some(start)=time(&tag[1])else{continue};let end=tags.get(i+1).and_then(|t|time(&t[1])).unwrap_or(start+500);if !text.is_empty(){words.push(Word{at:adjusted(start,offset),until:adjusted(end,offset),text});}}
+   let text=collapse_inline_whitespace(&ANGLE.replace_all(body,""));if let Some(old)=lines.iter_mut().find(|l:&&mut Cue|l.at==at){if !text.is_empty()&&old.text!=text{old.translation=Some(text)}}else{lines.push(Cue{at,text,words,..Default::default()});}
   }
  }
  let mut result=Lyrics{lines,timed:true,instrumental:false};result.finalize();result
@@ -44,21 +59,21 @@ pub fn lrc(input:&str)->Lyrics{
 fn word_lines(input:&str,format:Format)->Lyrics{
  let pattern=match format{Format::Krc=>r"<(\d+),(\d+),\d+>",Format::Yrc=>r"\((\d+),(\d+),\d+\)",_=>r"\((\d+),(\d+)\)"};let word=Regex::new(pattern).unwrap();let mut lines=Vec::new();
  for row in input.lines().take(50_000){let Some(head)=HEAD.captures(row)else{continue};let Some(at)=number(&head[1])else{continue};let Some(length)=number(&head[2])else{continue};let body=&row[head.get(0).unwrap().end()..];let tags=word.captures_iter(body).collect::<Vec<_>>();let mut words=Vec::new();
-  for(i,tag)in tags.iter().enumerate(){let Some(start)=number(&tag[1])else{continue};let Some(length)=number(&tag[2])else{continue};let (text,start)=if format==Format::Qrc{let from=if i==0{0}else{tags[i-1].get(0).unwrap().end()};(body[from..tag.get(0).unwrap().start()].to_string(),start)}else{let to=tags.get(i+1).map(|c|c.get(0).unwrap().start()).unwrap_or(body.len());(body[tag.get(0).unwrap().end()..to].to_string(),if format==Format::Krc{at.saturating_add(start)}else{start})};words.push(Word{at:start,until:start.saturating_add(length),text});
+  for(i,tag)in tags.iter().enumerate(){let Some(start)=number(&tag[1])else{continue};let Some(length)=number(&tag[2])else{continue};let (text,start)=if format==Format::Qrc{let from=if i==0{0}else{tags[i-1].get(0).unwrap().end()};(body[from..tag.get(0).unwrap().start()].to_string(),start)}else{let to=tags.get(i+1).map(|c|c.get(0).unwrap().start()).unwrap_or(body.len());(body[tag.get(0).unwrap().end()..to].to_string(),if format==Format::Krc{at.saturating_add(start)}else{start})};words.push(Word{at:start,until:start.saturating_add(length),text:collapse_word_whitespace(&text)});
   }
-  let text=word.replace_all(body,"").to_string();lines.push(Cue{at,until:at.saturating_add(length),text,words,translation:None});
+  let text=collapse_inline_whitespace(&word.replace_all(body,""));lines.push(Cue{at,until:at.saturating_add(length),text,words,translation:None});
  }
  Lyrics{lines,timed:true,instrumental:false}
 }
-fn merge_translations(target:&mut Lyrics,translated:&Lyrics){for line in &mut target.lines{if let Some(t)=translated.lines.iter().min_by_key(|t|t.at.abs_diff(line.at)).filter(|t|t.at.abs_diff(line.at)<=200){if !t.text.trim().is_empty()&&t.text!=line.text{line.translation=Some(t.text.clone());}}}}
-fn krc_translations(target:&mut Lyrics,encoded:&str){use base64::Engine;let Ok(bytes)=base64::engine::general_purpose::STANDARD.decode(encoded)else{return};let Ok(data)=serde_json::from_slice::<serde_json::Value>(&bytes)else{return};if let Some(rows)=data["content"].as_array(){for group in rows{if group["type"].as_i64()!=Some(1){continue}if let Some(rows)=group["lyricContent"].as_array(){for(line,row)in target.lines.iter_mut().zip(rows){let text=row.as_array().map(|a|a.iter().filter_map(|v|v.as_str()).collect::<String>()).unwrap_or_default();if !text.is_empty(){line.translation=Some(text)}}}}}}
+fn merge_translations(target:&mut Lyrics,translated:&Lyrics){for line in &mut target.lines{if let Some(t)=translated.lines.iter().min_by_key(|t|t.at.abs_diff(line.at)).filter(|t|t.at.abs_diff(line.at)<=200){let cleaned=collapse_inline_whitespace(&t.text);if !cleaned.is_empty()&&cleaned!=line.text{line.translation=Some(cleaned);}}}}
+fn krc_translations(target:&mut Lyrics,encoded:&str){use base64::Engine;let Ok(bytes)=base64::engine::general_purpose::STANDARD.decode(encoded)else{return};let Ok(data)=serde_json::from_slice::<serde_json::Value>(&bytes)else{return};if let Some(rows)=data["content"].as_array(){for group in rows{if group["type"].as_i64()!=Some(1){continue}if let Some(rows)=group["lyricContent"].as_array(){for(line,row)in target.lines.iter_mut().zip(rows){let text=collapse_inline_whitespace(&row.as_array().map(|a|a.iter().filter_map(|v|v.as_str()).collect::<String>()).unwrap_or_default());if !text.is_empty(){line.translation=Some(text)}}}}}}
 fn inherited(n:roxmltree::Node,key:&str)->Option<u64>{n.ancestors().find_map(|n|n.attribute(key).and_then(time))}
 fn xml_text(n:roxmltree::Node)->String{n.descendants().filter(|d|d.is_text()).filter_map(|d|d.text()).collect::<String>()}
 fn ttml(input:&str)->Result<Lyrics,String>{
  let doc=roxmltree::Document::parse(input).map_err(|e|e.to_string())?;let mut result=Lyrics{timed:true,..Default::default()};
  for p in doc.descendants().filter(|n|n.is_element()&&n.tag_name().name()=="p").take(50_000){let Some(at)=inherited(p,"begin")else{continue};let until=p.attribute("end").and_then(time).or_else(||p.attribute("dur").and_then(time).map(|d|at.saturating_add(d))).or_else(||inherited(p,"end")).unwrap_or(at+6000);let mut cue=Cue{at,until,..Default::default()};
-  for node in p.children(){if node.is_text(){cue.text.push_str(node.text().unwrap_or(""));continue}if !node.is_element(){continue}if node.tag_name().name()=="br"{cue.text.push('\n');continue}let role=node.attributes().find(|a|a.name()=="role").map(|a|a.value()).unwrap_or("");if role.contains("translation"){cue.translation=Some(xml_text(node));continue}if role.contains("romanization"){continue}let text=xml_text(node);cue.text.push_str(&text);if let Some(start)=node.attribute("begin").and_then(time){let end=node.attribute("end").and_then(time).unwrap_or(until);cue.words.push(Word{at:start,until:end,text});}}
-  cue.text=cue.text.trim().to_owned();result.lines.push(cue);
+  for node in p.children(){if node.is_text(){cue.text.push_str(node.text().unwrap_or(""));continue}if !node.is_element(){continue}if node.tag_name().name()=="br"{cue.text.push('\n');continue}let role=node.attributes().find(|a|a.name()=="role").map(|a|a.value()).unwrap_or("");if role.contains("translation"){let tr=collapse_inline_whitespace(&xml_text(node));if !tr.is_empty(){cue.translation=Some(tr);}continue}if role.contains("romanization"){continue}let raw=xml_text(node);cue.text.push_str(&raw);if let Some(start)=node.attribute("begin").and_then(time){let end=node.attribute("end").and_then(time).unwrap_or(until);cue.words.push(Word{at:start,until:end,text:collapse_word_whitespace(&raw)});}}
+  cue.text=collapse_inline_whitespace(&cue.text);result.lines.push(cue);
  }
  Ok(result)
 }
@@ -71,4 +86,11 @@ fn ttml(input:&str)->Result<Lyrics,String>{
  #[test]fn qrc_literal_newlines_survive_xml_attribute_rules(){let l=p(Format::Qrc,"<QrcInfos><Lyric_1 LyricContent=\"[ti:晨雾]\n[2400,900]岸(2400,900)\n[5000,800]灯(5000,800)\"/></QrcInfos>");assert_eq!(l.lines.len(),2);assert_eq!(l.lines[1].at,5000);}
  #[test]fn enhanced_lrc_preserves_absolute_boundaries(){let l=p(Format::Lrc,"[00:07.20]<00:07.20>轻<00:07.85>风<00:08.60>\n[00:10.00]下一句");assert_eq!(l.lines[0].words[1].until,8600);assert_eq!(l.lines[0].text,"轻风");}
  #[test]fn malformed_or_oversized_times_do_not_panic(){assert!(p(Format::Lrc,"[99999999:23.2]x\n[offset:no]").lines.is_empty());assert!(p(Format::Yrc,"[23,10](bad)x").lines[0].words.is_empty());assert_eq!(time("01:02:03.004"),Some(3723004));assert_eq!(time("-2s"),None);assert_eq!(time("NaNs"),None);}
+ #[test]fn yrc_excessive_inline_spaces_are_collapsed(){
+  let spaces=" ".repeat(76);
+  let raw=format!("[206060,8960](206060,60,0)那(206120,30,0)安(206150,380,0)慰(206530,490,0)我(207020,140,0)的(207160,680,0)样(207840,840,0)子{spaces}(208680,320,0)哄(209000,570,0)我(209570,320,0)别(209890,630,0)哭 (210520,630,0)在(211150,290,0)耳(211440,230,0)边(211670,760,0)说(212430,690,0)故(213120,1900,0)事");
+  let l=p(Format::Yrc,&raw);
+  assert_eq!(l.lines[0].text,"那安慰我的样子 哄我别哭 在耳边说故事");
+  assert_eq!(l.lines[0].words[6].text,"子 ");
+ }
 }

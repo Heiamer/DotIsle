@@ -37,11 +37,27 @@ impl Hub{
     pub fn visible(&self)->bool{self.banner.visible()}
     pub fn pending(&self)->bool{!self.queue.is_empty()}
     pub fn enqueue(&mut self,a:Alert){
-        self.seen.retain(|key,at|at.elapsed()<Duration::from_secs(if key.starts_with("device:")||key.starts_with("reminder:"){3}else{120}));
-        if a.expires<=Instant::now()||self.seen.contains_key(&a.key){return}
+        let window=if a.key.starts_with("otp:"){30}else{120};
+        self.seen.retain(|key,at|at.elapsed()<Duration::from_secs(if key.starts_with("device:")||key.starts_with("reminder:"){3}else if key.starts_with("otp:"){30}else{120}));
+        if a.expires<=Instant::now()||self.seen.get(&a.key).is_some_and(|at|at.elapsed()<Duration::from_secs(window)){return}
         self.seen.insert(a.key.clone(),Instant::now());
         if self.queue.len()>=8{self.queue.pop_front();}
         if a.code.is_some(){self.queue.push_front(a)}else{self.queue.push_back(a)}
+    }
+    /// 验证码高优直达：若当前胶囊已展示旧提醒或旧验证码，就地无缝接管并重设计时；否则入队头。
+    pub fn preempt_or_enqueue(&mut self,a:Alert,base:Rect,radius:f64,host_width:f64,y:f64,now:f64,animate:bool)->bool{
+        self.seen.retain(|key,at|at.elapsed()<Duration::from_secs(if key.starts_with("device:")||key.starts_with("reminder:"){3}else if key.starts_with("otp:"){30}else{120}));
+        if a.expires<=Instant::now()||self.seen.get(&a.key).is_some_and(|at|at.elapsed()<Duration::from_secs(30)){return false}
+        self.seen.insert(a.key.clone(),Instant::now());
+        if self.visible()&&self.active.is_some(){
+            self.banner.show_capsule(Notice::default(),base,radius,host_width,y,a.width,a.height,now,animate);
+            self.banner.hold_until(now+a.hold);
+            self.active=Some(a);
+            return true;
+        }
+        if self.queue.len()>=8{self.queue.pop_front();}
+        self.queue.push_front(a);
+        false
     }
     // Telemetry may arrive after the connection event. Update the existing
     // surface in place and canonicalize its identity before deduplicating it.
@@ -208,5 +224,19 @@ impl WeatherWatch{
         let mut h=WeatherWatch::default();let mut v=serde_json::json!({"city":"上海","time":1000,"precipitation":[{"startsAt":3600,"endsAt":7200,"kind":"snow","startLabel":"今天09:00","endLabel":"今天10:00"}]});
         let a=h.poll(&v,1000);assert_eq!(a.len(),1);assert!(a[0].detail.contains("10:00"));
         assert!(h.poll(&v,1100).is_empty());v["stale"]=true.into();assert!(h.poll(&v,3700).is_empty());
+    }
+    #[test]fn verification_preempts_active_alert_immediately_and_dedups_within_30s(){
+        let mut h=Hub::default();let base=Rect::new(114.,24.,260.,40.);
+        h.enqueue(Alert::device("d1","Headphones","耳机",true,Some(80),false));
+        assert!(h.begin(base,20.,488.,24.,0.,true));
+        let otp=Alert::verification("sms","短信","582914".into());
+        assert!(h.preempt_or_enqueue(otp.clone(),base,20.,488.,24.,0.5,true));
+        assert_eq!(h.active.as_ref().and_then(|a|a.code.as_deref()),Some("582914"));
+        // 同验证码在 30 秒去重窗口内不会反复打断
+        assert!(!h.preempt_or_enqueue(otp,base,20.,488.,24.,1.0,true));
+        // 新验证码可立即再次抢占旧验证码
+        let otp2=Alert::verification("sms","短信","990123".into());
+        assert!(h.preempt_or_enqueue(otp2,base,20.,488.,24.,2.0,true));
+        assert_eq!(h.active.as_ref().and_then(|a|a.code.as_deref()),Some("990123"));
     }
 }

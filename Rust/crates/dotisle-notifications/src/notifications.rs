@@ -56,7 +56,8 @@ impl Listener {
                 }
                 state["messageHints"]=json!({"taskbar":shell.is_some(),"apps":p.message_apps});
                 if state!=last_state {let _=tx.try_send(Event::State(state.clone()));last_state=state;}
-                for _ in 0..8 {if stopping.load(Ordering::Acquire){break}
+                // 150ms 高频短窗轮询外壳闪烁信号与通知库变化，降低验证码到达延迟
+                for _ in 0..3 {if stopping.load(Ordering::Acquire){break}
                     if let Some(shell)=&shell{for signal in shell.drain(){let app=signal.app;if app.content_only(){continue}
                         let current=shared.lock().map(|p|p.clone()).unwrap_or_default();
                         let fresh=gate.accept(app,std::time::Instant::now(),true,crate::message_hints::foreground()==Some(app));
