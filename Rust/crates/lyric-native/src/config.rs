@@ -2,7 +2,9 @@ use serde_json::{json, Value};
 pub fn defaults() -> Value {
     let mut defaults = json!({"AutoCheckUpdatesEnabled":true,"LyricColorFromCover":true,"DeviceRemindersEnabled":true,"DeviceSoundEnabled":true,"DeviceSound":"Connect","DeviceSoundPath":"","DeviceVolume":55.,"HeadphoneConnectionRemindersEnabled":true,"SpeakerConnectionRemindersEnabled":true,"GamepadConnectionRemindersEnabled":true,"MouseConnectionRemindersEnabled":false,"KeyboardConnectionRemindersEnabled":false,"DeviceDisconnectRemindersEnabled":true,"SystemStateHintsEnabled":true,"SystemStateHintPlacement":"Island","CapsLockHintEnabled":true,"NumLockHintEnabled":true,"MicrophoneMuteHintEnabled":true,"TouchpadHintEnabled":true,"SwipeActivities":true,"AutoCompactMaxWidth":420.,"TodoDefaultColor":"#F3D79B","TodoRemindersEnabled":true,"TodoIslandEnabled":true,"AutoCompactWidth":true,"CompactTranslation":true,"ChineseTwoLine":true,"NotificationSoundEnabled":true,"TodoSoundEnabled":true,"NotificationSound":"Soft","TodoSound":"Bell","NotificationSoundPath":"","TodoSoundPath":"","QuickReminderHotkey":"","FocusCountUp":false,"FocusPauseOnLock":false,"AppEntryRemindersEnabled":false,"AppUsageRemindersEnabled":false,"NotificationVolume":35.,"TodoVolume":45.,"CompactWidth":260.,"FontSize":14.,"Floating":false,"Translation":true,"TranslationButton":true,"Animation":true,"HoverExpand":false,"ClickAnywhereExpand":true,"NotificationsEnabled":true,"PauseNotifications":false,"NotificationClickOpenApp":true,"MusicClickOpenApp":false,"MusicExpandedLayout":"SideBySide","NotificationWhitelistEnabled":false,"NotificationBlacklistEnabled":false,"NotificationBlockedApps":[],"NotificationAllowedApps":["QQNT","QQ"],"NotificationHistoryEnabled":true,"NotificationHistoryDays":7,"WordHighlight":true,"AlwaysOnTop":true,"AutoStart":true,"OnlineSongInfo":true,"CoverBackground":false,"IslandMonetPreferenceVersion":1,"HideWhenPaused":true,"IgnoredSources":["Browser"],"PlayerFilterVersion":2,"DefaultsOnboardingVersion":0,"ExpandedTextColor":"#FFFFFF","ExpandedComponentColor":"#FFFFFF","LyricProgressColor":"#DDF6FF","SettingsTheme":"System","ControlCenterStartPage":"overview","WorkflowModules":[{"id":"builtin-thinking","name":"整理思路","minutes":5,"kind":0},{"id":"builtin-focus","name":"专注","minutes":25,"kind":1},{"id":"builtin-rest","name":"休息","minutes":5,"kind":2},{"id":"builtin-review","name":"复盘","minutes":10,"kind":3},{"id":"builtin-move","name":"活动一下","minutes":3,"kind":4},{"id":"builtin-custom","name":"自定义","minutes":10,"kind":5}],"CenterX":0.5,"TopFraction":0.08,"Display":"","OffsetMilliseconds":0,"NeteaseCdpPort":"9223","LocalFolders":[],"Motion":crate::motion::Options::default()});
     defaults["TimerMonoDigits"] = json!(false);
-    defaults["HiddenEdgeStripEnabled"] = json!(false);
+    defaults["HiddenEdgeStripEnabled"] = json!(true);
+    defaults["HideTrigger"] = json!("RightClick");
+    defaults["HiddenDisplay"] = json!("Strip");
     defaults["IslandKeepVisibleEnabled"] = json!(false);
     defaults[crate::resident::TIME] = json!(true);
     defaults[crate::resident::SYSTEM] = json!(false);
@@ -561,6 +563,18 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         let s = value.as_str().ok_or("invalid size mode")?;
         if !["Classic", "Mini"].contains(&s) {
             return Err("invalid size mode".into());
+        }
+        json!(s)
+    } else if key == "HideTrigger" {
+        let s = value.as_str().ok_or("invalid hide trigger")?;
+        if !["RightClick", "SwipeUp"].contains(&s) {
+            return Err("invalid hide trigger".into());
+        }
+        json!(s)
+    } else if key == "HiddenDisplay" {
+        let s = value.as_str().ok_or("invalid hidden display")?;
+        if !["None", "Strip", "Mini"].contains(&s) {
+            return Err("invalid hidden display".into());
         }
         json!(s)
     } else if key == "MiniMaterial" {

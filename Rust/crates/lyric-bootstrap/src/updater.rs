@@ -95,7 +95,7 @@ pub fn official_url(url: &str) -> bool {
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     if authority.is_empty() || authority.contains('@') { return false; }
     let host = authority.split(':').next().unwrap_or("");
-    host.eq_ignore_ascii_case("github.com") || host.eq_ignore_ascii_case("gitee.com")
+    host.eq_ignore_ascii_case("github.com") || host.eq_ignore_ascii_case("gitee.com") || host.eq_ignore_ascii_case("gitcode.com")
 }
 
 pub fn verify(zip: &Path, expected: &str) -> Result<()> {
@@ -108,6 +108,10 @@ pub fn verify(zip: &Path, expected: &str) -> Result<()> {
 
 pub fn extract(zip: &Path, stage: &Path, version: &str) -> Result<PathBuf> {
     payload::extract_update(zip, stage, version)
+}
+
+pub fn extract_7z(archive: &Path, stage: &Path, version: &str) -> Result<PathBuf> {
+    payload::extract_update_7z(archive, stage, version)
 }
 
 fn asset_digest(manifest: &str, name: &str) -> Option<String> {
@@ -126,14 +130,16 @@ pub fn manifest_digest(manifest: &str, version: &str) -> Option<String> {
     asset_digest(manifest, &format!("LyricIsland-{version}-Portable.zip"))
 }
 
-pub fn domestic_pair(target: &Path, version: &str) -> Result<(String, String)> {
+pub fn mirror_pair(target: &Path, version: &str, host: &str, key: &str) -> Result<(String, String)> {
     let config = target.join("Assets/UpdateSources.json");
     if !config.is_file() { return Err(Error("未配置国内更新源".into())); }
     let settings: Value = paths::read_json(&config)?;
-    let repository = settings.get("giteeRepository").and_then(Value::as_str).unwrap_or("").trim_end_matches('/');
-    let pattern = Regex::new(r"^https://gitee\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$").unwrap();
+    let repository = settings.get(key).and_then(Value::as_str).unwrap_or("").trim_end_matches('/');
+    if repository.is_empty() { return Err(Error("未配置国内更新源".into())); }
+    let escaped = host.replace('.', r"\.");
+    let pattern = Regex::new(&format!(r"^https://{escaped}/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$")).unwrap();
     let captures = pattern.captures(repository).ok_or_else(|| Error("国内更新源地址无效".into()))?;
-    let api = format!("https://gitee.com/api/v5/repos/{}/{}", &captures[1], &captures[2]);
+    let api = format!("https://{host}/api/v5/repos/{}/{}", &captures[1], &captures[2]);
     let release: Value = serde_json::from_slice(&http::get_bytes(&format!("{api}/releases/tags/v{version}"), 2 * 1024 * 1024)?)?;
     let id = release["id"].as_u64().filter(|value| *value > 0).ok_or_else(|| Error("国内发行标识无效".into()))?;
     let attachments: Value = serde_json::from_slice(&http::get_bytes(&format!("{api}/releases/{id}/attach_files?per_page=100"), 4 * 1024 * 1024)?)?;
@@ -152,37 +158,59 @@ pub fn domestic_pair(target: &Path, version: &str) -> Result<(String, String)> {
     }
 }
 
-fn primary_pair(version:&str,preferred:&Option<(String,String)>)->(String,String){
- let prefix="https://github.com/Heiamer/DotIsle/releases/download/";
- if let Some(pair)=preferred.as_ref().filter(|(a,b)|a.starts_with(prefix)&&b.starts_with(prefix)){return pair.clone()}
- let root=format!("{prefix}v{version}/LyricIsland-{version}");(format!("{root}-SHA256.txt"),format!("{root}-Portable.zip"))
+pub fn domestic_pair(target: &Path, version: &str) -> Result<(String, String)> {
+    mirror_pair(target, version, "gitee.com", "giteeRepository")
+}
+
+pub fn gitcode_pair(target: &Path, version: &str) -> Result<(String, String)> {
+    mirror_pair(target, version, "gitcode.com", "gitcodeRepository")
+}
+
+fn primary_pair(version: &str, _preferred: &Option<(String, String)>) -> (String, String) {
+    let prefix = "https://github.com/Heiamer/DotIsle/releases/download/";
+    let root = format!("{prefix}v{version}/DotIsle-{version}");
+    (
+        format!("{root}-SHA256.txt"),
+        format!("{root}-Portable.7z"),
+    )
 }
 
 fn prepare_download(target: &Path, version: &str, scratch: &Path, preferred: Option<(String, String)>, reporter: &mut Reporter) -> Result<Option<crate::module_update::Prepared>> {
     let primary = primary_pair(version, &preferred);
     let mut errors = Vec::new();
     let mut tried = HashSet::new();
-    let mut pinned: Option<String> = None;
-    for step in 0..3 {
-        let pair = match step {
-            0 => Some(primary.clone()),
-            1 => preferred.clone(),
-            _ => match domestic_pair(target, version) {
-                Ok(pair) => Some(pair),
-                Err(error) => { errors.push(format!("Gitee：{error}")); continue; }
-            },
-        };
-        let Some((manifest_url, zip_url)) = pair else { continue };
+let mut pinned: Option<(String, String)> = None;
+    let mut candidates: Vec<(String, String)> = vec![primary.clone()];
+    if let Some(pair) = preferred.clone() { candidates.push(pair); }
+    for (host, key, label) in [("gitee.com", "giteeRepository", "Gitee"), ("gitcode.com", "gitcodeRepository", "GitCode")] {
+        match mirror_pair(target, version, host, key) {
+            Ok(pair) => candidates.push(pair),
+            Err(error) => errors.push(format!("{label}：{error}")),
+        }
+    }
+    for (step, pair) in candidates.iter().enumerate() {
+        let (manifest_url, zip_url) = (pair.0.clone(), pair.1.clone());
         if !tried.insert(manifest_url.clone()) { continue; }
         reporter.report(if step == 0 { "downloading" } else { "switching" }, 0, None, if step == 0 { "开始下载" } else { "切换到备用更新源" }, true)?;
         let attempt = (|| -> Result<Option<crate::module_update::Prepared>> {
             if !official_url(&manifest_url) || !official_url(&zip_url) { return Err(Error("更新下载地址无效".into())); }
-            let zip_path = scratch.join("update.zip");
+            let asset_name = if zip_url.ends_with("/download") {
+                format!("LyricIsland-{version}-Portable.zip")
+            } else {
+                zip_url.rsplit('/').next().unwrap_or("").to_owned()
+            };
+            if !(asset_name.ends_with(".7z") || asset_name.ends_with(".zip")) {
+                return Err(Error("更新包类型无效".into()));
+            }
             let manifest = http::get_bytes(&manifest_url, 64 * 1024)?;
             let manifest = String::from_utf8_lossy(&manifest);
-            let expected = manifest_digest(&manifest, version).ok_or_else(|| Error("校验清单缺少更新包".into()))?;
-            if pinned.as_ref().is_some_and(|pinned| pinned != &expected) { return Err(Error(PINNED_MISMATCH.into())); }
-            pinned = Some(expected.clone());
+            let expected = asset_digest(&manifest, &asset_name).ok_or_else(|| Error("校验清单缺少更新包".into()))?;
+            if let Some((pinned_name, pinned_hash)) = &pinned {
+                if pinned_name == &asset_name && pinned_hash != &expected {
+                    return Err(Error(PINNED_MISMATCH.into()));
+                }
+            }
+            pinned = Some((asset_name.clone(), expected.clone()));
             let github = format!("https://github.com/Heiamer/DotIsle/releases/download/v{version}/");
             let index = format!("LyricIsland-{version}-Modules.json");
             if step == 0 && manifest_url.starts_with(&github) {
@@ -197,11 +225,15 @@ fn prepare_download(target: &Path, version: &str, scratch: &Path, preferred: Opt
                     }
                 }
             }
-            let (received, length) = http::download(&zip_url, &zip_path, 256 * 1024 * 1024, |received, length| {
+            let payload = scratch.join(if asset_name.ends_with(".7z") { "update.7z" } else { "update.zip" });
+            let other = scratch.join(if asset_name.ends_with(".7z") { "update.zip" } else { "update.7z" });
+            let _ = paths::remove_file_if_present(&other);
+            let _ = paths::remove_file_if_present(&payload);
+            let (received, length) = http::download(&zip_url, &payload, 256 * 1024 * 1024, |received, length| {
                 reporter.report("downloading", received, length, &format!("正在下载已选版本 {version}"), false).map(|_| ())
             })?;
             reporter.report("verifying", received, length, "正在校验下载内容", true)?;
-            verify(&zip_path, &expected)?;
+            verify(&payload, &expected)?;
             Ok(None)
         })();
         match attempt {
@@ -222,9 +254,16 @@ mod source_priority_tests{
  use super::*;
  #[test]fn github_download_is_primary_even_when_the_candidate_came_from_gitee(){
   let domestic=Some(("https://gitee.com/mirror/checksum".into(),"https://gitee.com/mirror/archive".into()));
-  assert_eq!(primary_pair("5.0.3-rc3",&domestic).0,"https://github.com/Heiamer/DotIsle/releases/download/v5.0.3-rc3/LyricIsland-5.0.3-rc3-SHA256.txt");
+  assert_eq!(primary_pair("5.0.3-rc3",&domestic),("https://github.com/Heiamer/DotIsle/releases/download/v5.0.3-rc3/DotIsle-5.0.3-rc3-SHA256.txt".into(),"https://github.com/Heiamer/DotIsle/releases/download/v5.0.3-rc3/DotIsle-5.0.3-rc3-Portable.7z".into()));
   let exact=Some(("https://github.com/Heiamer/DotIsle/releases/download/v5.0.3-rc3/custom-hash".into(),"https://github.com/Heiamer/DotIsle/releases/download/v5.0.3-rc3/custom-zip".into()));
-  assert_eq!(primary_pair("5.0.3-rc3",&exact),exact.unwrap());
+  assert_eq!(primary_pair("5.0.3-rc3",&exact).1,"https://github.com/Heiamer/DotIsle/releases/download/v5.0.3-rc3/DotIsle-5.0.3-rc3-Portable.7z");
+ }
+ #[test]fn official_hosts_include_gitcode_and_reject_lookalikes(){
+  assert!(official_url("https://gitcode.com/Heiamer/Dotisle/releases/download/v5.2.3/DotIsle-5.2.3-Portable.7z"));
+  assert!(official_url("https://gitee.com/api/v5/repos/heiamer/abc/releases/1/attach_files/2/download"));
+  assert!(!official_url("https://gitcode.com.evil.test/x"));
+  assert!(!official_url("http://gitcode.com/x"));
+  assert!(!official_url("https://evil.test/gitcode.com/x"));
  }
 }
 
@@ -455,7 +494,11 @@ pub fn run(args: Vec<String>) -> i32 {
             prepared.stage.clone()
         } else {
             let stage = work.join("stage");
-            extract(&work.join("update.zip"), &stage, &version)?;
+            if work.join("update.7z").is_file() {
+                extract_7z(&work.join("update.7z"), &stage, &version)?;
+            } else {
+                extract(&work.join("update.zip"), &stage, &version)?;
+            }
             // A portable archive is also the OTA payload for installed copies. Do
             // not switch their storage mode during the transaction.
             if !target_path.join("Portable.json").is_file() {

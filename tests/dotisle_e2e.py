@@ -277,11 +277,11 @@ def main():
     client.request("toggleVisibility")
     time.sleep(0.7)
     st = wait_apply(client)
-    hidden = st.get("islandVisible")
+    hidden = st.get("islandEnabled")
     client.request("toggleVisibility")
     time.sleep(0.7)
     st = wait_apply(client)
-    shown = st.get("islandVisible")
+    shown = st.get("islandEnabled")
     t.check("toggleVisibility 翻转", hidden != shown, "hide=%r show=%r" % (hidden, shown))
 
     # ---- 3. 待办生命周期 ---------------------------------------------------

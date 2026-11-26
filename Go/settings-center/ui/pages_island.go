@@ -351,9 +351,14 @@ func (a *App) islandTabGestures(c *ui.Context, p *Palette, x, y, w float32) floa
 		{"悬停展开", "鼠标经过胶囊时展开当前活动。", "HoverExpand", false},
 		{"点击任意区域展开", "点击胶囊主体展开当前活动。", "ClickAnywhereExpand", true},
 		{"左右滑动切换", "在胶囊或卡片空白处拖动，切换音乐、计时与待办。", "SwipeActivities", true},
-		{"向上拖动隐藏", "从空白处向上拖动；有通知仍会提醒，也可从托盘或边缘找回。", "SwipeUpHide", true},
-		{"隐藏后保留顶部蓝条", "隐藏时在屏幕顶部保留一条蓝色边条，表示藏匿位置，点击可恢复；关闭后完全隐藏。", "HiddenEdgeStripEnabled", false},
-		{"鼠标触碰边缘显示", "上滑隐藏后将鼠标移至屏幕顶部居中片刻浮现灵动岛（默认关闭）。", "EdgeHoverRevealEnabled", false},
+	})
+	y = a.islandHeading(c, p, "隐藏行为", x, y, w)
+	y = a.islandChoices(c, p, x, y, w, "隐藏方式", "HideTrigger", "RightClick",
+		[][2]string{{"右键隐藏", "RightClick"}, {"上滑隐藏", "SwipeUp"}})
+	y = a.islandChoices(c, p, x, y, w, "隐藏后显示", "HiddenDisplay", "Strip",
+		[][2]string{{"无显示", "None"}, {"蓝条", "Strip"}, {"Mini", "Mini"}})
+	y = a.islandToggles(c, p, x, y, w, []islandToggleRow{
+		{"鼠标触碰边缘显示", "仅在「隐藏后显示」为无显示时生效；点击任务栏托盘也可找回。", "EdgeHoverRevealEnabled", false},
 		{"自由悬浮", "允许直接按住胶囊或卡片拖动到任意位置或屏幕，并自动保存。", "Floating", false},
 		{"点击封面或歌名打开播放器", "只影响音乐卡片的封面和标题。", "MusicClickOpenApp", false},
 	})

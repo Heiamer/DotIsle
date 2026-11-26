@@ -136,6 +136,23 @@ func (a *App) gestureTutorialView(c *ui.Context, w, h float32) {
 	p, s := &a.Palette, &a.Palette.Scheme
 	pw, ph := min(float32(560), w-32), float32(292)
 	copy := practicePrompts[t.step]
+	switch t.step {
+	case "hide":
+		if a.leafString("HideTrigger", "RightClick") == "SwipeUp" {
+			copy = practiceCopy{"向上拖动，暂时隐藏", "按住练习胶囊向上拖到屏幕顶部再松手；下一步会按当前显示方式带你找回来。"}
+		} else {
+			copy = practiceCopy{"右键点击，暂时隐藏", "在练习胶囊或展开卡片上点右键。隐藏后，下一步会按当前显示方式带你找回来。"}
+		}
+	case "recover":
+		switch a.leafString("HiddenDisplay", "Strip") {
+		case "None":
+			copy = practiceCopy{"从任务栏托盘找回点屿", "在任务栏右下角找到点屿图标（也可能在 ︿ 里），右键选择「显示 / 隐藏灵动岛」。"}
+		case "Mini":
+			copy = practiceCopy{"点击顶部迷你岛恢复", "在屏幕顶部找到迷你灵动岛，点击它恢复完整灵动岛。"}
+		default:
+			copy = practiceCopy{"点击顶部蓝色边条恢复", "在屏幕顶部找到蓝色边条，点击它恢复完整灵动岛。"}
+		}
+	}
 	ui.Overlay(c, func() {
 		back := ui.Box(c).Key("gesture-tutorial-overlay").Absolute().Fill().Modal().Role(ui.RoleDialog).Label("灵动岛实操教程").Background(AlphaCol(0, .32))
 		if back.OverlayShortcut(0, ui.KeyEscape) && !t.mandatory {

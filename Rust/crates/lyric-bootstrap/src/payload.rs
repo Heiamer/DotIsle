@@ -1,9 +1,9 @@
 use crate::error::{Error, Result};
 use crate::paths::{self, safe_child};
 use crate::win;
-use lyric_archive::{sha256_bytes, ZipReader};
+use lyric_archive::{sha256_bytes, sha256_file, ZipReader};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -138,6 +138,165 @@ pub fn extract_update(zip: &Path, stage: &Path, version: &str) -> Result<PathBuf
     Ok(stage.to_path_buf())
 }
 
+pub fn extract_update_7z(archive: &Path, stage: &Path, version: &str) -> Result<PathBuf> {
+    const LIMIT: u64 = 512 * 1024 * 1024;
+    if stage.exists() {
+        return Err(Error("更新暂存目录已存在".into()));
+    }
+    let temp = stage.with_extension("7z-extract");
+    if temp.exists() {
+        std::fs::remove_dir_all(&temp)?;
+    }
+    std::fs::create_dir_all(&temp)?;
+    let mut seen = HashSet::new();
+    let mut total = 0u64;
+    let mut failure: Option<String> = None;
+    let unpacked = sevenz_rust::decompress_file_with_extract_fn(archive, &temp, |entry, reader, _| {
+        let mut name = entry.name().replace('\\', "/");
+        name = name.trim_end_matches('/').to_owned();
+        if name.is_empty() {
+            return Ok(true);
+        }
+        if !seen.insert(name.to_ascii_lowercase()) {
+            failure = Some("更新包包含重复路径".into());
+            return Ok(false);
+        }
+        let path = match update_path(&temp, &name) {
+            Ok(path) => path,
+            Err(error) => {
+                failure = Some(error.0);
+                return Ok(false);
+            }
+        };
+        if entry.is_directory() {
+            if let Err(error) = std::fs::create_dir_all(&path) {
+                failure = Some(error.to_string());
+                return Ok(false);
+            }
+            return Ok(true);
+        }
+        total = total.saturating_add(entry.size());
+        if total > LIMIT {
+            failure = Some("更新包超过大小限制".into());
+            return Ok(false);
+        }
+        if let Some(parent) = path.parent() {
+            if let Err(error) = std::fs::create_dir_all(parent) {
+                failure = Some(error.to_string());
+                return Ok(false);
+            }
+        }
+        let mut file = match std::fs::File::create(&path) {
+            Ok(file) => file,
+            Err(error) => {
+                failure = Some(error.to_string());
+                return Ok(false);
+            }
+        };
+        if let Err(error) = std::io::copy(reader, &mut file) {
+            failure = Some(error.to_string());
+            return Ok(false);
+        }
+        Ok(true)
+    });
+    if let Some(message) = failure {
+        let _ = std::fs::remove_dir_all(&temp);
+        return Err(Error(message));
+    }
+    if let Err(error) = unpacked {
+        let _ = std::fs::remove_dir_all(&temp);
+        return Err(Error(format!("7z 解压失败：{error}")));
+    }
+    let mut payload = None;
+    for entry in std::fs::read_dir(&temp)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if kind.is_dir() && entry.path().join(RUNTIME_INVENTORY).is_file() {
+            payload = Some(entry.path());
+        } else if kind.is_file() {
+            let _ = std::fs::remove_dir_all(&temp);
+            return Err(Error("更新包目录无效".into()));
+        }
+    }
+    let Some(payload) = payload else {
+        let _ = std::fs::remove_dir_all(&temp);
+        return Err(Error("更新包缺少运行时目录".into()));
+    };
+    let inventory_path = payload.join(RUNTIME_INVENTORY);
+    let inventory_bytes = std::fs::read(&inventory_path)?;
+    if inventory_bytes.len() > 4 * 1024 * 1024 {
+        let _ = std::fs::remove_dir_all(&temp);
+        return Err(Error("更新清单超过大小限制".into()));
+    }
+    let inventory: Value = serde_json::from_slice(&inventory_bytes)?;
+    if inventory["schemaVersion"] != 1
+        || inventory["product"] != "DotIsle"
+        || inventory["version"] != version
+    {
+        let _ = std::fs::remove_dir_all(&temp);
+        return Err(Error("更新清单与目标版本不符".into()));
+    }
+    let declared = inventory["files"]
+        .as_object()
+        .ok_or_else(|| Error("更新清单缺少文件列表".into()))?;
+    let mut actual = BTreeSet::new();
+    collect_files(&payload, &payload, &mut actual)?;
+    actual.remove(RUNTIME_INVENTORY);
+    if declared.len() != actual.len()
+        || !declared.contains_key("LyricIsland.exe")
+        || declared.contains_key(RUNTIME_INVENTORY)
+    {
+        let _ = std::fs::remove_dir_all(&temp);
+        return Err(Error("更新包文件与清单不符".into()));
+    }
+    for (name, hash) in declared {
+        update_path(&payload, name)?;
+        let hash = hash
+            .as_str()
+            .filter(|value| value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()))
+            .ok_or_else(|| Error(format!("更新清单摘要无效：{name}")))?;
+        if !actual.contains(name) {
+            let _ = std::fs::remove_dir_all(&temp);
+            return Err(Error(format!("更新包缺少清单文件：{name}")));
+        }
+        if !sha256_file(&payload.join(name))?.eq_ignore_ascii_case(hash) {
+            let _ = std::fs::remove_dir_all(&temp);
+            return Err(Error(format!("更新文件摘要不符：{name}")));
+        }
+    }
+    if stage.exists() {
+        let _ = std::fs::remove_dir_all(&temp);
+        return Err(Error("更新暂存目录已存在".into()));
+    }
+    std::fs::rename(&payload, stage)?;
+    let _ = std::fs::remove_dir_all(&temp);
+    Ok(stage.to_path_buf())
+}
+
+fn collect_files(root: &Path, directory: &Path, files: &mut BTreeSet<String>) -> Result<()> {
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if kind.is_symlink() {
+            return Err(Error("更新包包含链接".into()));
+        }
+        if kind.is_dir() {
+            collect_files(root, &entry.path(), files)?;
+        } else if kind.is_file() {
+            let relative = entry
+                .path()
+                .strip_prefix(root)
+                .map_err(|_| Error("更新包目录无效".into()))?
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            files.insert(relative);
+        }
+    }
+    Ok(())
+}
+
 pub fn extract_reader(reader: &mut ZipReader, stage: &Path, folder: &str, required: &[&str], limit: u64) -> Result<()> {
     let prefix = format!("{folder}/");
     std::fs::create_dir_all(stage)?;
@@ -230,6 +389,20 @@ mod tests {
         writer.finish().unwrap();
         let outcome = extract_zip_file(&zip, &root.join("stage"), &format!("LyricIsland-{VERSION}"), required_runtime(), 4096);
         assert!(outcome.unwrap_err().to_string().contains("缺少必要文件"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[ignore = "set DOTISLE_7Z_TEST to a real portable .7z fixture"]
+    fn portable_7z_extracts_and_validates_inventory() {
+        let Some(archive) = std::env::var_os("DOTISLE_7Z_TEST") else { return; };
+        let version = std::env::var("DOTISLE_7Z_VERSION").unwrap_or_else(|_| VERSION.into());
+        let root = scratch("sevenz");
+        let stage = root.join("stage");
+        let result = extract_update_7z(Path::new(&archive), &stage, &version);
+        assert!(result.is_ok(), "{result:?}");
+        assert!(stage.join("LyricIsland.exe").is_file());
+        assert!(stage.join(RUNTIME_INVENTORY).is_file());
         std::fs::remove_dir_all(root).unwrap();
     }
 }

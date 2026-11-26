@@ -35,6 +35,7 @@ func TestGestureTutorialEntryAndPractice(t *testing.T) {
 	if err := tt.Click("完成教程"); err == nil {
 		t.Fatal("unfinished tutorial offered completion")
 	}
+	a.settings()["HiddenDisplay"] = "None"
 	a.syncGesturePractice(packet(guide.id, "recover", 4))
 	a.syncGesturePractice(packet(guide.id, "hide", 3))
 	tt.Frame()

@@ -331,6 +331,7 @@ struct App {
     leave_at: Option<Instant>,
     last_left: bool,
     user_hidden: bool,
+    hidden_mini: bool,
     // A verification code surfaced while the island was manually hidden; the
     // hidden state returns once its alert is gone.
     restore_hidden: bool,
@@ -619,6 +620,7 @@ impl App {
             leave_at: None,
             last_left: false,
             user_hidden: false,
+            hidden_mini: false,
             restore_hidden: false,
             display_wanted: demo,
             missing_since: None,
@@ -904,12 +906,29 @@ impl App {
         let id = self.components[next].clone();
         self.select_component(&id, direction);
     }
+    fn hide_trigger(&self) -> &str {
+        self.settings["HideTrigger"].as_str().unwrap_or("RightClick")
+    }
+    fn hidden_display(&self) -> &str {
+        self.settings["HiddenDisplay"].as_str().unwrap_or("Strip")
+    }
+    fn practice_preview(&self) -> bool {
+        self.practice.is_none() || self.practice_step() == Some(PracticeStep::Recover)
+    }
+    fn hidden_mini_mode(&self) -> bool {
+        self.hidden_mini
+            && self.user_hidden
+            && !self.edge_revealed
+            && !self.taskbar_mode()
+            && self.practice_preview()
+    }
     fn hidden_edge(&self) -> bool {
         self.user_hidden
             && !self.edge_revealed
+            && !self.hidden_mini
             && !self.taskbar_mode()
-            && self.practice.is_none()
-            && self.flag("HiddenEdgeStripEnabled", false)
+            && self.practice_preview()
+            && self.hidden_display() == "Strip"
     }
     fn hidden_edge_rect(&self) -> Rect {
         let c = self.layout.capsule;
@@ -917,8 +936,7 @@ impl App {
         Rect::new(c.x + (c.w - width) / 2., c.y, width, 5.)
     }
     fn can_hide(&self, hit: i32) -> bool {
-        self.flag("SwipeUpHide", true)
-            && !self.flag("Floating", false)
+        self.hide_trigger() == "SwipeUp"
             && !self.flag("TaskbarModeEnabled", false)
             && (self.practice.is_none() || self.practice_step() == Some(PracticeStep::Hide))
             && !self.banner.visible()
@@ -932,22 +950,27 @@ impl App {
         self.edge_hover_since = None;
         self.edge_leave_since = None;
         self.dismiss_offset.set(0.);
-        if self.flag("HiddenEdgeStripEnabled", false) {
+        let display = self.hidden_display().to_owned();
+        self.hidden_mini = display == "Mini";
+        if display == "None" {
+            self.display_wanted = false;
+            self.fade(0.);
+        } else {
             self.display_wanted = true;
             self.opacity = 1.;
             self.fade(1.);
-            self.dirty = true;
-            unsafe {
-                let _ = self.position();
+        }
+        self.dirty = true;
+        unsafe {
+            let _ = self.position();
+            if display != "None" {
+                let _ = window_level::apply(self.visual_hwnd, self.hwnd, true, false);
             }
-        } else {
-            self.display_wanted = false;
-            self.fade(0.);
-            self.dirty = true;
         }
     }
     fn reveal_hidden_edge(&mut self) {
         self.user_hidden = false;
+        self.hidden_mini = false;
         self.edge_revealed = false;
         self.edge_leave_since = None;
         self.restore_hidden = false;
@@ -955,8 +978,12 @@ impl App {
         self.manual_until = Some(Instant::now() + Duration::from_secs(6));
         self.fade(1.);
         self.dirty = true;
+        if self.practice_step() == Some(PracticeStep::Recover) {
+            self.practice_event(PracticeStep::Recover);
+        }
         unsafe {
             let _ = self.position();
+            let _ = window_level::apply(self.visual_hwnd, self.hwnd, self.effective_topmost(), false);
         }
     }
     fn hide_by_gesture(&mut self) {
@@ -975,7 +1002,11 @@ impl App {
         self.drag_panel = None;
         self.swipe = None;
         if self.practice.is_some() {
-            self.fade(0.);
+            if self.practice_step() == Some(PracticeStep::Recover) {
+                self.enter_hidden_edge();
+            } else {
+                self.fade(0.);
+            }
         } else {
             self.enter_hidden_edge();
         }
@@ -994,6 +1025,7 @@ impl App {
         }
         self.restore_hidden = true;
         self.user_hidden = false;
+        self.hidden_mini = false;
         self.edge_revealed = false;
         self.dismiss_offset.set(0.);
         self.display_wanted = true;
@@ -1106,7 +1138,7 @@ impl App {
         )
     }
     fn mini(&self) -> bool {
-        self.settings["IslandSizeMode"].as_str() == Some("Mini")
+        self.hidden_mini || self.settings["IslandSizeMode"].as_str() == Some("Mini")
     }
     fn music_geometry(&self) -> lyric_core::music_layout::MusicGeometry {
         let w = self.layout.card.w;
@@ -2547,7 +2579,7 @@ impl App {
         let _ = self.save();
     }
     fn step_edge_reveal(&mut self, in_zone: bool, inside: bool, now: Instant) {
-        if self.hidden_edge() {
+        if self.hidden_edge() || self.hidden_mini_mode() {
             return;
         }
         if self.user_hidden && !self.edge_revealed {
@@ -3289,7 +3321,7 @@ impl App {
         result
     }
     unsafe fn draw(&mut self) -> Result<()> {
-        if self.hidden_edge() {
+        if self.hidden_edge() || self.hidden_mini_mode() {
             self.opacity = 1.;
             self.display_wanted = true;
         }
@@ -3704,6 +3736,7 @@ impl App {
                 self.select_component("update", 1);
                 self.update_until = Some(Instant::now() + Duration::from_secs(8));
                 self.user_hidden = false;
+                self.hidden_mini = false;
                 self.fade(1.);
             }
         }
@@ -4578,6 +4611,7 @@ impl App {
                     self.held = true;
                     self.retarget(true);
                     self.user_hidden = false;
+                    self.hidden_mini = false;
                     self.fade(1.);
                     json!({"success":true})
                 } else {
@@ -4646,6 +4680,7 @@ impl App {
                         self.held = true;
                         self.retarget(true);
                         self.user_hidden = false;
+                        self.hidden_mini = false;
                         self.fade(1.);
                         json!({"success":true,"message":"开始下载；校验后等待你确认安装。"})
                     }
@@ -4812,6 +4847,7 @@ impl App {
                         self.refresh_components();
                         self.select_component(&format!("timer:{id}"), 1);
                         self.user_hidden = false;
+                        self.hidden_mini = false;
                         self.hide_at = None;
                         self.fade(1.);
                         self.held = true;
@@ -4946,6 +4982,7 @@ impl App {
                 } else {
                     self.select_component(id, 1);
                     self.user_hidden = false;
+                    self.hidden_mini = false;
                     self.fade(1.);
                     json!({"success":true})
                 }
@@ -5083,6 +5120,7 @@ impl App {
             "expand" => {
                 if self.practice.is_some() { return json!({"success":false,"message":"请按实操教程提示操作。"}); }
                 self.user_hidden = false;
+                self.hidden_mini = false;
                 self.held = true;
                 self.hide_at = None;
                 self.missing_since = None;
@@ -5317,6 +5355,7 @@ impl App {
                     if matches!(key, "TaskbarModeEnabled" | "TaskbarAlwaysShow") {
                         if self.taskbar_mode() {
                             self.user_hidden = false;
+                            self.hidden_mini = false;
                             self.edge_revealed = false;
                             self.restore_hidden = false;
                             if self.taskbar_always_show() {
@@ -5619,8 +5658,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 WM_RBUTTONDOWN => {
                     if a.user_hidden {
                         a.reveal_hidden_edge();
-                    } else if a.flag("Floating", false)
-                        && a.practice.is_none()
+                    } else if a.hide_trigger() == "RightClick"
+                        && (a.practice.is_none() || a.practice_step() == Some(PracticeStep::Hide))
                         && !a.taskbar_mode()
                         && !a.banner.visible()
                         && !a.alerts.visible()
@@ -5641,6 +5680,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     // 用户主动交互时若正处于边缘临时浮现状态，转为常态显示
                     if a.edge_revealed && a.pressed >= 0 {
                         a.user_hidden = false;
+                        a.hidden_mini = false;
                         a.edge_revealed = false;
                         a.edge_leave_since = None;
                         a.manual_until = Some(Instant::now() + Duration::from_secs(6));
@@ -8035,6 +8075,9 @@ mod hide_gesture_tests {
     #[test]
     fn hide_is_available_with_one_component_and_preserves_timers() {
         let mut a = App::new(PathBuf::new(), PathBuf::new(), true);
+        assert_eq!(a.settings["HideTrigger"], "RightClick");
+        assert_eq!(a.settings["HiddenDisplay"], "Strip");
+        a.settings["HideTrigger"] = json!("SwipeUp");
         assert!(a.can_hide(0));
         assert!(a.can_hide(1));
         for hit in [2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 30, 31] {
@@ -8045,8 +8088,57 @@ mod hide_gesture_tests {
         assert!(a.user_hidden);
         assert!(!a.held);
         assert!(a.timers.items.iter().any(|t| t.id == id && t.running));
-        a.settings["SwipeUpHide"] = json!(false);
+        a.settings["HideTrigger"] = json!("RightClick");
         assert!(!a.can_hide(0));
+    }
+    #[test]
+    fn hidden_display_switches_between_none_strip_and_mini() {
+        let mut a = App::new(PathBuf::new(), PathBuf::new(), true);
+        a.settings["HiddenDisplay"] = json!("None");
+        a.hide_by_gesture();
+        assert!(a.user_hidden && !a.hidden_edge() && !a.hidden_mini_mode() && !a.mini());
+        a.settings["HiddenDisplay"] = json!("Strip");
+        a.hide_by_gesture();
+        assert!(a.user_hidden && a.hidden_edge() && !a.hidden_mini_mode() && !a.mini());
+        a.settings["HiddenDisplay"] = json!("Mini");
+        a.hide_by_gesture();
+        assert!(a.user_hidden && !a.hidden_edge() && a.hidden_mini_mode() && a.mini());
+        a.reveal_hidden_edge();
+        assert!(!a.user_hidden && !a.hidden_mini_mode() && !a.mini());
+    }
+    #[test]
+    fn practice_recover_step_shows_the_strip_and_finishes_on_click() {
+        let mut a = App::new(PathBuf::new(), PathBuf::new(), true);
+        a.settings["HiddenDisplay"] = json!("Strip");
+        a.practice_request(&json!({"id":"practice-test","action":"start"}));
+        while let Some(step) = a.practice_step() {
+            if step == PracticeStep::Hide { break; }
+            a.practice_event(step);
+        }
+        assert_eq!(a.practice_step(), Some(PracticeStep::Hide));
+        assert!(!a.hidden_edge());
+        a.hide_by_gesture();
+        assert_eq!(a.practice_step(), Some(PracticeStep::Recover));
+        assert!(a.user_hidden && a.hidden_edge());
+        a.reveal_hidden_edge();
+        assert!(!a.user_hidden && !a.hidden_edge());
+        assert_eq!(a.practice_step(), None);
+        a.practice_request(&json!({"id":"practice-test","action":"finish"}));
+        assert!(a.practice.is_none());
+    }
+    #[test]
+    fn practice_skips_swipe_when_only_one_component_exists() {
+        let mut a = App::new(PathBuf::new(), PathBuf::new(), true);
+        a.components.truncate(1);
+        a.settings["SwipeActivities"] = json!(true);
+        a.practice_request(&json!({"id":"practice-swipe","action":"start"}));
+        let mut seen = Vec::new();
+        while let Some(step) = a.practice_step() {
+            seen.push(step);
+            a.practice_event(step);
+        }
+        assert!(!seen.contains(&PracticeStep::Swipe), "{seen:?}");
+        assert!(seen.contains(&PracticeStep::Hide) && seen.contains(&PracticeStep::Recover));
     }
 }
 
@@ -8082,6 +8174,7 @@ mod mini_behavior_tests {
         let sat = a.layout.satellite();
         assert_eq!(a.hit(sat.x + sat.w / 2., sat.y + sat.h / 2.), -1);
         assert!(a.can_swipe(0));
+        a.settings["HideTrigger"] = json!("SwipeUp");
         assert!(a.can_hide(0));
         assert_eq!(a.compact_secondary_for(), "");
     }
@@ -8699,6 +8792,7 @@ mod transient_exit_tests {
         let mon = RECT { left: 0, top: 0, right: 1920, bottom: 1080 };
         assert!(edge_hit_test(POINT { x: 960, y: 2 }, mon, 260., 0.5, 1.));
         assert!(!edge_hit_test(POINT { x: 960, y: 40 }, mon, 260., 0.5, 1.));
+        a.settings["HiddenDisplay"] = json!("None");
         a.hide_by_gesture();
         let t0 = Instant::now();
         a.step_edge_reveal(true, false, t0);
@@ -8708,7 +8802,7 @@ mod transient_exit_tests {
         a.step_edge_reveal(false, false, t0 + Duration::from_millis(300));
         assert!(a.edge_revealed);
         a.step_edge_reveal(false, false, t0 + Duration::from_millis(1300));
-        assert!(!a.edge_revealed && a.fade_to == 1. && a.user_hidden);
+        assert!(!a.edge_revealed && a.fade_to == 0. && a.user_hidden);
     }
 }
 

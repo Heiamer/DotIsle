@@ -74,24 +74,33 @@ fn choose_release(releases:&Value,channel:&str,current:&str)->Result<Value,Strin
 }
 fn sources()->Value{let path=std::env::current_exe().ok().and_then(|p|p.parent().map(|p|p.join("Assets/UpdateSources.json")));path.and_then(|p|std::fs::read(p).ok()).and_then(|b|serde_json::from_slice(&b).ok()).unwrap_or_else(||serde_json::from_str(include_str!("../../../../Assets/UpdateSources.json")).unwrap_or_else(|_|json!({})))}
 fn repository(input:&str,host:&str)->Result<String,String>{let prefix=format!("https://{host}/");let slug=input.trim().strip_prefix(&prefix).ok_or("更新源必须使用官方 HTTPS 仓库地址")?.trim_end_matches('/').trim_end_matches(".git");let parts=slug.split('/').collect::<Vec<_>>();if parts.len()!=2||parts.iter().any(|p|p.is_empty()||!p.bytes().all(|b|b.is_ascii_alphanumeric()||b"-_.".contains(&b))||*p=="."||*p==".."){return Err("更新仓库地址无效".into())}Ok(slug.to_owned())}
-fn gitee_asset_url(slug:&str,release_id:u64,assets:&Value,name:&str)->Result<String,String>{let item=assets.as_array().and_then(|a|a.iter().find(|a|a["name"].as_str().or_else(||a["file_name"].as_str())==Some(name))).ok_or_else(||format!("国内发行版缺少 {name}"))?;let id=item["id"].as_u64().filter(|n|*n>0).ok_or("国内附件标识无效")?;Ok(format!("https://gitee.com/api/v5/repos/{slug}/releases/{release_id}/attach_files/{id}/download"))}
+fn mirror_asset_url(host:&str,slug:&str,release_id:u64,assets:&Value,name:&str)->Result<String,String>{let item=assets.as_array().and_then(|a|a.iter().find(|a|a["name"].as_str().or_else(||a["file_name"].as_str())==Some(name))).ok_or_else(||format!("国内发行版缺少 {name}"))?;let id=item["id"].as_u64().filter(|n|*n>0).ok_or("国内附件标识无效")?;Ok(format!("https://{host}/api/v5/repos/{slug}/releases/{release_id}/attach_files/{id}/download"))}
+fn gitee_asset_url(slug:&str,release_id:u64,assets:&Value,name:&str)->Result<String,String>{mirror_asset_url("gitee.com",slug,release_id,assets,name)}
 
-fn check_gitee(repo:&str,channel:&str)->Result<Value,String>{
- let slug=repository(repo,"gitee.com")?;let api=format!("https://gitee.com/api/v5/repos/{slug}");
+fn check_mirror(host:&str,repo:&str,label:&str,channel:&str)->Result<Value,String>{
+ let slug=repository(repo,host)?;let api=format!("https://{host}/api/v5/repos/{slug}");
  let ctx=crate::http::RequestContext::new(Duration::from_secs(10));
- let release=if channel=="beta"{choose_release(&crate::http::get_system(&format!("{api}/releases?per_page=100"),&ctx)?,channel,&installed_version())?}else{crate::http::get_system(&format!("{api}/releases/latest"),&ctx)?};
+ let release=if channel=="beta"{
+  choose_release(&crate::http::get_system(&format!("{api}/releases?per_page=100"),&ctx)?,channel,&installed_version())?
+ }else{
+  match crate::http::get_system(&format!("{api}/releases/latest"),&ctx){
+   Ok(value)=>value,
+   Err(_)=>choose_release(&crate::http::get_system(&format!("{api}/releases?per_page=100"),&ctx)?,"stable",&installed_version())?,
+  }
+ };
  let mut result=describe_channel(&release,&installed_version(),channel)?;
  let tag=release["tag_name"].as_str().ok_or("国内版本号缺失")?;
- result["source"]=json!("Gitee 国内源");result["url"]=json!(format!("https://gitee.com/{slug}/releases/tag/{tag}"));
+ result["source"]=json!(label);result["url"]=json!(format!("https://{host}/{slug}/releases/tag/{tag}"));
  if result["newer"]==true{
   let id=release["id"].as_u64().filter(|n|*n>0).ok_or("国内发行版标识无效")?;
   let attachments=crate::http::get_system(&format!("{api}/releases/{id}/attach_files?per_page=100"),&ctx)?;
   let v=tag.trim_start_matches('v');
-  result["manifestUrl"]=json!(gitee_asset_url(&slug,id,&attachments,&format!("LyricIsland-{v}-SHA256.txt"))?);
-  result["zipUrl"]=json!(gitee_asset_url(&slug,id,&attachments,&format!("LyricIsland-{v}-Portable.zip"))?);
+  result["manifestUrl"]=json!(mirror_asset_url(host,&slug,id,&attachments,&format!("LyricIsland-{v}-SHA256.txt"))?);
+  result["zipUrl"]=json!(mirror_asset_url(host,&slug,id,&attachments,&format!("LyricIsland-{v}-Portable.zip"))?);
  }
  Ok(result)
 }
+fn check_gitee(repo:&str,channel:&str)->Result<Value,String>{check_mirror("gitee.com",repo,"Gitee 国内源",channel)}
 fn manifest_release(value:Value)->Result<Value,String>{
     if value["published"]!=true{return Err("备用清单对应版本尚未发布".into())}
     describe(&value,&installed_version())?;Ok(value)
@@ -167,20 +176,39 @@ pub fn check()->Result<Value,String>{check_channel("stable")}
 // keep each candidate's tag and asset URLs together throughout selection.
 pub fn check_channel(channel:&str)->Result<Value,String>{
  if !valid_channel(channel){return Err("更新渠道无效".into())}
- let config=sources();let repo=config["giteeRepository"].as_str().unwrap_or("");
- check_sources(channel,&installed_version(),||check_github(channel),||{
-  if repo.is_empty(){Err("未配置国内更新源".into())}else{check_gitee(repo,channel)}
- })
+ let config=sources();
+ let mirrors:Vec<(&'static str,Box<dyn FnOnce()->Result<Value,String>+'_>)>=mirror_repositories(&config).into_iter().map(|(host,label,repo)|(label,Box::new(move||check_mirror(host,&repo,label,channel)) as Box<dyn FnOnce()->Result<Value,String>+'_>)).collect();
+ check_sources(channel,&installed_version(),||check_github(channel),mirrors)
 }
-fn check_sources(channel:&str,current:&str,github:impl FnOnce()->Result<Value,String>,domestic:impl FnOnce()->Result<Value,String>)->Result<Value,String>{
+fn mirror_repositories(config:&Value)->Vec<(&'static str,&'static str,String)>{
+ [("gitee.com","Gitee 国内源","giteeRepository"),("gitcode.com","GitCode 国内源","gitcodeRepository")]
+  .into_iter()
+  .filter_map(|(host,label,key)|config[key].as_str().filter(|repo|!repo.is_empty()).map(|repo|(host,label,repo.to_owned())))
+  .collect()
+}
+fn check_sources(channel:&str,current:&str,github:impl FnOnce()->Result<Value,String>,mirrors:Vec<(&'static str,Box<dyn FnOnce()->Result<Value,String>+'_>)>)->Result<Value,String>{
  let mut result=match github(){
   Ok(result)=>result,
   Err(primary)=>{
-   let mut fallback=domestic().map_err(|error|format!("检查更新失败。GitHub：{primary}；国内后备源：{error}。请检查网络或系统代理。"))?;
-   if release_version(fallback["version"].as_str().unwrap_or(""))<release_version(current){
-    return Err(format!("GitHub 检查失败：{primary}；国内后备源仅有 {}，早于当前版本 {current}，无法确认此渠道是否有更新。",fallback["version"].as_str().unwrap_or("未知版本")))
+   let mut errors=vec![format!("GitHub：{primary}")];
+   let mut fallback=None;
+   for (label,run) in mirrors {
+    match run(){
+     Ok(value)=>{
+      if release_version(value["version"].as_str().unwrap_or(""))<release_version(current){
+       errors.push(format!("{label}仅有 {}，早于当前版本 {current}，无法确认此渠道是否有更新。",value["version"].as_str().unwrap_or("未知版本")));
+      }else{fallback=Some((label,value));break;}
+     }
+     Err(error)=>errors.push(format!("{label}：{error}")),
+    }
    }
-   let mut warnings=fallback["sourceWarnings"].as_array().cloned().unwrap_or_default();warnings.push(json!(format!("GitHub：{primary}；已使用国内后备源")));fallback["sourceWarnings"]=json!(warnings);fallback
+   let Some((label,mut fallback))=fallback else{
+    return Err(format!("检查更新失败。{}。请检查网络或系统代理。",errors.join("；")))
+   };
+   let mut warnings=fallback["sourceWarnings"].as_array().cloned().unwrap_or_default();
+   warnings.push(json!(format!("GitHub：{primary}；已使用{label}")));
+   fallback["sourceWarnings"]=json!(warnings);
+   fallback
   }
  };
  let source=result["source"].as_str().unwrap_or("未知源").to_owned();
@@ -254,7 +282,7 @@ pub fn install()->Result<Value,String>{
         assert!(describe(&json!({"tag_name":"v5.2.0","draft":true,"body":body}), "5.1.2").is_err());
     }
     #[test]fn repositories_require_expected_hosts_and_two_safe_segments(){assert_eq!(repository("https://gitee.com/team/dotisle.git","gitee.com").unwrap(),"team/dotisle");for url in ["http://gitee.com/a/b","https://evil.test/a/b","https://gitee.com/a/b/extra","https://gitee.com/a/..","https://gitee.com/a/b?q=x"]{assert!(repository(url,"gitee.com").is_err());}}
-    #[test]fn domestic_urls_are_constructed_from_validated_attachment_ids(){let assets=json!([{"name":"LyricIsland-1.3.1-Portable.zip","id":42,"browser_download_url":"https://evil.test"}]);assert_eq!(gitee_asset_url("team/dotisle",7,&assets,"LyricIsland-1.3.1-Portable.zip").unwrap(),"https://gitee.com/api/v5/repos/team/dotisle/releases/7/attach_files/42/download");assert!(gitee_asset_url("team/dotisle",7,&assets,"missing").is_err());}
+    #[test]fn domestic_urls_are_constructed_from_validated_attachment_ids(){let assets=json!([{"name":"LyricIsland-1.3.1-Portable.zip","id":42,"browser_download_url":"https://evil.test"}]);assert_eq!(gitee_asset_url("team/dotisle",7,&assets,"LyricIsland-1.3.1-Portable.zip").unwrap(),"https://gitee.com/api/v5/repos/team/dotisle/releases/7/attach_files/42/download");assert_eq!(mirror_asset_url("gitcode.com","Heiamer/Dotisle",9,&assets,"LyricIsland-1.3.1-Portable.zip").unwrap(),"https://gitcode.com/api/v5/repos/Heiamer/Dotisle/releases/9/attach_files/42/download");assert!(gitee_asset_url("team/dotisle",7,&assets,"missing").is_err());}
     #[test]fn compares_numeric_versions_and_never_downgrades(){
         assert_eq!(describe(&json!({"tag_name":"v1.10"}),"1.2.0").unwrap()["newer"],true);
         assert_eq!(describe(&json!({"tag_name":"v1.1"}),"1.2.0").unwrap()["newer"],false);
@@ -341,15 +369,15 @@ pub fn launch_candidate(release:&Value,base:&std::path::Path,data:&std::path::Pa
 #[test]fn github_primary_never_queries_or_gets_overridden_by_the_mirror(){
  let primary=describe_channel(&json!({"tag_name":"v5.0.3-beta.2","prerelease":true}),"5.0.2","beta").unwrap();
  let mut primary=primary;primary["source"]=json!("GitHub");primary["zipUrl"]=json!("github-exact-pair");
- let result=check_sources("beta","5.0.2",||Ok(primary),||panic!("mirror must remain a fallback even if it advertises v99")).unwrap();
+ let result=check_sources("beta","5.0.2",||Ok(primary),vec![("国内后备源",Box::new(||->Result<Value,String>{panic!("mirror must remain a fallback even if it advertises v99")}))]).unwrap();
  assert_eq!(result["version"],"v5.0.3-beta.2");assert_eq!(result["source"],"GitHub");assert_eq!(result["zipUrl"],"github-exact-pair");
 }
 #[test]fn outdated_domestic_fallback_cannot_claim_no_updates(){
  let mirror=|tag:&str|{let mut r=describe_channel(&json!({"tag_name":tag}),"5.0.2","beta").unwrap();r["source"]=json!("Gitee 国内源");r};
- assert!(check_sources("beta","5.0.2",||Err("offline".into()),||Ok(mirror("v3.2.0"))).unwrap_err().contains("无法确认"));
- let result=check_sources("beta","5.0.2",||Err("offline".into()),||Ok(mirror("v5.0.3"))).unwrap();
+ assert!(check_sources("beta","5.0.2",||Err("offline".into()),vec![("国内后备源",Box::new(||->Result<Value,String>{Ok(mirror("v3.2.0"))}))]).unwrap_err().contains("无法确认"));
+ let result=check_sources("beta","5.0.2",||Err("offline".into()),vec![("国内后备源",Box::new(||->Result<Value,String>{Ok(mirror("v5.0.3"))}))]).unwrap();
  assert_eq!(result["version"],"v5.0.3");assert!(result["sourceWarnings"].is_array());
- assert!(check_sources("beta","5.0.2",||Err("offline".into()),||Err("offline".into())).is_err());
+ assert!(check_sources("beta","5.0.2",||Err("offline".into()),vec![("国内后备源",Box::new(||->Result<Value,String>{Err("offline".into())}))]).is_err());
 }
 #[test]fn public_release_list_fallback_reads_beta_titles_and_rejects_foreign_links(){
  let html=r#"<a class="Link--primary Link" href="/Heiamer/DotIsle/releases/tag/v5.0.3-rc2">rc</a><a href='/Heiamer/DotIsle/releases/tag/v5.0.3-rc3' class='Link--primary'>rc3</a><a href='/Heiamer/DotIsle/releases/tag/v5.0.2' class='Link--primary'>stable</a><a href='/Heiamer/DotIsle/releases/tag/v99.0.0'>body link</a><a class='Link--primary' href='https://evil.test/Heiamer/DotIsle/releases/tag/v99.0.0'>foreign</a>"#;

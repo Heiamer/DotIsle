@@ -99,6 +99,10 @@ impl App {
         self.reset_practice_input();
         self.selected = p.previous_selection;
         self.user_hidden = p.previous_hidden;
+        self.hidden_mini = false;
+        self.edge_revealed = false;
+        self.edge_hover_since = None;
+        self.edge_leave_since = None;
         self.held = p.previous_held;
         self.manual_until = p.previous_manual_until.filter(|until| *until > Instant::now());
         self.refresh_components();
@@ -113,6 +117,7 @@ impl App {
                     self.position_on(MonitorFromRect(&bounds, MONITOR_DEFAULTTONEAREST))
                 } else { self.position() }
             };
+            let _ = unsafe { window_level::apply(self.visual_hwnd, self.hwnd, self.effective_topmost(), false) };
         }
         self.dirty = true;
         self.wake_practice_center();
@@ -152,7 +157,7 @@ impl App {
                 }
                 let mini = self.mini();
                 let steps = steps(mini || self.flag("ClickAnywhereExpand", true), !mini && self.flag("HoverExpand", false),
-                    !mini && self.flag("Floating", false), self.flag("SwipeActivities", true), self.flag("SwipeUpHide", true));
+                    !mini && self.flag("Floating", false), self.flag("SwipeActivities", true) && self.components.len() > 1, true);
                 if steps.is_empty() { return json!({"success":false,"message":"当前手势均已关闭。可在「交互与提示」中开启手势后再练习。"}); }
                 let mut bounds = RECT::default();
                 let previous_bounds = (!self.hwnd.0.is_null() && unsafe { GetWindowRect(self.hwnd, &mut bounds).is_ok() }).then_some(bounds);
@@ -162,6 +167,7 @@ impl App {
                     previous_hidden: self.user_hidden, previous_held: self.held, previous_expanded: self.expanded,
                     previous_selection: self.selected.clone(), previous_bounds, previous_manual_until });
                 self.user_hidden = false;
+                self.hidden_mini = false;
                 self.held = false;
                 self.cursor_inside = false;
                 self.display_wanted = true;
