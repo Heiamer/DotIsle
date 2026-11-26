@@ -141,21 +141,30 @@ pub fn mirror_pair(target: &Path, version: &str, host: &str, key: &str) -> Resul
     let captures = pattern.captures(repository).ok_or_else(|| Error("国内更新源地址无效".into()))?;
     let api = format!("https://{host}/api/v5/repos/{}/{}", &captures[1], &captures[2]);
     let release: Value = serde_json::from_slice(&http::get_bytes(&format!("{api}/releases/tags/v{version}"), 2 * 1024 * 1024)?)?;
+    let pairs = [
+        (format!("DotIsle-{version}-SHA256.txt"), format!("DotIsle-{version}-Portable.7z")),
+        (format!("LyricIsland-{version}-SHA256.txt"), format!("LyricIsland-{version}-Portable.zip")),
+    ];
+    let direct = |name: &str| release["assets"].as_array().and_then(|items| items.iter().find(|item| item["name"].as_str() == Some(name))).and_then(|item| item["browser_download_url"].as_str()).map(str::to_owned);
+    for (manifest_name, package_name) in &pairs {
+        if let (Some(manifest), Some(package)) = (direct(manifest_name), direct(package_name)) {
+            return Ok((manifest, package));
+        }
+    }
     let id = release["id"].as_u64().filter(|value| *value > 0).ok_or_else(|| Error("国内发行标识无效".into()))?;
     let attachments: Value = serde_json::from_slice(&http::get_bytes(&format!("{api}/releases/{id}/attach_files?per_page=100"), 4 * 1024 * 1024)?)?;
-    let mut manifest = None;
-    let mut zip = None;
+    let mut listed: Vec<(String, String)> = Vec::new();
     for item in attachments.as_array().into_iter().flatten() {
         let Some(file_id) = item["id"].as_u64().filter(|value| *value > 0) else { continue };
         let name = item["name"].as_str().or_else(|| item["file_name"].as_str()).unwrap_or("");
-        let url = format!("{api}/releases/{id}/attach_files/{file_id}/download");
-        if name == format!("LyricIsland-{version}-SHA256.txt") { manifest = Some(url.clone()); }
-        if name == format!("LyricIsland-{version}-Portable.zip") { zip = Some(url); }
+        listed.push((name.to_owned(), format!("{api}/releases/{id}/attach_files/{file_id}/download")));
     }
-    match (manifest, zip) {
-        (Some(manifest), Some(zip)) => Ok((manifest, zip)),
-        _ => Err(Error("国内源缺少更新附件".into())),
+    for (manifest_name, package_name) in &pairs {
+        let manifest = listed.iter().find(|(name, _)| name == manifest_name).map(|(_, url)| url.clone());
+        let package = listed.iter().find(|(name, _)| name == package_name).map(|(_, url)| url.clone());
+        if let (Some(manifest), Some(package)) = (manifest, package) { return Ok((manifest, package)); }
     }
+    Err(Error("国内源缺少更新附件".into()))
 }
 
 pub fn domestic_pair(target: &Path, version: &str) -> Result<(String, String)> {

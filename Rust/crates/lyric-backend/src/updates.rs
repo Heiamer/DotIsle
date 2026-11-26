@@ -92,11 +92,33 @@ fn check_mirror(host:&str,repo:&str,label:&str,channel:&str)->Result<Value,Strin
  let tag=release["tag_name"].as_str().ok_or("国内版本号缺失")?;
  result["source"]=json!(label);result["url"]=json!(format!("https://{host}/{slug}/releases/tag/{tag}"));
  if result["newer"]==true{
-  let id=release["id"].as_u64().filter(|n|*n>0).ok_or("国内发行版标识无效")?;
-  let attachments=crate::http::get_system(&format!("{api}/releases/{id}/attach_files?per_page=100"),&ctx)?;
   let v=tag.trim_start_matches('v');
-  result["manifestUrl"]=json!(mirror_asset_url(host,&slug,id,&attachments,&format!("LyricIsland-{v}-SHA256.txt"))?);
-  result["zipUrl"]=json!(mirror_asset_url(host,&slug,id,&attachments,&format!("LyricIsland-{v}-Portable.zip"))?);
+  let pairs=[(format!("DotIsle-{v}-SHA256.txt"),format!("DotIsle-{v}-Portable.7z")),(format!("LyricIsland-{v}-SHA256.txt"),format!("LyricIsland-{v}-Portable.zip"))];
+  let direct=|name:&str|release["assets"].as_array().and_then(|items|items.iter().find(|item|item["name"].as_str()==Some(name))).and_then(|item|item["browser_download_url"].as_str()).map(str::to_owned);
+  let mut found=false;
+  for (manifest_name,package_name) in &pairs{
+   if let (Some(manifest),Some(package))=(direct(manifest_name),direct(package_name)){
+    result["manifestUrl"]=json!(manifest);result["zipUrl"]=json!(package);found=true;break;
+   }
+  }
+  if !found{
+   let id=release["id"].as_u64().filter(|n|*n>0).ok_or("国内发行版标识无效")?;
+   let attachments=crate::http::get_system(&format!("{api}/releases/{id}/attach_files?per_page=100"),&ctx)?;
+   let mut listed:Vec<(String,String)>=Vec::new();
+   for item in attachments.as_array().into_iter().flatten(){
+    let Some(file_id)=item["id"].as_u64().filter(|n|*n>0) else{continue};
+    let name=item["name"].as_str().or_else(||item["file_name"].as_str()).unwrap_or("");
+    listed.push((name.to_owned(),format!("{api}/releases/{id}/attach_files/{file_id}/download")));
+   }
+   for (manifest_name,package_name) in &pairs{
+    let manifest=listed.iter().find(|(name,_)|name==manifest_name).map(|(_,url)|url.clone());
+    let package=listed.iter().find(|(name,_)|name==package_name).map(|(_,url)|url.clone());
+    if let (Some(manifest),Some(package))=(manifest,package){
+     result["manifestUrl"]=json!(manifest);result["zipUrl"]=json!(package);found=true;break;
+    }
+   }
+  }
+  if !found{return Err("国内发行版缺少更新附件".into())}
  }
  Ok(result)
 }
