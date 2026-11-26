@@ -2892,7 +2892,8 @@ impl Renderer {
             s.layout
                 .morph_shape_with_radii(s.frame.card_reveal, s.capsule_radius, s.radius)
         };
-        let p = if morph_live { 0. } else { s.frame.card_reveal };
+        // 形变期间也跟随卡片展开进度：蓝条/Mini 拉成大卡片时，卡片轮廓和内容一起长出来。
+        let p = s.frame.card_reveal;
         let (card_softness, compact_softness) = if morph_live {
             (0., s.morph.softness)
         } else {
@@ -3044,11 +3045,7 @@ impl Renderer {
         }
         self.paint_palette = saved_palette;
         self.canvas.pop_layer();
-        let alpha = if morph_live {
-            0.
-        } else {
-            crate::motion::content_weights(s.frame).0 * music_alpha
-        };
+        let alpha = crate::motion::content_weights(s.frame).0 * music_alpha;
         if alpha > 0.001 {
             let part = self.collect(|a| {
                 let w = s.layout.card.w;

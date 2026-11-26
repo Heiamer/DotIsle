@@ -334,6 +334,7 @@ struct App {
     user_hidden: bool,
     hidden_mini: bool,
     island_morph: morph_transition::IslandMorph,
+
     // A verification code surfaced while the island was manually hidden; the
     // hidden state returns once its alert is gone.
     restore_hidden: bool,
@@ -624,6 +625,7 @@ impl App {
             user_hidden: false,
             hidden_mini: false,
             island_morph: morph_transition::IslandMorph::new(),
+
             restore_hidden: false,
             display_wanted: demo,
             missing_since: None,
@@ -980,7 +982,12 @@ impl App {
     }
     fn enter_hidden_edge(&mut self) {
         let now = self.start.elapsed().as_secs_f64();
-        let was_visible = self.opacity > 0.01 && !self.taskbar_mode();
+
+        // 岛在淡入/淡出的中间帧也可能被右键隐藏；只要这一帧本来应该是可见的
+        // （display_wanted 或仍有残留不透明度），就必须从实时轮廓做收起形变，
+        // 不能因为 opacity 恰好低于阈值就直接硬切成蓝条。
+        let was_visible = !self.taskbar_mode()
+            && (self.opacity > 0.001 || self.display_wanted || self.island_morph.active());
         let (from_rect, from_radius, from_strip, from_mini) = self.live_morph_origin(now);
         let collapse_ms = self.options().collapse_duration;
 
@@ -1057,7 +1064,8 @@ impl App {
         let was_morphable = !self.taskbar_mode()
             && (self.hidden_edge() || self.hidden_mini_mode() || self.island_morph.active());
         let (from_rect, from_radius, from_strip, from_mini) = self.live_morph_origin(now);
-        let expand_ms = self.options().duration;
+        // 隐藏态恢复保持利落：点击展开还要紧接着跑卡片生长，恢复段不能拖住节奏。
+        let expand_ms = self.options().duration.min(220.);
 
         self.user_hidden = false;
         self.hidden_mini = false;
@@ -1551,6 +1559,36 @@ impl App {
         }
         if self.expanded == expanded {
             return;
+        }
+        // 从 Mini/蓝条隐藏态点击展开：直接把形变目标改成展开卡片，让蓝条/Mini
+        // 一步长成大卡片，而不是先恢复胶囊再切卡片。
+        if expanded && self.island_morph.active() {
+            let now = self.start.elapsed().as_secs_f64();
+            let (from_rect, from_radius, from_strip, from_mini) = self.live_morph_origin(now);
+            let closed_r = if self.layout.anchor_bottom {
+                6.0
+            } else {
+                self.settings["CapsuleCornerRadius"]
+                    .as_f64()
+                    .unwrap_or(self.layout.capsule.h / 2.)
+            };
+            let (card_rect, _) = self.layout.morph_shape_with_radii(
+                1.,
+                closed_r,
+                self.options().radius,
+            );
+            self.island_morph.transition(
+                from_rect,
+                from_radius,
+                from_strip,
+                from_mini,
+                morph_transition::IslandMode::Normal,
+                card_rect,
+                self.options().radius,
+                now,
+                self.flag("Animation", true),
+                self.options().duration,
+            );
         }
         let velocity = self
             .transition
@@ -4498,8 +4536,14 @@ impl App {
                     self.island_morph.update_target(self.hidden_edge_rect(), 2.5, now);
                 }
                 morph_transition::IslandMode::Normal | morph_transition::IslandMode::Mini => {
-                    let target_rect = self.layout.capsule;
-                    let target_rad = self.capsule_corner_radius(target_rect.h);
+                    // 展开手势进行中时，形变目标跟着卡片轮廓一起生长，
+                    // 蓝条/Mini 一步长成大卡片，不先落到胶囊再二次跳变。
+                    let (target_rect, target_rad) = if self.expanded {
+                        self.shape()
+                    } else {
+                        let rect = self.layout.capsule;
+                        (rect, self.capsule_corner_radius(rect.h))
+                    };
                     self.island_morph.update_target(target_rect, target_rad, now);
                 }
             }
@@ -4507,6 +4551,7 @@ impl App {
             let _ = unsafe { self.sync_input_region() };
             self.dirty = true;
         }
+
         // 任务栏模式每 200ms 复核一次任务栏几何与 Z-Order（防被 Windows 任务栏遮盖/吞掉、适配系统深浅与对齐切换）
         if self.taskbar_mode()
             && !self.demo
@@ -5281,6 +5326,11 @@ impl App {
             }
             "expand" => {
                 if self.practice.is_some() { return json!({"success":false,"message":"请按实操教程提示操作。"}); }
+                // 隐藏态（蓝条/Mini）走与鼠标左键相同的恢复入口，先拿到实时形变起点，
+                // 再由 retarget 把目标改成展开卡片，避免从蓝条硬跳到胶囊。
+                if self.user_hidden {
+                    self.reveal_hidden_edge();
+                }
                 self.user_hidden = false;
                 self.hidden_mini = false;
                 self.held = true;

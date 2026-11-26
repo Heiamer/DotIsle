@@ -90,7 +90,7 @@ func updateChannelLocked(phase string) bool {
 // Channel state is acknowledged by the native updater, never guessed locally.
 func (a *App) aboutBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	s := &p.Scheme
-	version := stateString(a.State, stateString(a.State, "5.2.4", "version"), "bundleVersion")
+	version := stateString(a.State, stateString(a.State, "5.2.5", "version"), "bundleVersion")
 	u, _ := a.State["softwareUpdate"].(map[string]any)
 	phase := leafStr(u["phase"], "idle")
 	channel := stateString(a.State, "stable", "updateChannel")
