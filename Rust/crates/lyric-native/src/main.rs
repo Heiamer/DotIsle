@@ -4895,10 +4895,9 @@ impl App {
                 }
             }
             "updateApply" => {
-                if self.updates.phase() != "ready" {
+                if !self.updates.ask_apply() {
                     json!({"success":false,"message":"更新尚未就绪"})
                 } else {
-                    self.updates.ask_apply();
                     self.export_update_appearance();
                     json!({"success":true})
                 }

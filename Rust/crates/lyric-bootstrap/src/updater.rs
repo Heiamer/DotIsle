@@ -289,6 +289,34 @@ mod source_priority_tests{
  }
 }
 
+/// Stage each replacement beside its destination. A failed rename leaves the installed
+/// file untouched, so rollback only visits files that were actually replaced.
+fn replace_runtime_file(input: &Path, destination: &Path) -> std::io::Result<()> {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let serial = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let pending = destination.with_file_name(format!(".dotisle-ota-{}-{serial}.tmp", std::process::id()));
+    let mut output = std::fs::OpenOptions::new().write(true).create_new(true).open(&pending)?;
+    let copied = (|| {
+        std::io::copy(&mut std::fs::File::open(input)?, &mut output)?;
+        output.sync_all()
+    })();
+    drop(output);
+    let result = copied.and_then(|()| {
+        // Windows can hold a departing process's images briefly, even after it signals exit.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            match std::fs::rename(&pending, destination) {
+                Err(error) if matches!(error.raw_os_error(), Some(5 | 32 | 33)) && Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                result => break result,
+            }
+        }
+    });
+    if result.is_err() { let _ = std::fs::remove_file(&pending); }
+    result
+}
+
 pub fn apply(stage: &Path, target: &Path, backup: &Path, fail_after: usize, after: Option<&mut dyn FnMut() -> Result<()>>) -> Result<()> {
     let mut changed: Vec<String> = Vec::new();
     let mut existed: HashSet<String> = HashSet::new();
@@ -316,9 +344,10 @@ pub fn apply(stage: &Path, target: &Path, backup: &Path, fail_after: usize, afte
                 std::fs::copy(&destination, &old)?;
                 existed.insert(relative.clone());
             }
-            changed.push(relative.clone());
             if let Some(parent) = destination.parent() { std::fs::create_dir_all(parent)?; }
-            std::fs::copy(&input, &destination)?;
+            replace_runtime_file(&input, &destination)
+                .map_err(|error| Error(format!("无法替换 {relative}：{error}")))?;
+            changed.push(relative.clone());
             if fail_after > 0 && changed.len() >= fail_after { return Err(Error("simulated write failure".into())); }
         }
         if let Some(after) = after.as_mut() { after()?; }
@@ -330,11 +359,11 @@ pub fn apply(stage: &Path, target: &Path, backup: &Path, fail_after: usize, afte
             let destination = target.join(relative.replace('/', "\\"));
             let old = backup.join(relative.replace('/', "\\"));
             let outcome: Result<()> = if existed.contains(relative) {
-                std::fs::copy(&old, &destination).map(|_| ()).map_err(Error::from)
+                replace_runtime_file(&old, &destination).map_err(Error::from)
             } else {
                 paths::remove_file_if_present(&destination)
             };
-            if let Err(rollback) = outcome { rollback_errors.push(rollback.to_string()); }
+            if let Err(rollback) = outcome { rollback_errors.push(format!("{relative}：{rollback}")); }
         }
         if !rollback_errors.is_empty() {
             return Err(Error(format!("更新回滚未完成，备份保留在：{}；{}", backup.display(), rollback_errors.join("；"))));
@@ -591,7 +620,10 @@ pub fn run(args: Vec<String>) -> i32 {
                 let _ = report_failure(&args, &error);
             }
             if stopped { if let (Some(target), Some(data)) = (target.as_ref(), data.as_ref()) { let _ = start(target, data); } }
-            let details = scratch.map(|path| format!("\n诊断和备份：{}", path.display())).unwrap_or_default();
+            let details = scratch.map(|path| {
+                let _ = std::fs::write(path.join("failure.txt"), error.to_string());
+                format!("\n诊断和备份：{}", path.display())
+            }).unwrap_or_default();
             win::message_box(&format!("在线更新未完成：{error}{details}"), "点屿在线更新", true);
             1
         }
@@ -611,6 +643,39 @@ fn report_failure(args: &[String], error: &Error) -> Result<()> {
 mod update_file_tests {
     use super::*;
     use std::os::windows::fs::OpenOptionsExt;
+
+    #[test]
+    fn locked_destination_does_not_get_rewritten_during_rollback() {
+        let root = paths::temp_unique("DotIsle.LockedDestinationTest");
+        let stage = root.join("stage"); let target = root.join("target"); let backup = root.join("backup");
+        std::fs::create_dir_all(&stage).unwrap(); std::fs::create_dir_all(&target).unwrap();
+        for (file, original) in [("a.bin", b"old a"), ("b.bin", b"old b")] {
+            std::fs::write(target.join(file), original).unwrap();
+            std::fs::write(stage.join(file), b"new bytes").unwrap();
+        }
+        let locked = std::fs::OpenOptions::new().read(true).share_mode(1).open(target.join("b.bin")).unwrap();
+        let error = apply(&stage, &target, &backup, 0, None).unwrap_err();
+        assert!(error.to_string().contains("b.bin"), "{error}");
+        assert_eq!(std::fs::read(target.join("a.bin")).unwrap(), b"old a");
+        assert_eq!(std::fs::read(target.join("b.bin")).unwrap(), b"old b");
+        assert_eq!(std::fs::read_dir(&target).unwrap().count(), 2);
+        assert!(!error.to_string().contains("更新回滚未完成"), "{error}");
+        drop(locked); std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn transient_sharing_lock_is_retried() {
+        let root = paths::temp_unique("DotIsle.TransientLockTest");
+        std::fs::create_dir_all(&root).unwrap();
+        let input = root.join("input.bin"); let destination = root.join("runtime.bin");
+        std::fs::write(&input, b"new").unwrap(); std::fs::write(&destination, b"old").unwrap();
+        let lock = std::fs::OpenOptions::new().read(true).share_mode(1).open(&destination).unwrap();
+        let releasing = std::thread::spawn(move || { std::thread::sleep(Duration::from_millis(350)); drop(lock); });
+        replace_runtime_file(&input, &destination).unwrap();
+        releasing.join().unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), b"new");
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn unchanged_locked_assets_are_preserved_while_changed_files_are_updated() {

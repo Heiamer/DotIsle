@@ -119,7 +119,7 @@ func (a *App) opening(c *ui.Context, w, h float32) {
 				versionOffset -= 4 * exitP
 			}
 		}
-		CenteredText(c, stateString(a.State, "5.2.5", "version"), 0, wordY+wordH+22+versionOffset, w, 24, 12, s.OnSurfaceVariant, false).Opacity(versionAlpha)
+		CenteredText(c, stateString(a.State, "5.2.6", "version"), 0, wordY+wordH+22+versionOffset, w, 24, 12, s.OnSurfaceVariant, false).Opacity(versionAlpha)
 	})
 	c.AnimationFrame()
 }

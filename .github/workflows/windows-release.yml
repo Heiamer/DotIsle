@@ -175,6 +175,19 @@ jobs:
           python build/prepare_public_release.py --directory publish/release-output --output publish/public-release --gitee-output publish/gitee-ota --version $env:VERSION --plan validation/public-assets.json
           if($LASTEXITCODE -ne 0){throw 'Public asset selection failed'}
 
+      - name: Verify Windows OTA before publishing
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 test --release --locked --package lyric-bootstrap --lib update_file_tests
+          if($LASTEXITCODE -ne 0){throw 'OTA file replacement tests failed'}
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 test --release --locked --package lyric-native a_prepared_update_leaves_the_island_when_the_main_window_closes
+          if($LASTEXITCODE -ne 0){throw 'OTA confirmation test failed'}
+          $dir=Join-Path $pwd 'validation'
+          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          $updater=Join-Path $pwd "publish/release-output/DotIsle-$env:VERSION/LyricIsland.Updater.exe"
+          $report=Join-Path $dir 'ota-self-test.json'
+          $proc=Start-Process -FilePath $updater -ArgumentList @('--self-test', ('"'+$report+'"')) -WindowStyle Hidden -Wait -PassThru
+          if($proc.ExitCode -ne 0 -or (Get-Content -LiteralPath $report -Raw | ConvertFrom-Json).success -ne $true){throw 'Packaged OTA transaction verification failed'}
+
       - name: Create draft release and upload artifacts
         if: ${{ !inputs.verify_only }}
         env:

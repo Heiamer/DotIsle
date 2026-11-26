@@ -67,9 +67,9 @@ impl Hub{
   self.state=json!({"phase":"downloading","version":self.release["version"],"receivedBytes":0,"totalBytes":null,"seq":0});Ok(())
  }
  /// Ask the helper to install the prepared update. The helper polls the action field.
- pub fn ask_apply(&mut self)->bool{if self.phase()!="ready"{return false}self.action="apply".into();self.meta["applyingVersion"]=json!(self.state["version"].as_str().or(self.release["version"].as_str()).unwrap_or(""));self.meta["applyingAt"]=json!(epoch());self.persist();self.last_progress=Instant::now();true}
+ pub fn ask_apply(&mut self)->bool{if self.phase()!="ready"||self.action=="cancel"{return false}self.action="apply".into();self.meta["applyingVersion"]=json!(self.state["version"].as_str().or(self.release["version"].as_str()).unwrap_or(""));self.meta["applyingAt"]=json!(epoch());self.persist();self.last_progress=Instant::now();true}
  /// Cancel is only meaningful while the download, its verification or the prepared wait runs.
- pub fn cancel(&mut self)->Result<(),String>{if !matches!(self.phase(),"downloading"|"switching"|"verifying"|"ready"){return Err("当前阶段不能取消更新".into())}self.action="cancel".into();self.last_progress=Instant::now();Ok(())}
+ pub fn cancel(&mut self)->Result<(),String>{if self.action=="apply"||!matches!(self.phase(),"downloading"|"switching"|"verifying"|"ready"){return Err("当前阶段不能取消更新".into())}self.action="cancel".into();self.last_progress=Instant::now();Ok(())}
  /// Closing a finished reminder returns the hub to idle so the update activity leaves the cycle.
  /// A prepared (`ready`) update is user work and survives closing unless it was cancelled.
  /// Suppress reminders for exactly the version currently offered; the next tag reminds again.
@@ -173,7 +173,7 @@ impl Hub{
   for phase in ["applying","restarting","completed","failed","available","idle"]{let mut h=hub();h.state=json!({"phase":phase});assert!(h.cancel().is_err(),"{phase}");}
  }
  #[test]fn a_prepared_update_leaves_the_island_when_the_main_window_closes(){
-  let mut h=hub();h.state=json!({"phase":"ready","version":"v1.5.1"});assert!(h.ask_apply());assert_eq!(h.action,"apply");assert_eq!(h.meta["applyingVersion"],"v1.5.1");
+  let mut h=hub();h.state=json!({"phase":"ready","version":"v1.5.1"});assert!(h.ask_apply());assert_eq!(h.action,"apply");assert_eq!(h.meta["applyingVersion"],"v1.5.1");assert!(h.cancel().is_err(),"the last ready report must not cancel a committed install");assert_eq!(h.action,"apply");
  }
  #[test]fn a_restart_confirms_or_rejects_the_install_marker(){
   let dir=std::env::temp_dir().join(format!("dotisle-update-confirm-{}",std::process::id()));let _=std::fs::create_dir_all(&dir);
