@@ -274,6 +274,19 @@ mod source_priority_tests{
   assert!(!official_url("http://gitcode.com/x"));
   assert!(!official_url("https://evil.test/gitcode.com/x"));
  }
+ #[test]
+ #[ignore]
+ fn gitcode_mirror_prefers_the_7z_pair() {
+  let target = std::env::temp_dir().join("dotisle-gitcode-mirror-test");
+  let _ = std::fs::remove_dir_all(&target);
+  std::fs::create_dir_all(target.join("Assets")).unwrap();
+  std::fs::write(target.join("Assets/UpdateSources.json"), include_str!("../../../../Assets/UpdateSources.json")).unwrap();
+  let (manifest, package) = gitcode_pair(&target, "5.2.3").unwrap();
+  assert!(manifest.ends_with("DotIsle-5.2.3-SHA256.txt"), "{manifest}");
+  assert!(package.ends_with("DotIsle-5.2.3-Portable.7z"), "{package}");
+  assert!(official_url(&manifest) && official_url(&package));
+  let _ = std::fs::remove_dir_all(&target);
+ }
 }
 
 pub fn apply(stage: &Path, target: &Path, backup: &Path, fail_after: usize, after: Option<&mut dyn FnMut() -> Result<()>>) -> Result<()> {
