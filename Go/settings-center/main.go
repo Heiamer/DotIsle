@@ -82,9 +82,11 @@ func main() {
 
 	app := &ui.App{Prefs: p, Data: data, SettingsTab: ui.TabRoot, EnableCityPrompt: true}
 	app.LoadStartupSettings()
+	app.StartAllegro()
+	defer app.StopAllegro()
 	host := desktop.New(data)
 	defer host.Stop()
-	center := &centerWindow{app: app, allowIdleExit: os.Getenv("DOTISLE_CENTER_IDLE_EXIT") == "1", released: *warm}
+	center := &centerWindow{app: app, allowIdleExit: os.Getenv("DOTISLE_CENTER_IDLE_EXIT") == "1" && !app.AllegroAvailable, released: *warm}
 	// Connect while the native window and fonts initialize. The buffered pump
 	// retains its first snapshot until the UI thread can apply it.
 	snapshots := island.Run(data)
@@ -109,6 +111,7 @@ func main() {
 					// No matching native process owns this center. Quit may arrive
 					// before the native event loop starts, so end this stray host now.
 					host.Stop()
+					app.StopAllegro()
 					os.Exit(0)
 				}
 				if initial.Err == "" {

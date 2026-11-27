@@ -1,0 +1,24 @@
+{
+  "repository": "https://github.com/H0308/taskbar-lyrics-displayer",
+  "commit": "3fae9287dfb0636fc19a0df2587a1a59a54cf9bb",
+  "files": {
+    "src/lyric/lrc_parser.cpp": "9020f45350b313889f372b786cdf4dfaf66dbe1d16b92fcefd8f8044fde5d630",
+    "src/lyric/lyricsfile_parser.cpp": "c1d8a385ef2482d60a4f5254a1a908c9996828fa674735d49cbd5590e2787066",
+    "src/lyric/lyric_http.cpp": "d779b957e198df071117309089cf325ddfdbc8ac745aaa6edebf96f191404d5c",
+    "src/lyric/lyric_matching.cpp": "2195e1ebbc22b2736cc35d9dbb35cf0bffec67da6057441a6bca7b9837640158",
+    "src/lyric/lyric_matching.h": "b8b37da0f7e44524c2cbf915a509793063feab11866f90e20e035bf04ea32a71",
+    "src/lyric/lyric_provider.cpp": "2db3ddc7030a4536a0d599b4ec6298403166e979d9984edbd91dc3569ea2f01f",
+    "src/lyric/qrc_decoder.cpp": "17df3511bedec289529dd42b615c989f22a5578bfdb6ef41714ffa66825b2c59",
+    "src/lyric/soda_lyric_timing.h": "b9c61afe4f2b90134a2fd39624109405914c9e539a156cd11c809a1231b0c09b",
+    "src/lyric/sources/kugou_lyric_source.cpp": "371a135756ddd6163a52336d7898b286e055a51c07ebc81d29e9b75f008ad5b4",
+    "src/lyric/sources/kugou_lyric_source.h": "e08489815db4b541e9e63f700adbe62c9419e7486a766d1dc13a9ea3cf093653",
+    "src/lyric/sources/lrclib_lyric_source.cpp": "99469f8561ac69eff84c5a007d5f9213fe72b51bf522d859b8c15dbbe563ac21",
+    "src/lyric/sources/lrclib_lyric_source.h": "edb13ae0386d4ddf06c938e769c6b1858843091968d202bffc6f927477d27baa",
+    "src/lyric/sources/netease_lyric_source.cpp": "efc2ca7caeed1af5cc2af0f9a70ab43f22d4418d942c84ac619d24601b8751f1",
+    "src/lyric/sources/netease_lyric_source.h": "3cb939f4dc4b06361b64417c6d1c6f7259617cf59de74cff7608eb43b41a1b99",
+    "src/lyric/sources/qq_lyric_source.cpp": "2c21aceb147339bb705da33fe092ce7be72737086d611aa1b99e89c6a97ae504",
+    "src/lyric/sources/qq_lyric_source.h": "b17b86f07f5f86739c9813e10ad1b385f54d23d9f0ba652e76b1ee5b9844d895",
+    "src/lyric/sources/soda_lyric_source.cpp": "d3d829b281710966f6312c18f5d5213f1f8a5947368c2ba5a9beeb10b6555b24",
+    "src/lyric/sources/soda_lyric_source.h": "e9f910d10eaabd89bb3ea32c9b9c7e0ada05c188be5c3e465753b442d7c89416"
+  }
+}

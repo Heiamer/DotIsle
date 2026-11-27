@@ -63,6 +63,8 @@ def main():
     source_center=root/'Go/settings-center/LyricIsland.Center.exe'
     if source_center.is_file() and sha(source_center) != sha(center):
         raise RuntimeError('Stale Center in binary-dir: copy the current Go build before packaging')
+    from verify_lyrics_engine import verify as verify_lyrics_engine
+    verify_lyrics_engine(args.binary_dir)
     name='DotIsle-'+args.version
     runtime=out/name;assert not runtime.exists(),'Use a fresh version directory'
     runtime.mkdir()
@@ -75,6 +77,7 @@ def main():
     # prefers it); its icon and manifest are embedded at link time via
     # rsrc_windows_amd64.syso, so no PE resource rewrite here.
     shutil.copy2(center,runtime/'LyricIsland.Center.exe')
+    shutil.copy2(args.binary_dir/'DotIsle-Allegro.exe',runtime/'DotIsle-Allegro.exe')
     for module in ['dotisle_core.dll', 'dotisle_desktop.dll', 'dotisle_focus.dll', 'dotisle_todos.dll', 'dotisle_music.dll', 'dotisle_lyrics.dll', 'dotisle_notifications.dll', 'dotisle_history.dll', 'dotisle_automation.dll', 'dotisle_devices.dll', 'dotisle_osd.dll', 'dotisle_sound.dll', 'dotisle_widgets.dll', 'dotisle_themes.dll', 'dotisle_glow.dll']:
         shutil.copy2(args.binary_dir/module,runtime/module)
     copy_runtime_assets(root/'Assets', runtime/'Assets')

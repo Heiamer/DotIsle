@@ -42,7 +42,7 @@ impl Timeline{
    Word{at:1000,until:2000,text:"子                                                                            ".into()},
    Word{at:2000,until:3000,text:"哄".into()},
   ];
-  let lyrics=Lyrics{lines:vec![Cue{at:1000,until:3000,text:"那安慰我的样子                                                                            哄我别哭".into(),words:dirty_words,translation:None}],timed:true,instrumental:false};
+  let lyrics=Lyrics{lines:vec![Cue{at:1000,until:3000,text:"那安慰我的样子                                                                            哄我别哭".into(),words:dirty_words,translation:None,romanization:None}],timed:true,instrumental:false};
   s.complete_search(&t,Some(&Selection{content:lyrics,provider_id:Provider::new("Local"),candidate_id:"dirty".into(),score:100}));
   let p=Playback::playing(t,Duration::from_millis(2000));
   let f=s.get_display_frame(&p);

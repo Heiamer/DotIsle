@@ -3,6 +3,7 @@
 // budget is not enough for it once the 1.3 keys are included.
 #![recursion_limit = "256"]
 mod activation;
+mod backdrop_capture;
 mod bottom_osd;
 mod top_popup;
 mod cover_color;
@@ -334,7 +335,6 @@ struct App {
     user_hidden: bool,
     hidden_mini: bool,
     island_morph: morph_transition::IslandMorph,
-
     // A verification code surfaced while the island was manually hidden; the
     // hidden state returns once its alert is gone.
     restore_hidden: bool,
@@ -359,6 +359,7 @@ struct App {
     last_widget_host: Instant,
     greeting_pending: bool,
     center_process: Option<std::process::Child>,
+    allegro_process: Option<std::process::Child>,
     center_started: bool,
     settings_wake: Option<io::SettingsWake>,
     renderer_generation: u64,
@@ -397,6 +398,7 @@ struct App {
     /// When the collapsed lyric last changed. Width retargets wait for it to settle.
     compact_stability: compact::Stability,
     acrylic_preview: Value,
+    backdrop_capturer: backdrop_capture::BackdropCapturer,
 }
 impl App {
     fn new(base: PathBuf, data: PathBuf, demo: bool) -> Self {
@@ -625,7 +627,6 @@ impl App {
             user_hidden: false,
             hidden_mini: false,
             island_morph: morph_transition::IslandMorph::new(),
-
             restore_hidden: false,
             display_wanted: demo,
             missing_since: None,
@@ -654,6 +655,7 @@ impl App {
             plugins,
             last_context_poll: now-Duration::from_secs(2),
             center_process: None,
+            allegro_process: None,
             center_started: false,
             settings_wake: io::SettingsWake::new(),
             renderer_generation: 0,
@@ -674,6 +676,7 @@ impl App {
             last_notice: None,
             acrylic_preview: json!({}),
             compact_stability: compact::Stability::default(),
+            backdrop_capturer: backdrop_capture::BackdropCapturer::default(),
             quick: vec![],
             quick_commits: vec![],
             pending_action: None,
@@ -960,17 +963,22 @@ impl App {
         }
     }
     /// 捕获当前壳体实时视觉几何与混合权重，用于无缝启动或中途打断四向形变。
-    fn live_morph_origin(&self, now: f64) -> (Rect, f64, f64, f64) {
+    fn live_morph_origin(&self, now: f64) -> (Rect, f64, f64, f64, f64) {
         if self.island_morph.active() {
             let p = self.island_morph.presentation(now, self.layout.host);
-            return (p.rect, p.radius, p.strip_mix, p.mini_mix);
+            return (p.rect, p.radius, p.strip_mix, p.mini_mix, p.card_mix);
         }
         if self.hidden_edge() {
-            return (self.hidden_edge_rect(), 2.5, 1., 0.);
+            return (self.hidden_edge_rect(), 2.5, 1., 0., 0.);
         }
         let (rect, rad) = self.shape();
         let mini_mix = if self.mini() { 1. } else { 0. };
-        (rect, rad, 0., mini_mix)
+        let card_mix = if self.expanded || self.frame.card_reveal > 0.01 {
+            self.frame.card_reveal.max(if self.expanded { 1. } else { 0. })
+        } else {
+            0.
+        };
+        (rect, rad, 0., mini_mix, card_mix)
     }
     fn can_hide(&self, hit: i32) -> bool {
         self.hide_trigger() == "SwipeUp"
@@ -981,14 +989,15 @@ impl App {
             && (matches!(hit, 0 | 1 | 13 | 40..=42) || hit >= 1000)
     }
     fn enter_hidden_edge(&mut self) {
-        let now = self.start.elapsed().as_secs_f64();
-
-        // 岛在淡入/淡出的中间帧也可能被右键隐藏；只要这一帧本来应该是可见的
-        // （display_wanted 或仍有残留不透明度），就必须从实时轮廓做收起形变，
-        // 不能因为 opacity 恰好低于阈值就直接硬切成蓝条。
+        let now0 = self.start.elapsed().as_secs_f64();
+        let (mut from_rect, mut from_radius, from_strip, from_mini, from_card) =
+            self.live_morph_origin(now0);
+        if from_rect.w < 10. || from_rect.h < 4. {
+            from_rect = self.layout.capsule;
+            from_radius = self.capsule_corner_radius(from_rect.h);
+        }
         let was_visible = !self.taskbar_mode()
-            && (self.opacity > 0.001 || self.display_wanted || self.island_morph.active());
-        let (from_rect, from_radius, from_strip, from_mini) = self.live_morph_origin(now);
+            && (self.opacity > 0.01 || self.display_wanted || self.island_morph.active());
         let collapse_ms = self.options().collapse_duration;
 
         // 若从展开态直接隐藏，复位卡片展开状态并沿用当前大轮廓直接缩成蓝条/Mini
@@ -1004,6 +1013,9 @@ impl App {
         self.edge_revealed = false;
         self.edge_hover_since = None;
         self.edge_leave_since = None;
+        self.hide_at = None;
+        self.missing_since = None;
+        self.suppress_hover_expand = false;
         self.dismiss_offset.set(0.);
         let display = self.hidden_display().to_owned();
         self.hidden_mini = display == "Mini";
@@ -1019,16 +1031,18 @@ impl App {
         self.dirty = true;
         unsafe {
             let _ = self.position();
+            let now = self.start.elapsed().as_secs_f64();
             if display != "None" {
                 let _ = window_level::apply(self.visual_hwnd, self.hwnd, true, false);
             }
-            if display == "Strip" && was_visible && self.hidden_edge() {
+            if display == "Strip" && !self.taskbar_mode() && self.hidden_edge() {
                 let target_rect = self.hidden_edge_rect();
-                self.island_morph.transition(
+                self.island_morph.transition_with_card(
                     from_rect,
                     from_radius,
                     from_strip,
                     from_mini,
+                    from_card,
                     morph_transition::IslandMode::Strip,
                     target_rect,
                     2.5,
@@ -1037,6 +1051,7 @@ impl App {
                     collapse_ms,
                 );
             } else if display == "Mini" && was_visible && self.hidden_mini_mode() {
+                self.poll();
                 let (tw, th) = self
                     .measure_compact_layout()
                     .unwrap_or((self.compact_base(), 14.));
@@ -1044,11 +1059,12 @@ impl App {
                 self.layout.set_compact(tw, th);
                 let target_rect = self.layout.capsule;
                 let target_rad = self.capsule_corner_radius(th);
-                self.island_morph.transition(
+                self.island_morph.transition_with_card(
                     from_rect,
                     from_radius,
                     from_strip,
                     from_mini,
+                    from_card,
                     morph_transition::IslandMode::Mini,
                     target_rect,
                     target_rad,
@@ -1057,15 +1073,27 @@ impl App {
                     collapse_ms,
                 );
             }
+            let _ = self.sync_input_region();
         }
     }
     fn reveal_hidden_edge(&mut self) {
-        let now = self.start.elapsed().as_secs_f64();
+        let now0 = self.start.elapsed().as_secs_f64();
+        let was_strip = self.hidden_edge()
+            || (self.island_morph.active()
+                && self.island_morph.mode() == morph_transition::IslandMode::Strip);
         let was_morphable = !self.taskbar_mode()
             && (self.hidden_edge() || self.hidden_mini_mode() || self.island_morph.active());
-        let (from_rect, from_radius, from_strip, from_mini) = self.live_morph_origin(now);
-        // 隐藏态恢复保持利落：点击展开还要紧接着跑卡片生长，恢复段不能拖住节奏。
-        let expand_ms = self.options().duration.min(220.);
+        let (from_rect, from_radius, from_strip, from_mini, from_card) =
+            self.live_morph_origin(now0);
+        let expand_ms = self.options().duration;
+
+        // 还原回紧凑灵动岛：强制维持未展开状态并阻断悬停误展开
+        self.expanded = false;
+        self.held = false;
+        self.transition = None;
+        self.frame = Frame::hidden(self.options());
+        self.suppress_hover_expand = true;
+        self.leave_at = None;
 
         self.user_hidden = false;
         self.hidden_mini = false;
@@ -1073,14 +1101,25 @@ impl App {
         self.edge_leave_since = None;
         self.restore_hidden = false;
         self.display_wanted = true;
+        self.opacity = 1.;
         self.manual_until = Some(Instant::now() + Duration::from_secs(6));
         self.fade(1.);
         self.dirty = true;
         if self.practice_step() == Some(PracticeStep::Recover) {
             self.practice_event(PracticeStep::Recover);
         }
+
+        // 内容实时接力：先立即同步当前时间线歌词/译文/封面（未唱完保留该句，已唱完切至下一句）
+        self.poll();
+        if was_strip {
+            self.previous_lyric.clear();
+            self.previous_compact_secondary.clear();
+            self.lyric_start = Instant::now() - Duration::from_millis(300);
+        }
+
         unsafe {
             let _ = self.position();
+            let now = self.start.elapsed().as_secs_f64();
             let _ = window_level::apply(self.visual_hwnd, self.hwnd, self.effective_topmost(), false);
             if was_morphable {
                 let default_h = if self.mini() { 14. } else { 40. };
@@ -1096,11 +1135,12 @@ impl App {
                 };
                 let target_rect = self.layout.capsule;
                 let target_rad = self.capsule_corner_radius(th);
-                self.island_morph.transition(
+                self.island_morph.transition_with_card(
                     from_rect,
                     from_radius,
                     from_strip,
                     from_mini,
+                    from_card,
                     to_mode,
                     target_rect,
                     target_rad,
@@ -1109,14 +1149,63 @@ impl App {
                     expand_ms,
                 );
             }
+            let _ = self.sync_input_region();
+        }
+    }
+    /// 左键点击顶部隐藏蓝条：从 56×5 蓝条一气呵成直接连续形变为完整展开卡片，绝不先缩再弹两段跳变。
+    fn reveal_hidden_edge_to_card(&mut self) {
+        let now0 = self.start.elapsed().as_secs_f64();
+        let (from_rect, from_radius, from_strip, from_mini, from_card) =
+            self.live_morph_origin(now0);
+        let expand_ms = self.options().duration;
+
+        self.expanded = true;
+        self.held = true;
+        self.transition = None;
+        self.frame = Frame::expanded();
+        self.suppress_hover_expand = false;
+        self.leave_at = None;
+
+        self.user_hidden = false;
+        self.hidden_mini = false;
+        self.edge_revealed = false;
+        self.edge_leave_since = None;
+        self.restore_hidden = false;
+        self.display_wanted = true;
+        self.opacity = 1.;
+        self.manual_until = Some(Instant::now() + Duration::from_secs(6));
+        self.fade(1.);
+        self.dirty = true;
+        if self.practice_step() == Some(PracticeStep::Recover) {
+            self.practice_event(PracticeStep::Recover);
+        }
+
+        self.poll();
+        unsafe {
+            let _ = self.position();
+            let now = self.start.elapsed().as_secs_f64();
+            let _ = window_level::apply(self.visual_hwnd, self.hwnd, self.effective_topmost(), false);
+            if !self.taskbar_mode() {
+                let target_rect = self.layout.card;
+                let target_rad = self.options().radius;
+                self.island_morph.transition_with_card(
+                    from_rect,
+                    from_radius,
+                    from_strip,
+                    from_mini,
+                    from_card,
+                    morph_transition::IslandMode::Card,
+                    target_rect,
+                    target_rad,
+                    now,
+                    self.flag("Animation", true),
+                    expand_ms,
+                );
+            }
+            let _ = self.sync_input_region();
         }
     }
     fn hide_by_gesture(&mut self) {
-        self.user_hidden = true;
-        self.restore_hidden = false;
-        self.edge_revealed = false;
-        self.edge_hover_since = None;
-        self.edge_leave_since = None;
         self.practice_event(PracticeStep::Hide);
         self.held = false;
         self.leave_at = None;
@@ -1126,15 +1215,17 @@ impl App {
         self.drag_target.clear();
         self.drag_panel = None;
         self.swipe = None;
-        if self.practice.is_some() {
-            if self.practice_step() == Some(PracticeStep::Recover) {
-                self.enter_hidden_edge();
-            } else {
-                self.island_morph.cancel();
-                self.fade(0.);
-            }
-        } else {
+        if self.practice.is_none() || self.practice_step() == Some(PracticeStep::Recover) {
+            // 先保留隐藏前状态调用 enter_hidden_edge()，确保 live_morph_origin() 捕获到真实起点坐标
             self.enter_hidden_edge();
+        } else {
+            self.user_hidden = true;
+            self.restore_hidden = false;
+            self.edge_revealed = false;
+            self.edge_hover_since = None;
+            self.edge_leave_since = None;
+            self.island_morph.cancel();
+            self.fade(0.);
         }
         self.dirty = true;
     }
@@ -1518,15 +1609,21 @@ impl App {
         Ok(())
     }
     fn track_pointer_presence(&mut self, inside: bool) {
-        // A closing surface can cross the pointer; wait for the morph to settle.
-        if !inside && self.transition.is_none() {
+        // A closing or morphing surface can cross the pointer; wait for the morph to settle.
+        if !inside && self.transition.is_none() && !self.island_morph.active() {
             self.suppress_hover_expand = false;
         }
         if !self.banner.visible() && inside && !self.cursor_inside {
             self.leave_at = None;
             let on_tb_ctrl = self.layout.anchor_bottom && !self.expanded && [3, 4, 5].contains(&self.hover);
-            if !on_tb_ctrl && !self.suppress_hover_expand && !self.mini() && self.flag("HoverExpand", false)
-                && (self.practice.is_none() || self.practice_step() == Some(PracticeStep::HoverExpand)) {
+            if !on_tb_ctrl
+                && !self.user_hidden
+                && !self.island_morph.active()
+                && !self.suppress_hover_expand
+                && !self.mini()
+                && self.flag("HoverExpand", false)
+                && (self.practice.is_none() || self.practice_step() == Some(PracticeStep::HoverExpand))
+            {
                 let was_expanded = self.expanded;
                 self.retarget(true);
                 if !was_expanded && self.expanded { self.practice_event(PracticeStep::HoverExpand); }
@@ -1559,36 +1656,6 @@ impl App {
         }
         if self.expanded == expanded {
             return;
-        }
-        // 从 Mini/蓝条隐藏态点击展开：直接把形变目标改成展开卡片，让蓝条/Mini
-        // 一步长成大卡片，而不是先恢复胶囊再切卡片。
-        if expanded && self.island_morph.active() {
-            let now = self.start.elapsed().as_secs_f64();
-            let (from_rect, from_radius, from_strip, from_mini) = self.live_morph_origin(now);
-            let closed_r = if self.layout.anchor_bottom {
-                6.0
-            } else {
-                self.settings["CapsuleCornerRadius"]
-                    .as_f64()
-                    .unwrap_or(self.layout.capsule.h / 2.)
-            };
-            let (card_rect, _) = self.layout.morph_shape_with_radii(
-                1.,
-                closed_r,
-                self.options().radius,
-            );
-            self.island_morph.transition(
-                from_rect,
-                from_radius,
-                from_strip,
-                from_mini,
-                morph_transition::IslandMode::Normal,
-                card_rect,
-                self.options().radius,
-                now,
-                self.flag("Animation", true),
-                self.options().duration,
-            );
         }
         let velocity = self
             .transition
@@ -1729,6 +1796,10 @@ impl App {
         self.center_started |= self.center_process.is_some();
     }
     fn reap_center(&mut self) {
+        if let Some(status) = self.allegro_process.as_mut().and_then(|p| p.try_wait().ok().flatten()) {
+            let _ = status;
+            self.allegro_process = None;
+        }
         // Replay an open request that raced the clean idle exit, not a crash.
         const IDLE_EXIT: i32 = 35;
         if self.pending_page.is_none() {
@@ -1742,11 +1813,19 @@ impl App {
             self.launch_center(true);
         }
     }
+    fn terminate_child(slot: &mut Option<std::process::Child>) {
+        if let Some(mut child) = slot.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
     fn ensure_widget_host(&mut self) {
-        if self.demo || self.desktop_widgets.items.is_empty() || widget_metrics::host_running(&self.data) { return; }
+        if self.demo { return; }
+        let integrated = self.base.join("DotIsle-Allegro.exe").is_file();
+        if !integrated && (self.desktop_widgets.items.is_empty() || widget_metrics::host_running(&self.data)) { return; }
         if self.center_process.as_mut().is_some_and(|p|p.try_wait().ok().flatten().is_none()) { return; }
         if self.last_widget_host.elapsed() < Duration::from_secs(5) { return; }
-        self.last_widget_host=Instant::now();
+        self.last_widget_host = Instant::now();
         self.launch_center(true);
     }
     /// Register the configured quick-reminder hotkey. The previous binding is
@@ -2766,7 +2845,6 @@ impl App {
             } else {
                 let since = *self.edge_leave_since.get_or_insert(now);
                 if now.duration_since(since) >= Duration::from_millis(900) {
-                    self.edge_revealed = false;
                     self.edge_leave_since = None;
                     self.enter_hidden_edge();
                     self.dirty = true;
@@ -3316,6 +3394,22 @@ impl App {
                 .as_f64()
                 .or_else(|| self.settings["AcrylicCapsuleOpacity"].as_f64())
                 .unwrap_or(0.),
+            liquid_glass_refraction: self.acrylic_preview["LiquidGlassRefraction"]
+                .as_f64()
+                .or_else(|| self.settings["LiquidGlassRefraction"].as_f64())
+                .unwrap_or(68.),
+            liquid_glass_dispersion: self.acrylic_preview["LiquidGlassDispersion"]
+                .as_f64()
+                .or_else(|| self.settings["LiquidGlassDispersion"].as_f64())
+                .unwrap_or(38.),
+            liquid_glass_blur: self.acrylic_preview["LiquidGlassBlur"]
+                .as_f64()
+                .or_else(|| self.settings["LiquidGlassBlur"].as_f64())
+                .unwrap_or(32.),
+            liquid_glass_tint: self.acrylic_preview["LiquidGlassTint"]
+                .as_f64()
+                .or_else(|| self.settings["LiquidGlassTint"].as_f64())
+                .unwrap_or(42.),
             demo: self.demo,
             animate: self.flag("Animation", true),
             notification: self.banner.notice.as_ref(),
@@ -3483,6 +3577,24 @@ impl App {
         self.renderer = Some(renderer);
         result
     }
+    fn uses_liquid_glass_material(&self) -> bool {
+        [
+            "IslandMaterial",
+            "ClassicCapsuleMaterial",
+            "MiniMaterial",
+            "MiniExpandedMaterial",
+            "PopupMaterial",
+        ]
+        .iter()
+        .any(|k| self.settings[k].as_str() == Some("LiquidGlass"))
+    }
+    fn liquid_glass_source(&self) -> backdrop_capture::BackdropSource {
+        backdrop_capture::BackdropSource::from_setting(
+            self.settings["LiquidGlassSource"]
+                .as_str()
+                .unwrap_or("Live"),
+        )
+    }
     unsafe fn draw(&mut self) -> Result<()> {
         if self.hidden_edge() || self.hidden_mini_mode() || self.island_morph.active() {
             self.opacity = 1.;
@@ -3494,6 +3606,10 @@ impl App {
         // frame (a pale ghost of the capsule). Hide the visual window instead of
         // trusting the compositor to discard it.
         if !showing {
+            self.backdrop_capturer.deactivate(self.visual_hwnd);
+            if let Some(r) = &mut self.renderer {
+                r.release_liquid_glass();
+            }
             if IsWindowVisible(self.visual_hwnd).as_bool() {
                 let _ = ShowWindow(self.visual_hwnd, SW_HIDE);
             }
@@ -3501,6 +3617,24 @@ impl App {
             return Ok(());
         }
         self.ensure_renderer()?;
+        let active_lg = self.uses_liquid_glass_material() && !(self.hidden_edge() && !self.island_morph.active());
+        if active_lg {
+            let animating = self.island_morph.active() || self.frame.card_reveal > 0.01 && self.frame.card_reveal < 0.99;
+            if let Some(cap) = self.backdrop_capturer.capture_if_due(
+                self.visual_hwnd,
+                self.liquid_glass_source(),
+                animating,
+            ) {
+                if let Some(r) = &mut self.renderer {
+                    r.update_liquid_glass_backdrop(&cap.rgba, cap.width, cap.height);
+                }
+            }
+        } else {
+            self.backdrop_capturer.deactivate(self.visual_hwnd);
+            if let Some(r) = &mut self.renderer {
+                r.release_liquid_glass();
+            }
+        }
         if let Some(mut r) = self.renderer.take() {
             let result = r.render(&self.scene(), true);
             self.renderer = Some(r);
@@ -3981,7 +4115,7 @@ impl App {
             let city=self.weather_city();
             if !city.is_empty(){
                 placements.push(dotisle_domain::desktop_widgets::Placement{id:"island-weather".into(),kind:dotisle_domain::desktop_widgets::Kind::Weather,
-                    size:Default::default(),style:Default::default(),config:dotisle_domain::widget_config::Config{city,..Default::default()},x:0,y:0,width:0.,height:0.,hidden:false,revision:1});
+                    size:Default::default(),style:Default::default(),config:dotisle_domain::widget_config::Config{city,..Default::default()},x:0,y:0,width:0.,height:0.,hidden:false,revision:1,material:String::new(),opacity:1.0,stack_id:String::new(),stack_order:0});
             }
             self.widget_data.poll(&placements);
             let m=&self.widget_metrics.value;
@@ -4536,22 +4670,19 @@ impl App {
                     self.island_morph.update_target(self.hidden_edge_rect(), 2.5, now);
                 }
                 morph_transition::IslandMode::Normal | morph_transition::IslandMode::Mini => {
-                    // 展开手势进行中时，形变目标跟着卡片轮廓一起生长，
-                    // 蓝条/Mini 一步长成大卡片，不先落到胶囊再二次跳变。
-                    let (target_rect, target_rad) = if self.expanded {
-                        self.shape()
-                    } else {
-                        let rect = self.layout.capsule;
-                        (rect, self.capsule_corner_radius(rect.h))
-                    };
+                    let target_rect = self.layout.capsule;
+                    let target_rad = self.capsule_corner_radius(target_rect.h);
                     self.island_morph.update_target(target_rect, target_rad, now);
+                }
+                morph_transition::IslandMode::Card => {
+                    self.island_morph
+                        .update_target(self.layout.card, self.options().radius, now);
                 }
             }
             let _ = self.island_morph.tick(now);
             let _ = unsafe { self.sync_input_region() };
             self.dirty = true;
         }
-
         // 任务栏模式每 200ms 复核一次任务栏几何与 Z-Order（防被 Windows 任务栏遮盖/吞掉、适配系统深浅与对齐切换）
         if self.taskbar_mode()
             && !self.demo
@@ -4641,6 +4772,15 @@ impl App {
             }
         }
         self.sync_input_region()?;
+        // 仅当选用液态玻璃 Beta + 实时画面源且灵动岛可见非蓝条时，保持 30fps 轻量捕获刷新
+        if !self.dirty
+            && self.opacity > 0.001
+            && self.uses_liquid_glass_material()
+            && self.liquid_glass_source() == backdrop_capture::BackdropSource::Live
+            && !(self.hidden_edge() && !self.island_morph.active())
+        {
+            self.dirty = true;
+        }
         if self.dirty {
             if self.opacity > 0.001 || self.fade_from > 0.001 {
                 self.draw()?;
@@ -4772,7 +4912,7 @@ impl App {
                 self.todo_now = todos::Now::local();
                 let t = &self.snapshot["track"];
                 let mut module_versions=dotisle_module_api::versions();module_versions["core"]=json!(DISPLAY_VERSION);
-                let mut state = json!({"success":true,"version":DISPLAY_VERSION,"bundleVersion":lyric_backend::updates::installed_version(),"settings":self.settings,"moduleManagement":self.module_updates.state,"moduleVersions":module_versions,"moduleErrors":dotisle_module_api::initialization_errors(),"moduleReady":dotisle_module_api::initialization_errors().as_object().is_some_and(|m|m.is_empty()),"softwareUpdate":self.updates.state,"updateChannel":self.updates.channel(),"settingsDark":match self.settings["SettingsTheme"].as_str().unwrap_or("System"){"Dark"=>true,"Light"=>false,_=>theme_accent::system_dark()},"dataDirectory":self.data.to_string_lossy(),"musicPreview":self.music_preview(),"activeSource":self.snapshot["activeSource"],"nativeStatus":self.snapshot["nativeStatus"],"title":t["title"],"artist":t["artist"],"songId":t["songId"],"player":t["sourceApp"],"position":self.snapshot["positionSeconds"],"duration":t["durationSeconds"],"timeline":self.snapshot["clockStatus"],"lyricSource":self.snapshot["lyricSource"],"isPlaying":self.snapshot["isPlaying"],"canSeek":self.snapshot["canSeek"],"seekStatus":self.snapshot["seekStatus"],"neteaseAttention":lyric_backend::netease_control::attention_diagnostics(),"mediaCommand":self.snapshot["mediaCommand"],"expanded":self.expanded,"islandEnabled":!self.user_hidden,"islandVisible":self.opacity>0.001,"processId":std::process::id(),"windowLevel":unsafe{window_level::snapshot(self.visual_hwnd,self.hwnd)},"rendererGeneration":self.renderer_generation,"renderFrames":self.render_frames,"renderer":"Vello Hybrid 0.2 / wgpu 29","lastError":self.error,"notificationState":self.notification_state,"notificationVisible":self.banner.visible()||self.top_popup.notice_visible(),"notificationGeometry":self.notification_geometry(),"osdVisible":self.osd_banner.visible()||self.bottom_osd.visible()||self.top_popup.osd_visible(),"bottomOsdVisible":self.bottom_osd.visible(),"systemState":self.osd.status(),"todos":self.todos.list(&self.todo_now),"todoError":self.todos.error,"today":self.todo_now.date,"now":self.todo_now.time,"pendingPage":self.pending_page,"pendingRequestId":self.pending_request,"pendingCenterAction":self.pending_center_action,"centerFrontend":if self.base.join("LyricIsland.Center.exe").is_file(){"go"}else{"missing"},"islandGeometry":{"mini":self.mini(),"capsule":self.layout.capsule,"card":self.layout.card,"satellite":!self.mini()&&self.components.len()>1,"horizontalGestures":self.flag("SwipeActivities",true)},"compactTargetWidth":self.compact_size.width_target,"compactWidth":self.compact_size.width,"compactHeight":self.compact_size.height,"compactSecondary":self.compact_secondary,"timers":self.timers.list(),"timerError":self.timers.error,"screenTime":self.screen_time.snapshot(),"weather":self.widget_data.value["island-weather"],"capsuleAlertVisible":self.alerts.visible()||self.top_popup.alert_visible(),"widgetData":self.widget_data.value,"desktopWidgets":self.desktop_widgets.list(),"overviewWidgets":self.overview_widgets.list(),"desktopWidgetError":self.desktop_widgets.error,"systemMetrics":self.widget_metrics.value,"activeComponent":self.selected,"components":self.components,"notificationHistory":self.history.list(),"historyError":self.history.error,"quickHotkey":self.settings["QuickReminderHotkey"],"pendingAction":self.pending_action,"sessionLocked":self.session_locked,"focusResume":self.focus_resume.as_ref().map(|r|json!({"generation":r.generation,"ids":r.ids,"prompted":r.prompted})),"templates":self.templates.list(),"workflowTemplateError":self.templates.error,"appRules":self.rules.list(&self.todo_now.date),"appRuleError":self.rules.error,"foreground":{"path":self.foreground.path,"name":self.foreground.name,"unreadable":self.foreground.unreadable},"lockWatch":true});
+                let mut state = json!({"success":true,"version":DISPLAY_VERSION,"bundleVersion":lyric_backend::updates::installed_version(),"settings":self.settings,"moduleManagement":self.module_updates.state,"moduleVersions":module_versions,"moduleErrors":dotisle_module_api::initialization_errors(),"moduleReady":dotisle_module_api::initialization_errors().as_object().is_some_and(|m|m.is_empty()),"softwareUpdate":self.updates.state,"updateChannel":self.updates.channel(),"updateSource":self.updates.source(),"settingsDark":match self.settings["SettingsTheme"].as_str().unwrap_or("System"){"Dark"=>true,"Light"=>false,_=>theme_accent::system_dark()},"dataDirectory":self.data.to_string_lossy(),"musicPreview":self.music_preview(),"activeSource":self.snapshot["activeSource"],"nativeStatus":self.snapshot["nativeStatus"],"title":t["title"],"artist":t["artist"],"songId":t["songId"],"player":t["sourceApp"],"position":self.snapshot["positionSeconds"],"duration":t["durationSeconds"],"timeline":self.snapshot["clockStatus"],"lyricSource":self.snapshot["lyricSource"],"isPlaying":self.snapshot["isPlaying"],"canSeek":self.snapshot["canSeek"],"seekStatus":self.snapshot["seekStatus"],"neteaseAttention":lyric_backend::netease_control::attention_diagnostics(),"mediaCommand":self.snapshot["mediaCommand"],"expanded":self.expanded,"islandEnabled":!self.user_hidden,"islandVisible":self.opacity>0.001,"processId":std::process::id(),"windowLevel":unsafe{window_level::snapshot(self.visual_hwnd,self.hwnd)},"rendererGeneration":self.renderer_generation,"renderFrames":self.render_frames,"renderer":"Vello Hybrid 0.2 / wgpu 29","lastError":self.error,"notificationState":self.notification_state,"notificationVisible":self.banner.visible()||self.top_popup.notice_visible(),"notificationGeometry":self.notification_geometry(),"osdVisible":self.osd_banner.visible()||self.bottom_osd.visible()||self.top_popup.osd_visible(),"bottomOsdVisible":self.bottom_osd.visible(),"systemState":self.osd.status(),"todos":self.todos.list(&self.todo_now),"todoError":self.todos.error,"today":self.todo_now.date,"now":self.todo_now.time,"pendingPage":self.pending_page,"pendingRequestId":self.pending_request,"pendingCenterAction":self.pending_center_action,"centerFrontend":if self.base.join("LyricIsland.Center.exe").is_file(){"go"}else{"missing"},"islandGeometry":{"mini":self.mini(),"capsule":self.layout.capsule,"card":self.layout.card,"satellite":!self.mini()&&self.components.len()>1,"horizontalGestures":self.flag("SwipeActivities",true)},"compactTargetWidth":self.compact_size.width_target,"compactWidth":self.compact_size.width,"compactHeight":self.compact_size.height,"compactSecondary":self.compact_secondary,"timers":self.timers.list(),"timerError":self.timers.error,"screenTime":self.screen_time.snapshot(),"weather":self.widget_data.value["island-weather"],"capsuleAlertVisible":self.alerts.visible()||self.top_popup.alert_visible(),"widgetData":self.widget_data.value,"desktopWidgets":self.desktop_widgets.list(),"overviewWidgets":self.overview_widgets.list(),"desktopWidgetError":self.desktop_widgets.error,"systemMetrics":self.widget_metrics.value,"activeComponent":self.selected,"components":self.components,"notificationHistory":self.history.list(),"historyError":self.history.error,"quickHotkey":self.settings["QuickReminderHotkey"],"pendingAction":self.pending_action,"sessionLocked":self.session_locked,"focusResume":self.focus_resume.as_ref().map(|r|json!({"generation":r.generation,"ids":r.ids,"prompted":r.prompted})),"templates":self.templates.list(),"workflowTemplateError":self.templates.error,"appRules":self.rules.list(&self.todo_now.date),"appRuleError":self.rules.error,"foreground":{"path":self.foreground.path,"name":self.foreground.name,"unreadable":self.foreground.unreadable},"lockWatch":true});
                 state["notificationContent"]=self.banner.notice.as_ref().map(|n|json!({"appId":n.app_id,"titleCharacters":n.title.chars().count(),"bodyCharacters":n.body.chars().count(),"iconBytes":n.icon.as_ref().map_or(0,Vec::len)})).unwrap_or(Value::Null);
                 if std::env::var("LYRICISLAND_TEST_PIPE").is_ok_and(|p| p.starts_with("LyricIsland.Settings.test.")) {
                     state["testMessageAlert"]=json!(self.alerts.active.as_ref().filter(|a|a.key.starts_with("message:")).map(|a|json!({"title":a.title,"detail":a.detail,"trailing":a.trailing})));
@@ -4835,6 +4975,12 @@ impl App {
                 }
             }
             "gesturePractice" => self.practice_request(&r["value"]),
+            "updateSource" => {
+                match self.updates.set_source(r["value"].as_str().unwrap_or("")) {
+                    Ok(()) => json!({"success":true,"message":"已切换更新源"}),
+                    Err(e) => json!({"success":false,"message":e}),
+                }
+            }
             "updateChannel" => {
                 match self.updates.set_channel(r["value"].as_str().unwrap_or("")) {
                     Ok(()) => json!({"success":true,"message":"已切换更新渠道"}),
@@ -4843,7 +4989,7 @@ impl App {
             }
             "checkUpdate" => {
                 self.updates.check(true);
-                json!({"success":true,"message":"正在检查双源更新…"})
+                json!({"success":true,"message":"正在检查更新…"})
             }
             "playbackProgressPreview" => {
                 let value = &r["value"];
@@ -5325,8 +5471,10 @@ impl App {
             }
             "expand" => {
                 if self.practice.is_some() { return json!({"success":false,"message":"请按实操教程提示操作。"}); }
-                // 隐藏态（蓝条/Mini）走与鼠标左键相同的恢复入口，先拿到实时形变起点，
-                // 再由 retarget 把目标改成展开卡片，避免从蓝条硬跳到胶囊。
+                if self.user_hidden && self.hidden_edge() {
+                    self.reveal_hidden_edge_to_card();
+                    return json!({"success":true});
+                }
                 if self.user_hidden {
                     self.reveal_hidden_edge();
                 }
@@ -5365,10 +5513,8 @@ impl App {
                 if let Err(e) = self.save().and_then(|_| self.timers.persist()) {
                     return json!({"success":false,"message":e});
                 }
-                if let Some(mut child) = self.center_process.take() {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
+                Self::terminate_child(&mut self.allegro_process);
+                Self::terminate_child(&mut self.center_process);
                 let _ = PostMessageW(Some(self.hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
                 json!({"success":true})
             }
@@ -5392,10 +5538,8 @@ impl App {
                 match result {
                     Ok(()) => {
                         let _ = self.save();
-                        if let Some(mut settings) = self.center_process.take() {
-                            let _ = settings.kill();
-                            let _ = settings.wait();
-                        }
+                        Self::terminate_child(&mut self.allegro_process);
+                        Self::terminate_child(&mut self.center_process);
                         let _ = PostMessageW(Some(self.hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
                         json!({"success":true,"message":"正在重启点屿"})
                     }
@@ -5516,6 +5660,17 @@ impl App {
                 let next = match next {
                     Ok(v) => v,
                     Err(e) => return json!({"success":false,"message":e}),
+                };
+                let size_mode_origin = if r["value"]["key"] == "IslandSizeMode"
+                    && !self.taskbar_mode()
+                    && !self.user_hidden
+                    && self.opacity > 0.01
+                {
+                    let now = self.start.elapsed().as_secs_f64();
+                    let (rect, rad, sm, mm, _cm) = self.live_morph_origin(now);
+                    Some((now, rect, rad, sm, mm))
+                } else {
+                    None
                 };
                 self.settings = next;
                 config::resolve_render_font(&mut self.settings, &self.data.join("settings.json"));
@@ -5661,23 +5816,12 @@ impl App {
                 if let Some(b) = &self.backend {
                     b.apply(self.settings.clone());
                 }
-                let size_mode_origin = if r["value"]["key"] == "IslandSizeMode"
-                    && !self.taskbar_mode()
-                    && !self.user_hidden
-                    && self.opacity > 0.01
-                {
-                    let now = self.start.elapsed().as_secs_f64();
-                    let (rect, rad, sm, mm) = self.live_morph_origin(now);
-                    let was_mini = old["IslandSizeMode"].as_str() == Some("Mini");
-                    Some((now, rect, rad, sm, if mm > 0.5 || was_mini { 1. } else { 0. }))
-                } else {
-                    None
-                };
                 if let Err(e) = self.position() {
                     self.error = Some(e.to_string());
                     return json!({"success":false,"message":e.to_string()});
                 }
                 if let Some((now, from_rect, from_rad, from_strip, from_mini)) = size_mode_origin {
+                    self.poll();
                     let default_h = if self.mini() { 14. } else { 40. };
                     let (tw, th) = unsafe { self.measure_compact_layout() }
                         .unwrap_or((self.compact_base(), default_h));
@@ -5690,6 +5834,11 @@ impl App {
                     };
                     let target_rect = self.layout.capsule;
                     let target_rad = self.capsule_corner_radius(th);
+                    let duration_ms = if to_mode == morph_transition::IslandMode::Mini {
+                        self.options().collapse_duration
+                    } else {
+                        self.options().duration
+                    };
                     self.island_morph.transition(
                         from_rect,
                         from_rad,
@@ -5700,7 +5849,7 @@ impl App {
                         target_rad,
                         now,
                         self.flag("Animation", true),
-                        self.options().duration,
+                        duration_ms,
                     );
                 }
                 if r["value"]["key"] == "SystemStateHintPlacement" {
@@ -5917,6 +6066,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 WM_RBUTTONDOWN => {
                     if a.user_hidden {
                         a.reveal_hidden_edge();
+                        a.pressed = -1;
                     } else if a.hide_trigger() == "RightClick"
                         && (a.practice.is_none() || a.practice_step() == Some(PracticeStep::Hide))
                         && !a.taskbar_mode()
@@ -5929,7 +6079,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 }
                 WM_LBUTTONDOWN => {
                     if a.user_hidden {
-                        a.reveal_hidden_edge();
+                        if a.hidden_edge() {
+                            a.reveal_hidden_edge_to_card();
+                        } else {
+                            a.reveal_hidden_edge();
+                        }
+                        a.pressed = -1;
                         return LRESULT(0);
                     }
                     let s = GetDpiForWindow(hwnd).max(96) as f64 / 96.;
@@ -6081,6 +6236,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     let pressed = std::mem::replace(&mut a.pressed, 0);
                     let seek_track = std::mem::take(&mut a.seek_track);
                     let _ = ReleaseCapture();
+                    if pressed < 0 {
+                        a.swipe = None;
+                        a.dirty = true;
+                        return LRESULT(0);
+                    }
                     if let Some((_, bounds)) = dragged {
                         if a.practice.is_some() {
                             let mut end = RECT::default();
@@ -6287,10 +6447,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 }
                 WM_CLOSE => {
                     a.widget_data.flush();
-                    if let Some(mut child) = a.center_process.take() {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                    }
+                    App::terminate_child(&mut a.allegro_process);
+                    App::terminate_child(&mut a.center_process);
                     a.bottom_osd.clear();
                     a.osd.uninstall();
                     let _ = a.timers.persist();
@@ -6894,6 +7052,7 @@ fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 || s == "--expanded-material-preview"
                 || s == "--lightfield-preview"
                 || s == "--acrylic-cover-preview"
+                || s == "--liquid-glass-preview"
                 || s == "--upgrade-preview"
                 || s == "--mini-preview"
                 || s == "--integration-preview"
@@ -7039,6 +7198,14 @@ fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
             material_preview::acrylic_cover(
                 &mut app,
                 Path::new(args.get(2).ok_or("missing acrylic cover preview directory")?),
+            )?;
+            let _ = DestroyWindow(app.hwnd);
+            return Ok(());
+        }
+        if args.get(1).is_some_and(|s| s == "--liquid-glass-preview") {
+            material_preview::liquid_glass_beta(
+                &mut app,
+                Path::new(args.get(2).ok_or("missing liquid glass preview directory")?),
             )?;
             let _ = DestroyWindow(app.hwnd);
             return Ok(());
@@ -8413,22 +8580,29 @@ mod hide_gesture_tests {
         a.opacity = 1.;
         a.settings["Animation"] = json!(true);
 
-        // 1. 灵动岛 -> 蓝条
+        // 1. 灵动岛 -> 蓝条：起跳几何必须为真实正常胶囊，绝不能提前退化为蓝条尺寸
         a.settings["HiddenDisplay"] = json!("Strip");
         a.hide_by_gesture();
         assert!(a.user_hidden && a.hidden_edge() && a.island_morph.active());
         assert_eq!(a.island_morph.mode(), morph_transition::IslandMode::Strip);
+        let p_strip_start = a.island_morph.presentation(0., a.layout.host);
+        assert!(p_strip_start.rect.w > 150. && p_strip_start.rect.h >= 38.);
 
-        // 2. 中途立即点按蓝条 -> 还原灵动岛（连续不跳变）
+        // 2. 中途立即点按蓝条 -> 还原灵动岛（连续不跳变，且绝不误展开卡片）
         let t_mid = a.start.elapsed().as_secs_f64();
         let before = a.island_morph.presentation(t_mid, a.layout.host);
+        a.settings["ClickAnywhereExpand"] = json!(true);
+        a.settings["HoverExpand"] = json!(true);
         a.reveal_hidden_edge();
         assert!(!a.user_hidden && !a.hidden_edge() && a.island_morph.active());
         assert_eq!(a.island_morph.mode(), morph_transition::IslandMode::Normal);
+        assert!(!a.expanded && !a.held && a.transition.is_none() && a.suppress_hover_expand);
+        a.track_pointer_presence(true);
+        assert!(!a.expanded, "restoring from strip must never open expanded card");
         let after = a.island_morph.presentation(t_mid, a.layout.host);
         assert!((before.rect.w - after.rect.w).abs() < 2.0);
 
-        // 3. 灵动岛展开态右键直缩 -> Mini 岛
+        // 3. 灵动岛展开态右键直缩 -> Mini 岛：起点高且未提前置为 Mini
         a.expanded = true;
         a.held = true;
         a.frame = Frame::expanded();
@@ -8437,10 +8611,86 @@ mod hide_gesture_tests {
         assert!(!a.expanded && !a.held && a.hidden_mini_mode() && a.island_morph.active());
         assert_eq!(a.island_morph.mode(), morph_transition::IslandMode::Mini);
 
-        // 4. Mini 岛右键还原 -> 灵动岛
+        // 4. Mini 岛还原 -> 灵动岛（不展开卡片，且内容全过程不归零）
         a.reveal_hidden_edge();
         assert!(!a.user_hidden && !a.hidden_mini_mode() && a.island_morph.active());
+        assert!(!a.expanded && !a.held && a.transition.is_none());
         assert_eq!(a.island_morph.mode(), morph_transition::IslandMode::Normal);
+    }
+
+    #[test]
+    fn size_mode_toggle_starts_from_previous_geometry_instead_of_target() {
+        let mut a = App::new(PathBuf::new(), PathBuf::new(), true);
+        a.opacity = 1.;
+        a.settings["Animation"] = json!(true);
+        a.settings["IslandSizeMode"] = json!("Classic");
+        unsafe {
+            let _ = a.request(json!({"version":1,"command":"update","value":{"key":"IslandSizeMode","value":"Mini"}}));
+        }
+        assert!(a.island_morph.active());
+        assert_eq!(a.island_morph.mode(), morph_transition::IslandMode::Mini);
+        let p0 = a.island_morph.presentation(0., a.layout.host);
+        assert!(p0.rect.h >= 38. && p0.mini_mix < 0.05, "expected start from classic capsule, got {:?}", p0);
+    }
+
+    #[test]
+    fn reveal_from_strip_or_mini_relays_live_lyric_immediately_without_blank_frame() {
+        let mut a = App::new(PathBuf::new(), PathBuf::new(), true);
+        a.opacity = 1.;
+        a.settings["Animation"] = json!(true);
+        a.settings["HiddenDisplay"] = json!("Strip");
+        a.snapshot["track"] = json!({"id":"relay-1","title":"Song","artist":"Singer","durationSeconds":180.});
+        a.snapshot["isPlaying"] = json!(true);
+        a.snapshot["frame"] = json!({"currentLine":"第一句歌词还没唱完","currentTranslation":"","nextLine":"第二句歌词"});
+        a.poll();
+        assert_eq!(a.lyric, "第一句歌词还没唱完");
+
+        // 场景 A：缩成蓝条期间同一句未唱完 -> 还原依旧承接该句，且首帧完整清晰可见
+        a.hide_by_gesture();
+        a.lyric_start = Instant::now() - Duration::from_millis(260);
+        a.reveal_hidden_edge();
+        assert_eq!(a.lyric, "第一句歌词还没唱完");
+        assert!(a.previous_lyric.is_empty());
+        assert!(a.lyric_start.elapsed() >= Duration::from_millis(240));
+        assert!(!a.expanded);
+
+        // 场景 B：缩成蓝条期间切到下一句 -> 还原立即显示下一句，绝不先闪黑空框或滞留上一句
+        a.hide_by_gesture();
+        a.snapshot["frame"] = json!({"currentLine":"已经切到下一句歌词","currentTranslation":"","nextLine":""});
+        a.reveal_hidden_edge();
+        assert_eq!(a.lyric, "已经切到下一句歌词");
+        assert!(a.previous_lyric.is_empty());
+        assert!(a.lyric_start.elapsed() >= Duration::from_millis(240));
+    }
+
+    #[test]
+    fn right_click_collapse_always_animates_to_strip_even_if_fading() {
+        let mut a = App::new(PathBuf::new(), PathBuf::new(), true);
+        a.settings["Animation"] = json!(true);
+        a.settings["HiddenDisplay"] = json!("Strip");
+        a.opacity = 0.0; // 模拟刚醒来或处于低透明度状态
+        a.enter_hidden_edge();
+        assert!(a.user_hidden && a.hidden_edge());
+        assert!(a.island_morph.active());
+        assert_eq!(a.island_morph.mode(), morph_transition::IslandMode::Strip);
+        let p0 = a.island_morph.presentation(0., a.layout.host);
+        assert!(p0.rect.w > 120.);
+    }
+
+    #[test]
+    fn left_click_strip_morphs_directly_into_card() {
+        let mut a = App::new(PathBuf::new(), PathBuf::new(), true);
+        a.opacity = 1.0;
+        a.settings["Animation"] = json!(true);
+        a.settings["HiddenDisplay"] = json!("Strip");
+        a.hide_by_gesture();
+        assert!(a.hidden_edge());
+        a.reveal_hidden_edge_to_card();
+        assert!(!a.user_hidden && a.expanded && a.held);
+        assert!(a.island_morph.active());
+        assert_eq!(a.island_morph.mode(), morph_transition::IslandMode::Card);
+        let p_mid = a.island_morph.presentation(0.25, a.layout.host);
+        assert!(p_mid.rect.h > 40. && p_mid.card_mix > 0.1);
     }
 }
 

@@ -84,6 +84,14 @@ pub struct Renderer {
     pub width: u32,
     pub height: u32,
     pub dpi: f32,
+    liquid_glass_shapes: Vec<dotisle_render::liquid_glass::GlassShape>,
+    liquid_glass_backdrop_luma: Option<f32>,
+    active_lg_refraction: f32,
+    active_lg_dispersion: f32,
+    active_lg_blur: f32,
+    active_lg_tint: f32,
+    active_lg_opacity: f32,
+    active_lg_scale: f32,
 }
 impl Renderer {
     pub unsafe fn new(hwnd: HWND, width: u32, height: u32, dpi: f32, font: &Path) -> Result<Self> {
@@ -123,7 +131,54 @@ impl Renderer {
             width,
             height,
             dpi,
+            liquid_glass_shapes: Vec::new(),
+            liquid_glass_backdrop_luma: None,
+            active_lg_refraction: 0.76,
+            active_lg_dispersion: 0.46,
+            active_lg_blur: 0.08,
+            active_lg_tint: 0.06,
+            active_lg_opacity: 1.0,
+            active_lg_scale: dpi / 96.,
         })
+    }
+    /// 当前液态玻璃背后是否为浅色/亮色背景（需切换深墨前景色以确保清晰可读）。
+    fn is_liquid_glass_light(&self) -> bool {
+        self.liquid_glass_backdrop_luma.unwrap_or(0.0) > 0.58
+    }
+    /// 向液态玻璃 Beta 管线更新裁剪后的桌面/实时画面背景纹理，并轻量采样平均亮度供前景对比度自适应。
+    pub fn update_liquid_glass_backdrop(&mut self, rgba: &[u8], w: u32, h: u32) {
+        if w > 0 && h > 0 && rgba.len() >= (w as usize) * (h as usize) * 4 {
+            let mut sum = 0.0f32;
+            let mut count = 0.0f32;
+            let gx = 8u32;
+            let gy = 8u32;
+            for iy in 0..gy {
+                let y = ((iy * 2 + 1) * h / (gy * 2)).min(h - 1);
+                for ix in 0..gx {
+                    let x = ((ix * 2 + 1) * w / (gx * 2)).min(w - 1);
+                    let idx = ((y * w + x) * 4) as usize;
+                    let r = rgba[idx] as f32 / 255.0;
+                    let g = rgba[idx + 1] as f32 / 255.0;
+                    let b = rgba[idx + 2] as f32 / 255.0;
+                    sum += 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    count += 1.0;
+                }
+            }
+            if count > 0.0 {
+                let luma = sum / count;
+                self.liquid_glass_backdrop_luma = Some(match self.liquid_glass_backdrop_luma {
+                    Some(prev) => prev * 0.65 + luma * 0.35,
+                    None => luma,
+                });
+            }
+        }
+        self.gpu.update_liquid_glass_backdrop(rgba, w, h);
+    }
+    /// 切回其他材质时主动释放液态玻璃离屏纹理与着色器管线。
+    pub fn release_liquid_glass(&mut self) {
+        self.liquid_glass_shapes.clear();
+        self.liquid_glass_backdrop_luma = None;
+        self.gpu.release_liquid_glass();
     }
     fn fill(&mut self, r: Rect, radius: f64, c: u32) {
         if r.w > 0. && r.h > 0. {
@@ -557,10 +612,43 @@ impl Renderer {
         let clipped_rect = curve.is_none();
         let shape_radius = 0.;
         let p = s.paint(self.paint_palette);
+        if p.liquid_glass > 0.01
+            && self.liquid_glass_shapes.len() < dotisle_render::liquid_glass::MAX_GLASS_SHAPES
+        {
+            let scale = self.active_lg_scale;
+            let tint_rgb = if s.cover_background {
+                let c = self.paint_palette.background;
+                let mix_ch = |base: f32, shift: u32| -> f32 {
+                    let ch = ((c >> shift) & 0xff) as f32 / 255.;
+                    base * 0.80 + ch * 0.20
+                };
+                [mix_ch(0.035, 16), mix_ch(0.045, 8), mix_ch(0.075, 0)]
+            } else {
+                [0.035, 0.045, 0.075]
+            };
+            self.liquid_glass_shapes.push(
+                dotisle_render::liquid_glass::GlassShape::new(
+                    (r.x as f32) * scale,
+                    (r.y as f32) * scale,
+                    (r.w as f32) * scale,
+                    (r.h as f32) * scale,
+                    (radius as f32) * scale,
+                    self.active_lg_opacity,
+                    self.active_lg_refraction,
+                    self.active_lg_dispersion,
+                    self.active_lg_blur,
+                    self.active_lg_tint,
+                    p.liquid_glass as f32,
+                    tint_rgb,
+                ),
+            );
+        }
         let argb = |alpha: f64, rgb: u32| -> Color {
             color((((alpha.clamp(0., 1.) * 255.).round() as u32) << 24) | (rgb & 0xffffff))
         };
-        if p.light_field > 0.99 {
+        if p.liquid_glass > 0.99 {
+            // 纯液态玻璃底面完全交给 WGSL 光学折射/色散/高光管线渲染，Vello 仅保留克制专辑叠层（如开启）与前景内容
+        } else if p.light_field > 0.99 {
             // 曜光视效（Lumen Glass, LightField）基底：上墨黑丝绒 -> 下通透冰雾玻璃（垂直纵深渐透）
             let gradient = if r.h > 64. {
                 Gradient::new_linear((r.x, r.y), (r.x, r.y + r.h)).with_stops([
@@ -681,8 +769,8 @@ impl Renderer {
                     .map(|(_, i)| i.clone())
                     .unwrap_or(image);
                 self.image(&image, r, shape_radius, p.cover_alpha as f32);
-                // 按封面叠层强度比例缩放的柔和可读性护罩，避免低叠层压黑或完全遮盖封面细节
-                let scrim_w = p.cover_alpha.powf(0.65) * (1. - 0.14 * p.light_field);
+                // 按封面叠层强度比例缩放的柔和可读性护罩，避免低叠层压黑或完全遮盖封面细节；液态玻璃大幅减弱暗灰护罩保持通透
+                let scrim_w = p.cover_alpha.powf(0.65) * (1. - 0.14 * p.light_field) * (1. - 0.78 * p.liquid_glass);
                 let strip_add = 0.10 * (1. - p.amount);
                 let stop_a = |base: f64, cap: f64| -> u32 {
                     (((base + strip_add) * scrim_w).clamp(0., cap) * 255.).round() as u32
@@ -798,6 +886,9 @@ impl Renderer {
         let edge = Rect::new(r.x + 0.5, r.y + 0.5, r.w - 1., r.h - 1.);
         if curve.is_some() || clipped_rect {
             self.canvas.pop_layer();
+        }
+        if p.liquid_glass > 0.99 {
+            return;
         }
         if p.light_field > 0.001 {
             let lf = p.light_field;
@@ -951,6 +1042,17 @@ impl Renderer {
             1.
         };
         let phase = 1. - (1. - raw_phase).powi(4);
+        let lg_light = matches!(s.classic_capsule, Material::LiquidGlass) && self.is_liquid_glass_light();
+        let primary_ink = if lg_light {
+            s.text_color
+        } else {
+            0xff000000 | tones.on_surface
+        };
+        let secondary_ink = if lg_light {
+            0xB8000000 | (s.text_color & 0xffffff)
+        } else {
+            0xff000000 | tones.on_surface_variant
+        };
         if phase < 1. && !s.previous_lyric.is_empty() {
             self.clip(
                 Rect::new(viewport.x, c.y, viewport.w, c.h),
@@ -962,7 +1064,7 @@ impl Renderer {
                 Rect::new(viewport.x, y - 5.5 * phase, viewport.w, line),
                 s.font_size,
                 500,
-                0xff000000 | tones.on_surface,
+                primary_ink,
                 if double { 0.5 } else { 0. },
             );
             self.canvas.pop_layer();
@@ -972,7 +1074,7 @@ impl Renderer {
             viewport,
             s.font_size,
             if double { 0.5 } else { 0. },
-            0xff000000 | tones.on_surface,
+            primary_ink,
             s,
         );
         if double {
@@ -981,7 +1083,7 @@ impl Renderer {
                 Rect::new(viewport.x, y + line + 1., viewport.w, second),
                 (s.font_size * 0.78).clamp(9., 11.5),
                 400,
-                0xff000000 | tones.on_surface_variant,
+                secondary_ink,
                 0.5,
             );
         }
@@ -1627,6 +1729,9 @@ impl Renderer {
     }
     fn music_control_ink(&mut self, s: &Scene<'_>) -> u32 {
         let preferred = s.component_color & 0xffffff;
+        if matches!(s.material, Material::LiquidGlass) && self.is_liquid_glass_light() {
+            return preferred;
+        }
         let samples = self.music_surface_samples(s);
         if let Some((old, bg, ink)) = &self.transport_ink {
             if *old == preferred && *bg == samples {
@@ -1663,7 +1768,11 @@ impl Renderer {
         } else {
             0xffffffff
         };
-        let tonal = 0xff000000 | self.m3(s).secondary_container;
+        let tonal = if matches!(s.material, Material::LiquidGlass) && self.is_liquid_glass_light() {
+            0x18141820
+        } else {
+            0xff000000 | self.m3(s).secondary_container
+        };
         let mix = if s.animate {
             s.play_shape.clamp(0., 1.)
         } else {
@@ -2165,11 +2274,24 @@ impl Renderer {
                     "已暂停"
                 };
                 if fluid_layout || ((side_layout || separated_layout) && light_field_mode) {
+                    let lg_light = matches!(s.material, Material::LiquidGlass) && self.is_liquid_glass_light();
                     let wave_rgb = s.progress_color & 0xffffff;
-                    let active_wave = if wave_rgb != 0xFFFFFF && wave_rgb != 0xDDF6FF {
+                    let active_wave = if lg_light {
+                        0xEB000000 | wave_rgb
+                    } else if wave_rgb != 0xFFFFFF && wave_rgb != 0xDDF6FF {
                         0xEB000000 | crate::cover_color::mix(wave_rgb, 0xFFFFFF, 0.35)
                     } else {
                         0xEBF2FAFF
+                    };
+                    let paused_wave = if lg_light {
+                        0x70000000 | (s.text_color & 0xffffff)
+                    } else {
+                        0x70FFFFFF
+                    };
+                    let status_ink = if lg_light {
+                        0xCC000000 | (s.text_color & 0xffffff)
+                    } else {
+                        0xCCFFFFFF
                     };
                     for (i, bh) in [5.5, 9., 6.].iter().enumerate() {
                         let fallback_pulse = if s.animate {
@@ -2191,7 +2313,7 @@ impl Renderer {
                                 h,
                             ),
                             0.9,
-                            if s.playing { active_wave } else { 0x70FFFFFF },
+                            if s.playing { active_wave } else { paused_wave },
                         );
                     }
                     let tx = g.status_dot.x + 15.;
@@ -2201,7 +2323,7 @@ impl Renderer {
                         Rect::new(tx, g.status_text.y, tw, g.status_text.h),
                         9.5,
                         500,
-                        0xCCFFFFFF,
+                        status_ink,
                     );
                 } else if g.align >= 0.5 {
                     let tw = self
@@ -2831,7 +2953,14 @@ impl Renderer {
         if present {
             crate::frame_stat::tick();
         }
-        self.gpu.draw(&self.canvas, self.dpi as f64 / 96., present).map_err(err)
+        self.gpu
+            .draw_with_liquid_glass(
+                &self.canvas,
+                self.dpi as f64 / 96.,
+                present,
+                &self.liquid_glass_shapes,
+            )
+            .map_err(err)
     }
     pub fn capture_layout_frame(&mut self, scene: &Scene<'_>) -> Result<Vec<u8>> {
         self.paint_scene(scene);
@@ -2860,6 +2989,13 @@ impl Renderer {
         self.gpu.capture_frame(&canvas, 1.5, (f64::from(width)*1.5).ceil() as u32, 42).map_err(err)
     }
     fn paint_scene(&mut self, s: &Scene<'_>) {
+        self.liquid_glass_shapes.clear();
+        self.active_lg_refraction = (s.liquid_glass_refraction as f32 / 100.).clamp(0., 1.);
+        self.active_lg_dispersion = (s.liquid_glass_dispersion as f32 / 100.).clamp(0., 1.);
+        self.active_lg_blur = (s.liquid_glass_blur as f32 / 100.).clamp(0., 1.);
+        self.active_lg_tint = (s.liquid_glass_tint as f32 / 100.).clamp(0., 1.);
+        self.active_lg_opacity = (s.opacity * s.background_opacity).clamp(0., 1.);
+        self.active_lg_scale = self.dpi / 96.;
         if s.hidden_edge && !s.morph.active {
             self.canvas = VScene::new();
             let c = s.layout.capsule;
@@ -2892,10 +3028,16 @@ impl Renderer {
             s.layout
                 .morph_shape_with_radii(s.frame.card_reveal, s.capsule_radius, s.radius)
         };
-        // 形变期间也跟随卡片展开进度：蓝条/Mini 拉成大卡片时，卡片轮廓和内容一起长出来。
-        let p = s.frame.card_reveal;
+        let p = if morph_live {
+            s.morph.card_mix.clamp(0., 1.)
+        } else {
+            s.frame.card_reveal
+        };
         let (card_softness, compact_softness) = if morph_live {
-            (0., s.morph.softness)
+            (
+                if s.morph.card_mix > 0.02 { s.morph.softness } else { 0. },
+                s.morph.softness,
+            )
         } else {
             crate::motion::content_softness(
                 p,
@@ -2955,7 +3097,14 @@ impl Renderer {
             0x38
         };
         let shadow = color(((base_shadow_a as f64 * shadow_mul).round() as u32) << 24);
-        if shadow_mul > 0.01 {
+        let mut surface = Self::music_surface_spec(s);
+        if is_popup {
+            // 弹窗与系统提示/提醒采用独立设置材质（默认亚克力）
+            surface.material = s.popup_material;
+            surface.compact = s.popup_material;
+        }
+        let using_pure_lg = surface.paint(self.paint_palette).liquid_glass > 0.99;
+        if shadow_mul > 0.01 && !using_pure_lg {
             // 将外投影晕散半径收束至 24dp 宿主安全边距以内，彻底消除左右与底部矩形裁切黑线并降低离屏开销
             self.canvas.draw_blurred_rounded_rect(
                 Affine::translate((0., 3.5)),
@@ -2974,13 +3123,7 @@ impl Renderer {
             let accent = self.m3(s).primary;
             crate::island_glow::paint(&mut self.canvas, vr(shape), radius, accent, s.glow);
         }
-        let mut surface = Self::music_surface_spec(s);
         let saved_palette = self.paint_palette;
-        if is_popup {
-            // 弹窗与系统提示/提醒采用独立设置材质（默认亚克力）
-            surface.material = s.popup_material;
-            surface.compact = s.popup_material;
-        }
         if s.panel.is_some() || is_popup {
             surface.cover_overlay = false;
             surface.card_opacity = 0.;
@@ -2995,14 +3138,22 @@ impl Renderer {
         if is_taskbar_widget {
             self.taskbar_widget_surface(shape, radius, s);
         } else if morph_live && s.morph.strip_mix > 0.002 {
-            // 灵动岛与蓝条之间的液态材质交叉融合：避免出现硬切闪烁
+            // 灵动岛与蓝条之间的液态材质交叉融合：避免出现硬切闪烁，同时按当前 mini_mix 匹配外壳材质
             let island_alpha = (1. - s.morph.strip_mix).clamp(0., 1.) as f32;
             if island_alpha > 0.004 {
+                let mut island_surface = surface;
+                let is_mini_shell = s.morph.mini_mix > 0.5;
+                island_surface.mini = is_mini_shell;
+                island_surface.compact = if is_mini_shell {
+                    s.mini_capsule
+                } else {
+                    s.classic_capsule
+                };
                 self.clip(shape, radius, island_alpha);
                 self.material_surface_impl(
                     shape,
                     radius,
-                    surface,
+                    island_surface,
                     curve.as_ref(),
                     LightFieldCtx {
                         time_ms: s.time_ms,
@@ -3029,6 +3180,48 @@ impl Renderer {
                 }
                 self.canvas.pop_layer();
             }
+        } else if morph_live && s.morph.mini_mix > 0.002 && s.morph.mini_mix < 0.998 {
+            // 经典灵动岛与 Mini 岛之间的外壳材质平滑交叉融合，避免透明度和材质突变
+            let classic_alpha = (1. - s.morph.mini_mix).clamp(0., 1.) as f32;
+            let mini_alpha = s.morph.mini_mix.clamp(0., 1.) as f32;
+            if classic_alpha > 0.004 {
+                let mut classic_surface = surface;
+                classic_surface.mini = false;
+                classic_surface.compact = s.classic_capsule;
+                self.clip(shape, radius, classic_alpha);
+                self.material_surface_impl(
+                    shape,
+                    radius,
+                    classic_surface,
+                    curve.as_ref(),
+                    LightFieldCtx {
+                        time_ms: s.time_ms,
+                        reveal: s.frame.card_reveal,
+                        cover_age_ms: s.cover_age_ms,
+                        animate: s.animate,
+                    },
+                );
+                self.canvas.pop_layer();
+            }
+            if mini_alpha > 0.004 {
+                let mut mini_surface = surface;
+                mini_surface.mini = true;
+                mini_surface.compact = s.mini_capsule;
+                self.clip(shape, radius, mini_alpha);
+                self.material_surface_impl(
+                    shape,
+                    radius,
+                    mini_surface,
+                    curve.as_ref(),
+                    LightFieldCtx {
+                        time_ms: s.time_ms,
+                        reveal: s.frame.card_reveal,
+                        cover_age_ms: s.cover_age_ms,
+                        animate: s.animate,
+                    },
+                );
+                self.canvas.pop_layer();
+            }
         } else {
             self.material_surface_impl(
                 shape,
@@ -3045,7 +3238,11 @@ impl Renderer {
         }
         self.paint_palette = saved_palette;
         self.canvas.pop_layer();
-        let alpha = crate::motion::content_weights(s.frame).0 * music_alpha;
+        let alpha = if morph_live {
+            s.morph.card_alpha as f64 * music_alpha
+        } else {
+            crate::motion::content_weights(s.frame).0 * music_alpha
+        };
         if alpha > 0.001 {
             let part = self.collect(|a| {
                 let w = s.layout.card.w;
@@ -3106,7 +3303,11 @@ impl Renderer {
             }
             self.canvas.pop_layer();
         }
-        let alpha = crate::motion::content_weights(s.frame).1 * music_alpha;
+        let alpha = if morph_live {
+            music_alpha
+        } else {
+            crate::motion::content_weights(s.frame).1 * music_alpha
+        };
         if alpha > 0.001 {
             if morph_live {
                 // 双轨交叉淡化：经典胶囊与 Mini 胶囊在各自的稳定排版框内渲染，
@@ -3202,7 +3403,8 @@ impl Renderer {
             }
         }
         let sat_vis = if morph_live {
-            ((1. - s.morph.strip_mix) * (1. - s.morph.mini_mix)).clamp(0., 1.) as f32
+            ((1. - s.morph.strip_mix) * (1. - s.morph.mini_mix) * (1. - s.morph.card_mix))
+                .clamp(0., 1.) as f32
         } else if s.mini {
             0.
         } else {
@@ -3322,6 +3524,7 @@ impl Renderer {
         self.width = width;
         self.height = height;
         self.dpi = dpi;
+        self.active_lg_scale = dpi / 96.;
     }
     pub fn wait_idle(&self) {
         self.gpu.wait_idle();
@@ -3435,6 +3638,7 @@ impl Default for LightFieldCtx {
 pub enum Material {
     Acrylic,
     LightField,
+    LiquidGlass,
 }
 impl Material {
     /// Both capsule modes open the same card and use the same material preference.
@@ -3443,9 +3647,8 @@ impl Material {
     }
     pub fn from_setting(value: &str) -> Self {
         match value {
-            // Defensive fallback for older callers that bypass config loading.
-            "Glass" | "LiquidGlass" => Self::LightField,
-            "LightField" => Self::LightField,
+            "LiquidGlass" => Self::LiquidGlass,
+            "Glass" | "LightField" => Self::LightField,
             _ => Self::Acrylic,
         }
     }
@@ -3533,6 +3736,10 @@ pub struct Scene<'a> {
     pub acrylic_card_opacity: f64,
     pub acrylic_capsule_frost: f64,
     pub acrylic_capsule_opacity: f64,
+    pub liquid_glass_refraction: f64,
+    pub liquid_glass_dispersion: f64,
+    pub liquid_glass_blur: f64,
+    pub liquid_glass_tint: f64,
     pub notification: Option<&'a crate::notifications::Notice>,
     pub notification_rect: Rect,
     pub notification_radius: f64,

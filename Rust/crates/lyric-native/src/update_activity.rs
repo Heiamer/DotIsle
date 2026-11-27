@@ -20,10 +20,21 @@ impl Hub{
  }
  fn persist(&self){if self.path.parent().is_none_or(|parent|parent.as_os_str().is_empty()){return}let _=lyric_backend::io::save_settings(&self.path,&self.meta);}
 
+ pub fn source(&self)->&str{match self.meta["source"].as_str(){Some("gitee")=>"gitee",Some("github")=>"github",_=>"gitcode"}}
+ fn commit_source(&mut self,source:&str)->Result<bool,String>{
+  if !lyric_backend::updates::valid_source(source){return Err("更新源无效".into())}
+  if self.rx.is_some()||self.active()||matches!(self.phase(),"checking"|"ready"){return Err("请先完成或取消当前更新，再切换更新源".into())}
+  if self.source()==source{return Ok(false)}
+  let mut next=self.meta.clone();next["source"]=json!(source);
+  if let Some(fields)=next.as_object_mut(){for key in ["lastAttempt","lastNotifiedVersion","lastNotifiedAt"]{fields.remove(key);}}
+  lyric_backend::io::save_settings(&self.path,&next)?;
+  self.meta=next;self.release=Value::Null;self.state=json!({"phase":"idle","message":"更新源已切换，请检查更新。"});self.reminder=false;self.error=None;self.action.clear();self.job.clear();self.nonce.clear();Ok(true)
+ }
+ pub fn set_source(&mut self,source:&str)->Result<(),String>{self.commit_source(source)?;Ok(())}
  pub fn channel(&self)->&str{match self.meta["channel"].as_str(){Some("beta")=>"beta",_=>"stable"}}
  fn commit_channel(&mut self,channel:&str)->Result<bool,String>{
   if !lyric_backend::updates::valid_channel(channel){return Err("更新渠道无效".into())}
-  if self.rx.is_some()||self.active()||self.phase()=="ready"{return Err("请先完成或取消当前更新，再切换渠道".into())}
+  if self.rx.is_some()||self.active()||matches!(self.phase(),"checking"|"ready"){return Err("请先完成或取消当前更新，再切换渠道".into())}
   if self.channel()==channel{return Ok(false)}
   let mut next=self.meta.clone();next["channel"]=json!(channel);
   if let Some(fields)=next.as_object_mut(){for key in ["skippedVersion","lastNotifiedVersion","lastNotifiedAt","lastAttempt"]{fields.remove(key);}}
@@ -40,7 +51,7 @@ impl Hub{
  /// A prepared (`ready`) or finished (`completed`) update stays selectable for the user, but it
  /// never counts as running work, otherwise the island could never retract again.
  pub fn selectable(&self)->bool{self.active()||matches!(self.phase(),"available"|"ready"|"failed"|"completed")}
- pub fn check(&mut self,manual:bool){if self.rx.is_some()||self.active()||matches!(self.phase(),"ready"){return}self.manual=manual;self.last=Instant::now();self.last_progress=Instant::now();self.meta["lastAttempt"]=json!(epoch());let _=lyric_backend::io::save_settings(&self.path,&self.meta);if manual{self.state=json!({"phase":"checking","message":"正在检查 GitHub 更新，国内源仅作后备…"});}let(tx,rx)=mpsc::channel();self.rx=Some(rx);let channel=self.channel().to_owned();std::thread::spawn(move||{let _=tx.send(lyric_backend::updates::check_channel(&channel));});}
+ pub fn check(&mut self,manual:bool){if self.rx.is_some()||self.active()||matches!(self.phase(),"ready"){return}self.manual=manual;self.last=Instant::now();self.last_progress=Instant::now();self.meta["lastAttempt"]=json!(epoch());let _=lyric_backend::io::save_settings(&self.path,&self.meta);if manual{self.state=json!({"phase":"checking","message":"正在检查所选更新源，连接失败时自动切换…"});}let(tx,rx)=mpsc::channel();self.rx=Some(rx);let channel=self.channel().to_owned();let source=self.source().to_owned();std::thread::spawn(move||{let _=tx.send(lyric_backend::updates::check_preferred(&channel,&source));});}
  pub fn tick(&mut self,enabled:bool,demo:bool)->bool{
   let result=self.rx.as_ref().and_then(|rx|rx.try_recv().ok());let mut changed=false;
   if let Some(result)=result{self.rx=None;changed=true;match result{Ok(release)=>{self.release=release.clone();let newer=release["newer"]==true;let version=release["version"].as_str().unwrap_or("").to_owned();let skipped=newer&&self.meta["skippedVersion"].as_str()==Some(version.as_str());let deliver=newer&&!skipped;self.state=json!({"phase":if deliver{"available"}else if skipped{"skipped"}else{"idle"},"version":release["version"],"message":if skipped{json!("已跳过这个版本；发布下一个版本后会再次提醒。")}else{release["message"].clone()}});self.state["source"]=release["source"].clone();self.state["sourceWarnings"]=release["sourceWarnings"].clone();if deliver{if self.manual||(self.meta["lastNotifiedVersion"].as_str()!=Some(version.as_str())||epoch().saturating_sub(self.meta["lastNotifiedAt"].as_u64().unwrap_or(0))>=86400){self.reminder=true;self.meta["lastNotifiedVersion"]=json!(version);self.meta["lastNotifiedAt"]=json!(epoch());}}self.meta["lastSuccess"]=json!(epoch());let _=lyric_backend::io::save_settings(&self.path,&self.meta);},Err(e)=>{self.error=Some(e.clone());lyric_backend::io::log(&self.path.parent().unwrap().join("Logs"),"UPDATE_ERROR",&e);if self.manual{self.state=json!({"phase":"failed","message":e});self.reminder=true;}}}}
@@ -113,7 +124,7 @@ impl Hub{
   let received=self.state["receivedBytes"].as_u64().unwrap_or(0);let total=self.state["totalBytes"].as_u64();let speed=self.state["speedBytesPerSecond"].as_u64().unwrap_or(0);
   let amount=|bytes:u64|if bytes>=1048576{format!("{:.1} MB",bytes as f64/1048576.)}else{format!("{:.0} KB",bytes as f64/1024.)};
   let subtitle=match phase{
-   "checking"=>"正在检查双源更新…".into(),
+   "checking"=>"正在检查更新…".into(),
    "downloading"=>{let mut text=if let Some(total)=total{format!("已下载 {} / {}",amount(received),amount(total))}else{format!("已下载 {} · 总大小未知",amount(received))};if speed>=1048576{text.push_str(&format!(" · {:.1} MB/s",speed as f64/1048576.))}else if speed>0{text.push_str(&format!(" · {:.0} KB/s",speed as f64/1024.))}text},
    "switching"=>"正在切换到备用更新源…".into(),
    "verifying"=>"下载完成，正在核对更新包…".into(),
@@ -144,6 +155,16 @@ impl Hub{
   let dir=std::env::temp_dir().join(format!("dotisle-channel-fail-{}",std::process::id()));let _=std::fs::remove_dir_all(&dir);std::fs::create_dir_all(&dir).unwrap();
   std::fs::write(dir.join("blocked"),b"file").unwrap();let mut h=Hub::new(&dir);h.path=dir.join("blocked/update-state.json");h.release=json!({"newer":true,"version":"v5.0.1","channel":"stable"});
   assert!(h.commit_channel("beta").is_err());assert_eq!(h.channel(),"stable");assert_eq!(h.release["version"],"v5.0.1");let _=std::fs::remove_dir_all(dir);
+ }
+ #[test]fn source_defaults_persists_and_locks_during_work(){
+  let dir=std::env::temp_dir().join(format!("dotisle-source-{}",std::process::id()));let _=std::fs::remove_dir_all(&dir);std::fs::create_dir_all(&dir).unwrap();
+  let mut h=Hub::new(&dir);assert_eq!(h.source(),"gitcode");
+  h.release=json!({"newer":true,"version":"v5.2.8"});
+  assert!(h.commit_source("gitee").unwrap());assert!(h.release.is_null());assert_eq!(Hub::new(&dir).source(),"gitee");
+  for phase in ["checking","downloading","switching","verifying","ready","applying","restarting"]{h.state=json!({"phase":phase});assert!(h.commit_source("github").is_err());assert_eq!(h.source(),"gitee");}
+  h.state=json!({"phase":"idle"});assert!(h.commit_source("github").unwrap());assert_eq!(Hub::new(&dir).source(),"github");assert!(h.commit_source("invalid").is_err());
+  std::fs::write(dir.join("blocked"),b"file").unwrap();h.path=dir.join("blocked/update-state.json");h.release=json!({"version":"v5.2.8"});
+  assert!(h.commit_source("gitcode").is_err());assert_eq!(h.source(),"github");assert_eq!(h.release["version"],"v5.2.8");let _=std::fs::remove_dir_all(dir);
  }
  #[test]fn rejects_forged_and_stale_progress(){let mut h=hub();assert!(h.progress(&json!({"nonce":"bad","jobId":"job","seq":1,"phase":"ready"})).is_err());h.progress(&json!({"nonce":"secret","jobId":"job","seq":2,"phase":"downloading","receivedBytes":30,"totalBytes":100})).unwrap();assert_eq!(h.state["percent"],30);h.progress(&json!({"nonce":"secret","jobId":"job","seq":1,"phase":"ready"})).unwrap();assert_eq!(h.phase(),"downloading");h.progress(&json!({"nonce":"secret","jobId":"job","seq":3,"phase":"downloading","receivedBytes":40})).unwrap();assert!(h.state["percent"].is_null());}
  #[test]fn percent_comes_only_from_byte_counts_and_unknown_lengths_stay_indeterminate(){

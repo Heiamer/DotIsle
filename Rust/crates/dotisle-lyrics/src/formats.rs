@@ -61,7 +61,7 @@ fn word_lines(input:&str,format:Format)->Lyrics{
  for row in input.lines().take(50_000){let Some(head)=HEAD.captures(row)else{continue};let Some(at)=number(&head[1])else{continue};let Some(length)=number(&head[2])else{continue};let body=&row[head.get(0).unwrap().end()..];let tags=word.captures_iter(body).collect::<Vec<_>>();let mut words=Vec::new();
   for(i,tag)in tags.iter().enumerate(){let Some(start)=number(&tag[1])else{continue};let Some(length)=number(&tag[2])else{continue};let (text,start)=if format==Format::Qrc{let from=if i==0{0}else{tags[i-1].get(0).unwrap().end()};(body[from..tag.get(0).unwrap().start()].to_string(),start)}else{let to=tags.get(i+1).map(|c|c.get(0).unwrap().start()).unwrap_or(body.len());(body[tag.get(0).unwrap().end()..to].to_string(),if format==Format::Krc{at.saturating_add(start)}else{start})};words.push(Word{at:start,until:start.saturating_add(length),text:collapse_word_whitespace(&text)});
   }
-  let text=collapse_inline_whitespace(&word.replace_all(body,""));lines.push(Cue{at,until:at.saturating_add(length),text,words,translation:None});
+  let text=collapse_inline_whitespace(&word.replace_all(body,""));lines.push(Cue{at,until:at.saturating_add(length),text,words,translation:None,romanization:None});
  }
  Lyrics{lines,timed:true,instrumental:false}
 }

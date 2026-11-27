@@ -115,6 +115,10 @@ impl Store {
                 height: 0.,
                 hidden: false,
                 revision: 1,
+                material: String::new(),
+                opacity: 1.0,
+                stack_id: String::new(),
+                stack_order: 0,
             });
         }
         if let Err(error) = self.persist() {

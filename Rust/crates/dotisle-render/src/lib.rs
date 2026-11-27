@@ -2,6 +2,7 @@
 pub mod brand_signature;
 pub mod control_icons;
 pub mod draw;
+pub mod liquid_glass;
 pub mod material_symbols;
 pub mod modern_icons;
 pub mod progress;

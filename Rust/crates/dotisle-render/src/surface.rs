@@ -222,6 +222,8 @@ pub struct Surface {
     config: wgpu::SurfaceConfiguration,
     target_texture: RefCell<Option<wgpu::Texture>>,
     last_scene: Option<(Scene, f64)>,
+    liquid_glass: RefCell<Option<crate::liquid_glass::LiquidGlassPipeline>>,
+    last_liquid_glass_shapes: RefCell<Vec<crate::liquid_glass::GlassShape>>,
     draw_timings: [f64; 7],
     renderer: Rc<RefCell<Renderer>>,
     device: wgpu::Device,
@@ -327,6 +329,8 @@ impl Surface {
             config,
             target_texture: RefCell::new(None),
             last_scene: None,
+            liquid_glass: RefCell::new(None),
+            last_liquid_glass_shapes: RefCell::new(Vec::new()),
             renderer,
             device,
             queue,
@@ -358,7 +362,49 @@ impl Surface {
         self.surface.configure(&self.device, &self.config);
         *self.target_texture.get_mut() = None;
     }
+    /// 上传实时采样或壁纸背景至液态玻璃 Beta 管线（按需惰性初始化，绝不影响其他材质）。
+    pub fn update_liquid_glass_backdrop(&mut self, rgba: &[u8], width: u32, height: u32) {
+        let mut lg_slot = self.liquid_glass.borrow_mut();
+        let lg = lg_slot.get_or_insert_with(|| {
+            crate::liquid_glass::LiquidGlassPipeline::new(
+                &self.device,
+                &self.queue,
+                self.config.format,
+                self.config.width,
+                self.config.height,
+            )
+        });
+        lg.update_backdrop(&self.device, &self.queue, rgba, width, height);
+    }
+    /// 切回曜光玻璃/亚克力等原材质时立即释放液态玻璃离屏纹理与管线。
+    pub fn release_liquid_glass(&mut self) {
+        *self.liquid_glass.borrow_mut() = None;
+        self.last_liquid_glass_shapes.borrow_mut().clear();
+    }
     pub fn draw(&mut self, scene: &Scene, scale: f64, present: bool) -> Result<(), String> {
+        self.last_liquid_glass_shapes.borrow_mut().clear();
+        self.draw_inner(scene, scale, present, &[])
+    }
+    pub fn draw_with_liquid_glass(
+        &mut self,
+        scene: &Scene,
+        scale: f64,
+        present: bool,
+        shapes: &[crate::liquid_glass::GlassShape],
+    ) -> Result<(), String> {
+        if shapes.is_empty() {
+            return self.draw(scene, scale, present);
+        }
+        *self.last_liquid_glass_shapes.borrow_mut() = shapes.to_vec();
+        self.draw_inner(scene, scale, present, shapes)
+    }
+    fn draw_inner(
+        &mut self,
+        scene: &Scene,
+        scale: f64,
+        present: bool,
+        shapes: &[crate::liquid_glass::GlassShape],
+    ) -> Result<(), String> {
         let draw_at = std::time::Instant::now();
         let mut encoder = self.device.create_command_encoder(&Default::default());
         self.renderer.borrow_mut().prepare(
@@ -409,16 +455,45 @@ impl Surface {
         let acquired_at = std::time::Instant::now();
         self.last_scene = Some((scene.clone(), scale));
         if let Some(frame) = frame {
-            // Render straight into the transparent swapchain. Verification allocates
-            // its own target lazily instead of keeping a duplicate full-window plane.
-            self.renderer.borrow_mut().render_prepared(
-                &self.device,
-                &self.queue,
-                &mut encoder,
-                self.config.width,
-                self.config.height,
-                &frame.texture.create_view(&Default::default()),
-            )?;
+            let out_view = frame.texture.create_view(&Default::default());
+            if shapes.is_empty() {
+                self.renderer.borrow_mut().render_prepared(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    self.config.width,
+                    self.config.height,
+                    &out_view,
+                )?;
+            } else {
+                let mut lg_slot = self.liquid_glass.borrow_mut();
+                let lg = lg_slot.get_or_insert_with(|| {
+                    crate::liquid_glass::LiquidGlassPipeline::new(
+                        &self.device,
+                        &self.queue,
+                        self.config.format,
+                        self.config.width,
+                        self.config.height,
+                    )
+                });
+                let fg_view = lg.ensure_fg_view(&self.device, self.config.width, self.config.height);
+                self.renderer.borrow_mut().render_prepared(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    self.config.width,
+                    self.config.height,
+                    fg_view,
+                )?;
+                lg.compose(
+                    &self.queue,
+                    &mut encoder,
+                    self.config.width,
+                    self.config.height,
+                    shapes,
+                    &out_view,
+                );
+            }
             let encoded_at = std::time::Instant::now();
             self.queue.submit([encoder.finish()]);
             let submitted_at = std::time::Instant::now();
@@ -447,14 +522,45 @@ impl Surface {
                     self.config.format,
                 )
             });
-            self.renderer.borrow_mut().render_prepared(
-                &self.device,
-                &self.queue,
-                &mut encoder,
-                self.config.width,
-                self.config.height,
-                &target.create_view(&Default::default()),
-            )?;
+            let out_view = target.create_view(&Default::default());
+            if shapes.is_empty() {
+                self.renderer.borrow_mut().render_prepared(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    self.config.width,
+                    self.config.height,
+                    &out_view,
+                )?;
+            } else {
+                let mut lg_slot = self.liquid_glass.borrow_mut();
+                let lg = lg_slot.get_or_insert_with(|| {
+                    crate::liquid_glass::LiquidGlassPipeline::new(
+                        &self.device,
+                        &self.queue,
+                        self.config.format,
+                        self.config.width,
+                        self.config.height,
+                    )
+                });
+                let fg_view = lg.ensure_fg_view(&self.device, self.config.width, self.config.height);
+                self.renderer.borrow_mut().render_prepared(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    self.config.width,
+                    self.config.height,
+                    fg_view,
+                )?;
+                lg.compose(
+                    &self.queue,
+                    &mut encoder,
+                    self.config.width,
+                    self.config.height,
+                    shapes,
+                    &out_view,
+                );
+            }
             self.queue.submit([encoder.finish()]);
         }
         if self.startup_cleanup {
@@ -498,16 +604,50 @@ impl Surface {
         });
         if let Some((scene, scale)) = &self.last_scene {
             let mut encoder = self.device.create_command_encoder(&Default::default());
-            self.renderer.borrow_mut().render(
-                &self.device,
-                &self.queue,
-                &mut encoder,
-                scene,
-                *scale,
-                self.config.width,
-                self.config.height,
-                &texture.create_view(&Default::default()),
-            )?;
+            let out_view = texture.create_view(&Default::default());
+            let shapes = self.last_liquid_glass_shapes.borrow();
+            if shapes.is_empty() {
+                self.renderer.borrow_mut().render(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    scene,
+                    *scale,
+                    self.config.width,
+                    self.config.height,
+                    &out_view,
+                )?;
+            } else {
+                let mut lg_slot = self.liquid_glass.borrow_mut();
+                let lg = lg_slot.get_or_insert_with(|| {
+                    crate::liquid_glass::LiquidGlassPipeline::new(
+                        &self.device,
+                        &self.queue,
+                        self.config.format,
+                        self.config.width,
+                        self.config.height,
+                    )
+                });
+                let fg_view = lg.ensure_fg_view(&self.device, self.config.width, self.config.height);
+                self.renderer.borrow_mut().render(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    scene,
+                    *scale,
+                    self.config.width,
+                    self.config.height,
+                    fg_view,
+                )?;
+                lg.compose(
+                    &self.queue,
+                    &mut encoder,
+                    self.config.width,
+                    self.config.height,
+                    &shapes,
+                    &out_view,
+                );
+            }
             self.queue.submit([encoder.finish()]);
         }
         let result =

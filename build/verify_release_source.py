@@ -51,7 +51,7 @@ def verify(root, version):
                            for p in (root / 'licenses').rglob('*') if p.is_file())
     if license_files != policy['licenseFiles']:
         errors.append('License inventory differs from the reviewed source policy')
-    for required in ['licenses/qq-lyric-codec-MIT.txt', 'licenses/NeteaseCloudMusicApi-MIT.txt',
+    for required in ['licenses/qq-lyric-codec-MIT.txt', 'licenses/Lyrics-Apache-2.0.txt',
                      'licenses/roxmltree-MIT.txt', 'licenses/Rewrite-Rust-Licenses.txt',
                      'licenses/iced-x86-MIT.txt', 'licenses/lazy_static-MIT.txt',
                      'Rust/vendor/qq-lyric-codec/LICENSE']:

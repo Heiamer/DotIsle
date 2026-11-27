@@ -187,7 +187,7 @@ func TestMaterialSegmentedControlsAreIndependent(t *testing.T) {
 	tt.Frame()
 	tt.Frame()
 	// 滚动设置面板正文至「卡片与弹窗材质」区可见（设置页正文高度存储在 settingsPanel.bodyHeight）
-	tt.Scroll(float32(WindowW)/2, 420, 0, float32(a.settingsPanel.bodyHeight)*0.42)
+	tt.Scroll(float32(WindowW)/2, 420, 0, float32(a.settingsPanel.bodyHeight)*0.28)
 	tt.Frame()
 	tt.Advance(400 * time.Millisecond)
 	tt.Frame()
@@ -205,8 +205,8 @@ func TestMaterialSegmentedControlsAreIndependent(t *testing.T) {
 
 	acrylicTabs := collect("亚克力")
 	lumenTabs := collect("曜光玻璃")
-	liquidTabs := collect("液态玻璃")
-	if len(acrylicTabs) != 4 || len(lumenTabs) != 4 || len(liquidTabs) != 0 {
+	liquidTabs := collect("液态玻璃 Beta")
+	if len(acrylicTabs) != 4 || len(lumenTabs) != 4 || len(liquidTabs) != 4 {
 		t.Fatalf("expected 4 visible material segmented groups, got acrylic=%d lumen=%d liquid=%d", len(acrylicTabs), len(lumenTabs), len(liquidTabs))
 	}
 
@@ -239,8 +239,18 @@ func TestMaterialSegmentedControlsAreIndependent(t *testing.T) {
 		}
 	}
 
-	// 分别点击四个控件的「曜光玻璃」，确认配置写入保留材质
+	// 分别点击四个控件的「液态玻璃 Beta」，确认独立切换至 LiquidGlass 且不影响原材质体系
 	allKeys := []string{"ClassicCapsuleMaterial", "IslandMaterial", "MiniMaterial", "PopupMaterial"}
+	for i, key := range allKeys {
+		r := liquidTabs[i]
+		tt.ClickAt(r.X+r.W/2, r.Y+r.H/2)
+		tt.Frame()
+		if got := a.settings()[key]; got != "LiquidGlass" {
+			t.Fatalf("%s did not switch to LiquidGlass: got %v", key, got)
+		}
+	}
+
+	// 分别点击四个控件的「曜光玻璃」，确认配置写入恢复材质
 	for i, key := range allKeys {
 		r := lumenTabs[i]
 		tt.ClickAt(r.X+r.W/2, r.Y+r.H/2)

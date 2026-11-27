@@ -10,7 +10,7 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-var materialOptions = [2][2]string{{"曜光玻璃", "LightField"}, {"亚克力", "Acrylic"}}
+var materialOptions = [3][2]string{{"曜光玻璃", "LightField"}, {"亚克力", "Acrylic"}, {"液态玻璃 Beta", "LiquidGlass"}}
 
 // islandSetting reads one island setting with its default. Motion/Spring keys are
 // flat wire names but live nested in the state map (settings.json stores a Motion
@@ -316,6 +316,13 @@ func (a *App) islandTabMaterial(c *ui.Context, p *Palette, x, y, w float32) floa
 	y = a.islandRange(c, p, x, y, w, "展开卡片叠层强度", "AcrylicCardOpacity", 60, 0, 100, "%")
 	y = a.islandRange(c, p, x, y, w, "胶囊磨砂", "AcrylicCapsuleFrost", 40, 0, 100, "%")
 	y = a.islandRange(c, p, x, y, w, "胶囊叠层强度", "AcrylicCapsuleOpacity", 0, 0, 100, "%")
+	y = a.islandHeading(c, p, "液态玻璃（Beta · 独立光学折射材质）", x, y, w)
+	y = a.islandChoices(c, p, x, y, w, "背景采样来源（实时画面下第三方截图默认不可见，切换仅壁纸可恢复）", "LiquidGlassSource", "Live",
+		[][2]string{{"实时画面", "Live"}, {"仅桌面壁纸", "Wallpaper"}})
+	y = a.islandRange(c, p, x, y, w, "边缘折射强度", "LiquidGlassRefraction", 76, 0, 100, "%")
+	y = a.islandRange(c, p, x, y, w, "边缘色散", "LiquidGlassDispersion", 46, 0, 100, "%")
+	y = a.islandRange(c, p, x, y, w, "背景模糊", "LiquidGlassBlur", 8, 0, 100, "%")
+	y = a.islandRange(c, p, x, y, w, "玻璃着色深度", "LiquidGlassTint", 6, 0, 100, "%")
 	return y
 }
 

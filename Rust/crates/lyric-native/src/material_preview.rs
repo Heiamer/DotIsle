@@ -509,3 +509,148 @@ pub unsafe fn acrylic_cover(a:&mut App,dir:&Path)->Result<(),Box<dyn std::error:
     std::fs::write(dir.join("acrylic-cover.json"),serde_json::to_vec_pretty(&json!({"images":files}))?)?;
     Ok(())
 }
+
+/// 生成模拟 WinWidget 同款发光点阵背景下的灵动岛「液态玻璃 Beta」GPU 渲染验收图（胶囊态 + 展开音乐大卡片态）。
+pub unsafe fn liquid_glass_beta(a: &mut App, dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    std::fs::create_dir_all(dir)?;
+    a.opacity = 1.;
+    a.lyric = "晚风穿过玻璃边缘，折射出细腻霓虹".into();
+    a.settings["IslandSizeMode"] = json!("Classic");
+    a.settings["MusicExpandedLayout"] = json!("SideBySide");
+    a.settings["ClassicCapsuleMaterial"] = json!("LiquidGlass");
+    a.settings["IslandMaterial"] = json!("LiquidGlass");
+    a.settings["LiquidGlassRefraction"] = json!(76.);
+    a.settings["LiquidGlassDispersion"] = json!(46.);
+    a.settings["LiquidGlassBlur"] = json!(8.);
+    a.settings["LiquidGlassTint"] = json!(6.);
+    a.settings["ExpandedMonetEnabled"] = json!(false);
+    a.settings["ExpandedCoverOverlay"] = json!(false);
+    a.settings["CoverBackground"] = json!(false);
+    a.settings["LyricColorFromCover"] = json!(false);
+    a.settings["ExpandedTextColor"] = json!("#FFFFFF");
+    a.settings["ExpandedComponentColor"] = json!("#FFFFFF");
+    a.settings["LyricProgressColor"] = json!("#DDF6FF");
+    a.music_mix = 0.0;
+    a.music_controls.snap(1.);
+    a.snapshot = json!({
+        "isPlaying": true,
+        "track": {
+            "title": "DIA VERAO · Liquid Glass Beta",
+            "artist": "DotIsle Optical Lab",
+            "durationSeconds": 248.0,
+            "sourceApp": "Netease"
+        }
+    });
+
+    let mut r = a.renderer.take().unwrap();
+    let cover = std::fs::read(a.base.join("Assets/DemoCover.png"))?;
+    r.set_cover(Some(&cover))?;
+
+    // 优先读取真实 Windows 桌面壁纸并保留局部色彩线条，若未找到则生成高彩渐变极光桌面底图
+    let bw = r.width.max(1);
+    let bh = r.height.max(1);
+    let mut bg = vec![0u8; (bw as usize) * (bh as usize) * 4];
+    let loaded_wp = std::env::var_os("APPDATA")
+        .map(|a| {
+            std::path::PathBuf::from(a)
+                .join("Microsoft")
+                .join("Windows")
+                .join("Themes")
+                .join("TranscodedWallpaper")
+        })
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|bytes| image::load_from_memory(&bytes).ok())
+        .map(|img| {
+            let sw = unsafe { windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(windows::Win32::UI::WindowsAndMessaging::SM_CXSCREEN).max(bw as i32) as u32 };
+            let sh = unsafe { windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(windows::Win32::UI::WindowsAndMessaging::SM_CYSCREEN).max(bh as i32) as u32 };
+            let resized = img.resize_to_fill(sw, sh, image::imageops::FilterType::Triangle).to_rgba8();
+            let x0 = ((sw - bw) / 2).min(sw.saturating_sub(bw));
+            let y0 = 0u32;
+            image::imageops::crop_imm(&resized, x0, y0, bw, bh).to_image().into_raw()
+        });
+    if let Some(wp) = loaded_wp {
+        bg = wp;
+    } else {
+        for y in 0..bh {
+            for x in 0..bw {
+                let u = x as f32 / bw as f32;
+                let v = y as f32 / bh as f32;
+                let wave = ((u * 9.0 + v * 5.0).sin() * 0.5 + 0.5) * 0.45;
+                let idx = ((y * bw + x) * 4) as usize;
+                bg[idx] = (40.0 + 185.0 * u * (1.0 - 0.3 * v) + 40.0 * wave).clamp(0.0, 255.0) as u8;
+                bg[idx + 1] = (65.0 + 110.0 * (1.0 - u) + 85.0 * wave).clamp(0.0, 255.0) as u8;
+                bg[idx + 2] = (120.0 + 125.0 * v + 30.0 * (1.0 - wave)).clamp(0.0, 255.0) as u8;
+                bg[idx + 3] = 255;
+            }
+        }
+    }
+    r.update_liquid_glass_backdrop(&bg, bw, bh);
+
+    // 辅助函数：把前景透明窗口直接与真实桌面背景叠加，输出完整同框对比图
+    let save_desktop_composite = |fg_path: &Path, dst_path: &Path| -> Result<(), Box<dyn std::error::Error>> {
+        let fg_img = image::open(fg_path)?.to_rgba8();
+        let mut comp = image::RgbaImage::from_raw(bw, bh, bg.clone()).unwrap();
+        for (x, y, px) in comp.enumerate_pixels_mut() {
+            if x < fg_img.width() && y < fg_img.height() {
+                let f = fg_img.get_pixel(x, y);
+                let a = f[3] as f32 / 255.0;
+                if a > 0.002 {
+                    px[0] = (f[0] as f32 + px[0] as f32 * (1.0 - a)).clamp(0.0, 255.0) as u8;
+                    px[1] = (f[1] as f32 + px[1] as f32 * (1.0 - a)).clamp(0.0, 255.0) as u8;
+                    px[2] = (f[2] as f32 + px[2] as f32 * (1.0 - a)).clamp(0.0, 255.0) as u8;
+                    px[3] = 255;
+                }
+            }
+        }
+        comp.save(dst_path)?;
+        Ok(())
+    };
+
+    // 1. 经典收起态液态玻璃胶囊
+    a.frame = Frame::hidden(a.options());
+    let mut cap = a.scene();
+    cap.has_track = true;
+    cap.playing = true;
+    cap.lyric = "Liquid Glass Beta · 曲面折射";
+    cap.animate = true;
+    cap.lyric_age_ms = 1000.;
+    cap.cover_age_ms = 1000.;
+    cap.activity_scales = [0.65, 1.0, 0.78];
+    cap.activity_opacity = 1.0;
+    r.render(&cap, false)?;
+    let cap_path = dir.join("liquid-glass-capsule.png");
+    r.snapshot(&cap_path)?;
+    save_desktop_composite(&cap_path, &dir.join("liquid-glass-capsule-desktop.png"))?;
+
+    // 2. 展开态液态玻璃音乐大卡片
+    a.layout.card.w = 420.;
+    a.layout.card.x = (a.layout.host.w - a.layout.card.w) / 2.;
+    a.layout.card.h = crate::layout::music_height(0.0, 12.5);
+    a.frame = Frame::expanded();
+    let mut card = a.scene();
+    card.has_track = true;
+    card.playing = true;
+    card.favorite_enabled = true;
+    card.title = "DIA VERAO · Liquid Glass Beta";
+    card.artist = "DotIsle Optical Lab";
+    card.lyric = "晚风穿过玻璃边缘，折射出细腻霓虹";
+    card.secondary = "Refraction · Dispersion · Fresnel Specular Rim";
+    card.highlight = 0.56;
+    card.progress = 0.44;
+    card.elapsed = 109.;
+    card.duration = 248.;
+    card.time_ms = 1200.;
+    card.cover_age_ms = 1000.;
+    card.lyric_age_ms = 1000.;
+    card.animate = true;
+    card.controls_opacity = 1.;
+    card.activity_scales = [0.65, 1.0, 0.78];
+    card.activity_opacity = 1.;
+    r.render(&card, false)?;
+    let card_path = dir.join("liquid-glass-card.png");
+    r.snapshot(&card_path)?;
+    save_desktop_composite(&card_path, &dir.join("liquid-glass-card-desktop.png"))?;
+
+    a.renderer = Some(r);
+    Ok(())
+}

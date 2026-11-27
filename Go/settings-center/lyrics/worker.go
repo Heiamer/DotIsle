@@ -30,10 +30,12 @@ type hit struct {
 }
 
 type payload struct {
-	Format       string
-	Original     string
-	Translation  string
-	Instrumental bool
+	Format                 string
+	Original               string
+	Translation            string
+	Instrumental           bool
+	Fallback, Romanization string
+	Document               *tbDocument
 }
 
 type result struct {
@@ -90,7 +92,7 @@ func serve(input io.Reader, output io.Writer, client *client) error {
 			respond(result{ID: req.ID, Error: "worker busy"})
 			continue
 		}
-		ctx, cancel := context.WithTimeout(root, time.Duration(max(1, min(12000, req.TimeoutMS)))*time.Millisecond)
+		ctx, cancel := context.WithTimeout(root, time.Duration(max(1, min(30000, req.TimeoutMS)))*time.Millisecond)
 		active[req.ID] = cancel
 		mu.Unlock()
 		wg.Go(func() {
@@ -99,10 +101,14 @@ func serve(input io.Reader, output io.Writer, client *client) error {
 			r := result{ID: req.ID}
 			var err error
 			switch req.Op {
-			case "search":
-				r.Hits, err = client.search(ctx, req)
-			case "fetch", "fetch-lrc":
-				r.Payload, err = client.fetch(ctx, req)
+			case "taskbar-plan":
+				r.Hits = tbVariants(req)
+			case "taskbar-search":
+				r.Hits, err = client.tbSearch(ctx, req)
+			case "taskbar-kugou-candidates":
+				r.Hits, err = client.tbKugouCandidates(ctx, req)
+			case "taskbar-fetch", "taskbar-qrc":
+				r.Payload, err = client.tbFetch(ctx, req)
 			case "ping":
 			default:
 				err = errors.New("unknown lyric operation")

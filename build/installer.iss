@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "5.2.6"
+  #define AppVersion "5.2.8"
 #endif
 #ifndef AppId
   #define AppId "DotIsle"

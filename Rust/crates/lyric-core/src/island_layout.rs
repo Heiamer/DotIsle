@@ -79,25 +79,23 @@ impl Layout {
         self.morph_shape_with_radii(p, self.capsule.h / 2., r)
     }
     pub fn morph_shape_with_radii(self, p: f64, closed_radius: f64, r: f64) -> (Rect, f64) {
-        // Apple Dynamic Island 形态曲线：宽度领先胶囊步进、高度紧随舒展，并保持严格中轴对称
-        let over = p - p.clamp(0., 1.);
-        let pc = p.clamp(0., 1.);
-        let x_t = blend(pc, 0.04, 0.84) + over.clamp(-0.045, 0.045) * 0.55;
-        let y_t = blend(pc, 0.14, 0.96) + over.clamp(-0.045, 0.045) * 0.48;
+        let over = (p - p.clamp(0., 1.)).clamp(-0.04, 0.04) * 0.4;
+        let p = p.clamp(0., 1.);
+        let x = blend(p, 0.10, 0.88) + over;
+        let y = blend(p, 0.22, 1.) + over;
         let a = self.capsule;
         let b = self.card;
-        let arc = (std::f64::consts::PI * pc).sin();
-        let y_arc = if self.anchor_bottom { -4.5 * arc } else { -7.0 * arc };
-        let w = (a.w + (b.w - a.w) * x_t).clamp(4., self.host.w.max(4.));
-        let h = (a.h + (b.h - a.h) * y_t).clamp(4., self.host.h.max(4.));
-        let cx = (a.x + a.w / 2.) + ((b.x + b.w / 2.) - (a.x + a.w / 2.)) * x_t;
-        let x = (cx - w / 2.).clamp(0., (self.host.w - w).max(0.));
-        let y = (a.y + (b.y - a.y) * y_t + y_arc).clamp(0., (self.host.h - h).max(0.));
-        let rect = Rect::new(x, y, w, h);
-        let cr = closed_radius.clamp(0., a.h / 2.);
+        let arc = (std::f64::consts::PI * p).sin();
+        let y_arc = if self.anchor_bottom { -6. * arc } else { -12. * arc };
+        let rect = Rect::new(
+            a.x + (b.x - a.x) * x + 5. * arc,
+            a.y + (b.y - a.y) * y + y_arc,
+            a.w + (b.w - a.w) * x,
+            a.h + (b.h - a.h) * y,
+        );
         (
             rect,
-            (cr + (r - cr) * y_t.clamp(0., 1.))
+            (closed_radius.clamp(0., a.h / 2.) + (r - closed_radius.clamp(0., a.h / 2.)) * y)
                 .min(rect.w.min(rect.h) / 2.)
                 .max(0.),
         )

@@ -1,24 +1,22 @@
 # 歌词与进度实现说明
 
-版本：3.2.6。作者：Heiamer。
+版本：5.2.8。作者：Heiamer。
 
 ## 当前实现
 
 - lyric-core 使用 Track、Cue、Word、Lyrics 单时间轴模型，负责身份匹配、解析、缓存、本地歌词检索和同步。
-- lyric-backend 负责六个在线歌词源、系统媒体会话和网易云自动原生进度。新进度实现只读进程内存，从客户端类型信息和 x86/x64 指令参数流向自动推导对象、字段与进度缓存，不再按版本号或客户端哈希准入；未恢复此前移除的项目实现或特征码。
+- dotisle-lyrics 使用 taskbar 在线链路，dotisle-music 负责系统媒体会话和网易云自动原生进度。新进度实现只读进程内存，从客户端类型信息和 x86/x64 指令参数流向自动推导对象、字段与进度缓存，不再按版本号或客户端哈希准入；未恢复此前移除的项目实现或特征码。
 - 原生界面使用连续弹簧求解与 Hermite 中断衔接。控制中心、六套主题、计时、待办、通知与更新继续使用同一套原生界面。
 
 ## 依赖
 
 QQ 歌词块解码器采用 SuJiKiNen/LyricDecoder 的 MIT 代码，提交 36fc1eaf31f8ef14a23de6f9f1427ce04178a900；保留文件头和完整许可。两个无符号移位修正见 Rust/vendor/qq-lyric-codec/SOURCE.md。
 
-网易云 EAPI 请求封装参考 NeteaseCloudMusicApiEnhanced/api-enhanced，提交 4a7d557326d16d2f1e5172ee69c9471eb3a50173，MIT，Binaryify。未捆绑其 Node 服务端。
-
 XML 由 roxmltree 0.20.0 解析。上述依赖的许可和其他界面、字体、图标依赖分别见 THIRD-PARTY-NOTICES.md、FONT-NOTICE.md、licenses/ 和 Rust/vendor/。根目录 LICENSE 适用于项目自有代码，署名 Heiamer。
 
 ## 缓存与控制
 
-新缓存为 database/dotisle-payload-v3.json 和 database/dotisle-lyrics-v3.json，设有大小、数量和有效期限制。旧歌词缓存不再读取；配置与 song_maps.db 的可选只读导入继续保留。
+在线最终缓存为 database/dotisle-lyrics-taskbar-v1.json，设有大小、数量和有效期限制。旧歌词缓存不再读取；配置与 song_maps.db 的可选只读导入继续保留。
 
 逐字歌词只使用真实词时间；普通 LRC 或纯文本不生成虚假的词时间。高级 TTML 方言的支持范围由解析器决定。
 
@@ -28,12 +26,6 @@ XML 由 roxmltree 0.20.0 解析。上述依赖的许可和其他界面、字体�
 
 本次普通启动的真实播放器验收见 docs/verification/3.2.6-compatibility.json；静态结构/资源检查与真实运行检查分别记录，未运行的旧客户端不列为完整实测。构建和源码版本、根许可及依赖许可由发布工作流独立验证，见 BUILD-3.2.6.md。
 
-### 汽水音乐歌词与匹配参考
-
-参考 [Windows Taskbar Lyrics](https://github.com/H0308/taskbar-lyrics-displayer) 的 `fc94ee7` 版本（Apache-2.0），包括公开 Web 歌曲搜索与详情的协议、候选补搜思路、试听片段对齐条件；未引入其 C++ 实现。
-
 ## 当前在线歌词管线
 
-- `LyricIsland.Center.exe --lyrics-worker` 在控制中心初始化前进入 Go 标准输入/输出服务。Rust 负责发起、取消和匹配请求；两者随同一个完整发版一起交付。协议只接收已知歌词源和操作，不开放任意 HTTP 请求。
-- 酷狗、QQ、LRCLIB、网易云、汽水、酷我、咪咕与 AMLL 的搜索和下载在 Go；本地歌词、歌曲映射、候选评分、QRC/KRC/TTML 解析、缓存、试听对齐和时间轴仍由 Rust 管理。AMLL 是独立的社区逐字 TTML 源，没有时长的结果不能凭逐字优势压过高置信匹配。
-- 保留现有原文缓存，最终匹配缓存键换代；当在线源返回空正文、超时、响应格式错误或不可用时，不将该源标记为命中。
+在线搜索、评分、查询变体和回退顺序使用 H0308/taskbar-lyrics-displayer 提交 3fae9287dfb0636fc19a0df2587a1a59a54cf9bb 的移植，Go 实现直连接口与匹配，Rust 编排检索并接入现有显示时间轴。旧在线链路已删除，歌曲时长补取复用 taskbar 元数据接口。本地歌词、手动映射和播放器适配保留。具体顺序及验证边界见 docs/LYRICS-PORT.md。

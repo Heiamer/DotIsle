@@ -54,6 +54,11 @@ pub fn defaults() -> Value {
     defaults["AcrylicCardOpacity"] = json!(60.);
     defaults["AcrylicCapsuleFrost"] = json!(40.);
     defaults["AcrylicCapsuleOpacity"] = json!(0.);
+    defaults["LiquidGlassRefraction"] = json!(76.);
+    defaults["LiquidGlassDispersion"] = json!(46.);
+    defaults["LiquidGlassBlur"] = json!(8.);
+    defaults["LiquidGlassTint"] = json!(6.);
+    defaults["LiquidGlassSource"] = json!("Live");
     defaults["ExpandedMonetEnabled"] = json!(true);
     defaults["ExpandedCoverOverlay"] = json!(false);
     defaults["AcrylicAdjustTarget"] = json!("Card");
@@ -231,7 +236,7 @@ pub fn load(path: &std::path::Path) -> Value {
         s["ExpandedCoverOverlay"] = json!(false);
     }
     migrate_materials(&stored, &mut s);
-    if !["LightField", "Acrylic"].contains(&s["PopupMaterial"].as_str().unwrap_or("")) {
+    if !["LightField", "Acrylic", "LiquidGlass"].contains(&s["PopupMaterial"].as_str().unwrap_or("")) {
         s["PopupMaterial"] = json!("Acrylic");
     }
     if !s["TranslationButton"].is_boolean() {
@@ -242,12 +247,19 @@ pub fn load(path: &std::path::Path) -> Value {
         ("AcrylicCardOpacity", 60.),
         ("AcrylicCapsuleFrost", 40.),
         ("AcrylicCapsuleOpacity", 0.),
+        ("LiquidGlassRefraction", 76.),
+        ("LiquidGlassDispersion", 46.),
+        ("LiquidGlassBlur", 8.),
+        ("LiquidGlassTint", 6.),
     ] {
         s[key] = json!(s[key]
             .as_f64()
             .filter(|v| v.is_finite())
             .unwrap_or(fallback)
             .clamp(0., 100.));
+    }
+    if !["Live", "Wallpaper"].contains(&s["LiquidGlassSource"].as_str().unwrap_or("")) {
+        s["LiquidGlassSource"] = json!("Live");
     }
     s["IslandOpacity"] = json!(s["IslandOpacity"]
         .as_f64()
@@ -287,19 +299,19 @@ pub fn load(path: &std::path::Path) -> Value {
     if stored["SoundLibraryVersion"].as_u64().unwrap_or(0) < 2 {
         s = crate::sound::reset_builtin(&s);
     }
-    if !["LightField", "Acrylic"].contains(&s["ClassicCapsuleMaterial"].as_str().unwrap_or("")) {
+    if !["LightField", "Acrylic", "LiquidGlass"].contains(&s["ClassicCapsuleMaterial"].as_str().unwrap_or("")) {
         s["ClassicCapsuleMaterial"] = json!("LightField");
     }
-    if !["LightField", "Acrylic"].contains(&s["MiniMaterial"].as_str().unwrap_or("")) {
+    if !["LightField", "Acrylic", "LiquidGlass"].contains(&s["MiniMaterial"].as_str().unwrap_or("")) {
         s["MiniMaterial"] = json!("LightField");
     }
-    if !["LightField", "Acrylic"].contains(&s["MiniExpandedMaterial"].as_str().unwrap_or("")) {
+    if !["LightField", "Acrylic", "LiquidGlass"].contains(&s["MiniExpandedMaterial"].as_str().unwrap_or("")) {
         s["MiniExpandedMaterial"] = json!("LightField");
     }
     if !["Classic", "Mini"].contains(&s["IslandSizeMode"].as_str().unwrap_or("")) {
         s["IslandSizeMode"] = json!("Classic");
     }
-    if !["LightField", "Acrylic"].contains(&s["IslandMaterial"].as_str().unwrap_or("")) {
+    if !["LightField", "Acrylic", "LiquidGlass"].contains(&s["IslandMaterial"].as_str().unwrap_or("")) {
         s["IslandMaterial"] = json!("LightField");
     }
     for (key, fallback) in [
@@ -412,7 +424,8 @@ fn migrate_materials(stored: &Value, s: &mut Value) {
         "ClassicCapsuleMaterial",
         "PopupMaterial",
     ] {
-        if matches!(s[key].as_str(), Some("Glass" | "LiquidGlass")) {
+        // 仅迁移已废弃的初代 Glass，保留独立回归的液态玻璃 Beta（LiquidGlass）
+        if matches!(s[key].as_str(), Some("Glass")) {
             s[key] = json!("LightField");
         }
     }
@@ -468,6 +481,11 @@ pub fn is_acrylic_value(key: &str) -> bool {
 pub fn is_paint_setting(key: &str) -> bool {
     is_acrylic_value(key)
         || [
+            "LiquidGlassRefraction",
+            "LiquidGlassDispersion",
+            "LiquidGlassBlur",
+            "LiquidGlassTint",
+            "LiquidGlassSource",
             "CoverBackground",
             "ExpandedMonetEnabled",
             "ExpandedCoverOverlay",
@@ -507,7 +525,11 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         "AcrylicCardFrost"
         | "AcrylicCardOpacity"
         | "AcrylicCapsuleFrost"
-        | "AcrylicCapsuleOpacity" => Some((0., 100.)),
+        | "AcrylicCapsuleOpacity"
+        | "LiquidGlassRefraction"
+        | "LiquidGlassDispersion"
+        | "LiquidGlassBlur"
+        | "LiquidGlassTint" => Some((0., 100.)),
         _ => None,
     };
     let value = if key == "IslandDynamicSeedColor" || key == "ControlCenterCustomColor" {
@@ -579,20 +601,26 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         json!(s)
     } else if key == "MiniMaterial" {
         let s = value.as_str().ok_or("invalid mini material")?;
-        if !["LightField", "Acrylic"].contains(&s) {
+        if !["LightField", "Acrylic", "LiquidGlass"].contains(&s) {
             return Err("invalid mini material".into());
         }
         json!(s)
     } else if key == "ClassicCapsuleMaterial" {
         let s = value.as_str().ok_or("invalid capsule material")?;
-        if !["LightField", "Acrylic"].contains(&s) {
+        if !["LightField", "Acrylic", "LiquidGlass"].contains(&s) {
             return Err("invalid capsule material".into());
         }
         json!(s)
     } else if key == "IslandMaterial" || key == "MiniExpandedMaterial" || key == "PopupMaterial" {
         let s = value.as_str().ok_or("invalid material")?;
-        if !["LightField", "Acrylic"].contains(&s) {
+        if !["LightField", "Acrylic", "LiquidGlass"].contains(&s) {
             return Err("invalid material".into());
+        }
+        json!(s)
+    } else if key == "LiquidGlassSource" {
+        let s = value.as_str().ok_or("invalid liquid glass source")?;
+        if !["Live", "Wallpaper"].contains(&s) {
+            return Err("invalid liquid glass source".into());
         }
         json!(s)
     }
@@ -996,13 +1024,13 @@ mod unified_osd_tests {
         assert_eq!(d["IslandSizeMode"], "Classic");
         assert_eq!(d["IslandMaterial"], "LightField");
         assert_eq!(d["MiniMaterial"], "LightField");
-        for value in ["LightField", "Acrylic"] {
+        for value in ["LightField", "Acrylic", "LiquidGlass"] {
             let s =
                 validate_setting(json!({"key":"MiniMaterial","value":value,"settings":d})).unwrap();
             assert_eq!(s["MiniMaterial"], value);
             assert_eq!(s["IslandMaterial"], "LightField");
         }
-        for value in [json!(true), json!("glass"), json!("Glass"), json!("LiquidGlass")] {
+        for value in [json!(true), json!("glass"), json!("Glass")] {
             assert!(
                 validate_setting(json!({"key":"MiniMaterial","value":value,"settings":d})).is_err()
             );
@@ -1215,7 +1243,7 @@ mod classic_capsule_tests {
     fn capsule_material_is_independent_and_validated() {
         let d = defaults();
         assert_eq!(d["ClassicCapsuleMaterial"], "LightField");
-        for material in ["LightField", "Acrylic"] {
+        for material in ["LightField", "Acrylic", "LiquidGlass"] {
             let s = validate_setting(
                 json!({"key":"ClassicCapsuleMaterial","value":material,"settings":d}),
             )
@@ -1229,7 +1257,6 @@ mod classic_capsule_tests {
             json!("Black"),
             json!("glass"),
             json!("Glass"),
-            json!("LiquidGlass"),
         ] {
             assert!(validate_setting(
                 json!({"key":"ClassicCapsuleMaterial","value":value,"settings":d})
@@ -1296,7 +1323,7 @@ mod expanded_material_tests {
                 );
             }
         }
-        for invalid in [json!(true), json!("glass"), json!("Glass"), json!("LiquidGlass"), json!("")] {
+        for invalid in [json!(true), json!("glass"), json!("Glass"), json!("")] {
             assert!(validate_setting(
                 json!({"key":"MiniExpandedMaterial","value":invalid,"settings":settings})
             )
@@ -1313,7 +1340,7 @@ mod expanded_material_tests {
         for (stored, mini) in [
             (
                 json!({"IslandMaterial":"LiquidGlass","MiniMaterial":"LiquidGlass","ClassicCapsuleMaterial":"LiquidGlass","PopupMaterial":"Glass","GlassRefractionEnabled":true,"MiniAutoContrast":true}),
-                "LightField",
+                "LiquidGlass",
             ),
             (json!({"MiniMaterial":"Classic"}), "LightField"),
             (
@@ -1332,8 +1359,10 @@ mod expanded_material_tests {
             assert!(updated.get("GlassRefractionEnabled").is_none());
             assert!(updated.get("MiniAutoContrast").is_none());
             for key in ["IslandMaterial", "MiniMaterial", "ClassicCapsuleMaterial", "PopupMaterial"] {
-                if matches!(stored[key].as_str(), Some("Glass" | "LiquidGlass")) {
-                    assert_eq!(updated[key], "LightField");
+                match stored[key].as_str() {
+                    Some("Glass") => assert_eq!(updated[key], "LightField"),
+                    Some("LiquidGlass") => assert_eq!(updated[key], "LiquidGlass"),
+                    _ => {}
                 }
             }
             std::fs::write(&path, serde_json::to_vec(&updated).unwrap()).unwrap();
@@ -1342,24 +1371,31 @@ mod expanded_material_tests {
         let _ = std::fs::remove_file(path);
     }
     #[test]
-    fn both_capsules_accept_two_materials() {
+    fn both_capsules_accept_three_materials_and_liquid_glass_tuning() {
         let mut settings = defaults();
         assert_eq!(settings["ClassicCapsuleMaterial"], "LightField");
         assert_eq!(settings["MiniMaterial"], "LightField");
-        for key in ["ClassicCapsuleMaterial", "MiniMaterial"] {
-            for value in ["LightField", "Acrylic"] {
+        for key in ["ClassicCapsuleMaterial", "MiniMaterial", "IslandMaterial"] {
+            for value in ["LightField", "Acrylic", "LiquidGlass"] {
                 settings =
                     validate_setting(json!({"key":key,"value":value,"settings":settings})).unwrap();
                 assert_eq!(settings[key], value);
             }
-            for invalid in [json!(true), json!("glass"), json!("Glass"), json!("LiquidGlass"), json!("")] {
+            for invalid in [json!(true), json!("glass"), json!("Glass"), json!("")] {
                 assert!(
                     validate_setting(json!({"key":key,"value":invalid,"settings":settings}))
                         .is_err()
                 );
             }
         }
-        assert_eq!(settings["IslandMaterial"], "LightField");
+        for k in ["LiquidGlassRefraction", "LiquidGlassDispersion", "LiquidGlassBlur", "LiquidGlassTint"] {
+            let ok = validate_setting(json!({"key":k,"value":55.,"settings":settings})).unwrap();
+            assert_eq!(ok[k], 55.);
+            assert!(validate_setting(json!({"key":k,"value":105.,"settings":settings})).is_err());
+        }
+        let src = validate_setting(json!({"key":"LiquidGlassSource","value":"Wallpaper","settings":settings})).unwrap();
+        assert_eq!(src["LiquidGlassSource"], "Wallpaper");
+        assert!(validate_setting(json!({"key":"LiquidGlassSource","value":"Invalid","settings":settings})).is_err());
     }
 }
 

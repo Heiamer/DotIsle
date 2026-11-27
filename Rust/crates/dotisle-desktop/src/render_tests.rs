@@ -188,3 +188,442 @@ fn gpu_captures_empty_large_todo_actions() {
         .unwrap();
     eprintln!("captures: {}", dir.display());
 }
+
+#[test]
+fn allegro_new_kinds_photo_dropzone_and_system_pro_render_and_stay_inside() {
+    let mut m = model();
+    m.native_state = json!({
+        "systemMetrics": { "cpuPercent": 32.5, "memoryPercent": 58.0, "gpuPercent": 24.0 }
+    });
+    let mut text = Text::new_lazy_japanese();
+
+    let placements: Vec<dotisle_domain::desktop_widgets::Placement> = serde_json::from_value(json!([
+        { "id": "pf1", "kind": "photoFrame", "size": "small", "style": "original", "material": "lumen", "x": 40, "y": 40, "config": { "caption": "2026 桌搭" } },
+        { "id": "dz1", "kind": "dropzone", "size": "medium", "style": "original", "material": "liquidGlass", "x": 240, "y": 40 },
+        { "id": "sp1", "kind": "systemPro", "size": "medium", "style": "original", "material": "acrylic", "x": 40, "y": 240 }
+    ]))
+    .unwrap();
+    m.desktop_widgets.items = placements.clone();
+
+    let drop_items = vec![allegro::efficiency::DropItem {
+        path: "C:\\temp\\notes.md".into(),
+        name: "notes.md".into(),
+        tag: "DOC",
+        size_label: "4.2 KB".into(),
+    }];
+    let mut pro = allegro::telemetry::ProTelemetry::new();
+    pro.cpu_history.push(28.0);
+    pro.cpu_history.push(32.5);
+    pro.gpu_history.push(20.0);
+    pro.gpu_history.push(24.0);
+    pro.net_rx_kbps = Some(512.0);
+    pro.net_tx_kbps = Some(48.0);
+
+    for (p, dz) in placements
+        .iter()
+        .zip([&[][..], &drop_items[..], &[][..]])
+    {
+        let (w, h) = p.dimensions();
+        let ctx = desktop_cards::AllegroCardContext {
+            placement: p,
+            width: w,
+            height: h,
+            pointer: (-1., -1.),
+            menu: false,
+            scroll: 0.,
+            todo_edit: None,
+            note_edit: None,
+            time: 0.,
+            media_position: None,
+            wallpaper_crop: None,
+            wallpaper_luma: None,
+            dropzone_items: dz,
+            photo_image: None,
+            photo_meta: (0, 0),
+            pro: Some(&pro),
+            stack_info: None,
+            quote_index: 0,
+            in_sidebar: false,
+        };
+        let view = desktop_cards::render_allegro_card(&m, &mut text, &ctx);
+        assert!(!view.scene.is_empty());
+        assert_inside(&view, w, h);
+        if p.kind == Kind::Dropzone {
+            assert!(view.hits.iter().any(|h| matches!(h.action, Action::DropzoneClear(_))));
+            assert!(view.hits.iter().any(|h| matches!(h.action, Action::DropzoneOpen(_, 0))));
+        }
+    }
+}
+
+#[test]
+fn allegro_three_materials_and_extended_menu() {
+    let m = model();
+    let mut text = Text::new_lazy_japanese();
+    for mat in allegro::theme::WidgetMaterial::ALL {
+        let p = dotisle_domain::desktop_widgets::Placement {
+            id: "w-menu".into(),
+            kind: Kind::Clock,
+            size: Size::Medium,
+            style: dotisle_domain::desktop_widgets::Style::Original,
+            config: Default::default(),
+            x: 0,
+            y: 0,
+            width: 0.,
+            height: 0.,
+            hidden: false,
+            revision: 1,
+            material: mat.as_str().into(),
+            opacity: 0.9,
+            stack_id: "stack-1".into(),
+            stack_order: 0,
+        };
+        let (w, h) = p.dimensions();
+        let ctx = desktop_cards::AllegroCardContext {
+            placement: &p,
+            width: w,
+            height: h,
+            pointer: (-1., -1.),
+            menu: true,
+            scroll: 0.,
+            todo_edit: None,
+            note_edit: None,
+            time: 0.,
+            media_position: None,
+            wallpaper_crop: None,
+            wallpaper_luma: Some(0.85),
+            dropzone_items: &[],
+            photo_image: None,
+            photo_meta: (0, 0),
+            pro: None,
+            stack_info: Some((0, 2)),
+            quote_index: 0,
+            in_sidebar: false,
+        };
+        let view = desktop_cards::render_allegro_card(&m, &mut text, &ctx);
+        assert_inside(&view, w, h);
+        assert!(!view.hits.iter().any(|h| matches!(h.action, Action::WidgetStyle(..))));
+        assert!(view.hits.iter().any(|h| matches!(h.action, Action::WidgetMaterial(..))));
+        assert!(view.hits.iter().any(|h| matches!(h.action, Action::StackUnpack(_))));
+        assert!(view.hits.iter().any(|h| matches!(h.action, Action::StackNext(_))));
+        assert!(view.hits.iter().any(|h| matches!(h.action, Action::StackPrev(_))));
+    }
+}
+
+#[test]
+fn allegro_note_checkboxes_and_inline_edit_hits() {
+    let mut m = model();
+    let p: dotisle_domain::desktop_widgets::Placement =
+        serde_json::from_value(json!({
+            "id": "note1",
+            "kind": "note",
+            "size": "large",
+            "x": 0,
+            "y": 0,
+            "config": { "text": "- [ ] 买咖啡\n- [x] 写代码" }
+        }))
+        .unwrap();
+    m.desktop_widgets.items = vec![p.clone()];
+    let mut text = Text::new_lazy_japanese();
+    let (w, h) = p.dimensions();
+    let ctx = desktop_cards::AllegroCardContext {
+        placement: &p,
+        width: w,
+        height: h,
+        pointer: (-1., -1.),
+        menu: false,
+        scroll: 0.,
+        todo_edit: None,
+        note_edit: None,
+        time: 0.,
+        media_position: None,
+        wallpaper_crop: None,
+        wallpaper_luma: None,
+        dropzone_items: &[],
+        photo_image: None,
+        photo_meta: (0, 0),
+        pro: None,
+        stack_info: None,
+        quote_index: 0,
+        in_sidebar: false,
+    };
+    let view = desktop_cards::render_allegro_card(&m, &mut text, &ctx);
+    assert_inside(&view, w, h);
+    assert!(view.hits.iter().any(|h| matches!(h.action, Action::NoteToggleCheck(ref id, 0) if id == "note1")));
+    assert!(view.hits.iter().any(|h| matches!(h.action, Action::NoteToggleCheck(ref id, 1) if id == "note1")));
+    assert!(view.hits.iter().any(|h| matches!(h.action, Action::NoteInlineEdit(ref id) if id == "note1")));
+
+    let edit = allegro::efficiency::NoteEdit::new("note1", "", "编辑中");
+    let ctx_edit = desktop_cards::AllegroCardContext {
+        note_edit: Some(&edit),
+        ..ctx
+    };
+    let view_edit = desktop_cards::render_allegro_card(&m, &mut text, &ctx_edit);
+    assert_inside(&view_edit, w, h);
+    assert!(view_edit.hits.iter().any(|h| matches!(h.action, Action::NoteSave)));
+    assert!(view_edit.hits.iter().any(|h| matches!(h.action, Action::NoteCancel)));
+}
+
+#[test]
+fn allegro_all_26_kinds_render_cleanly_in_all_three_materials() {
+    let mut m = model();
+    m.native_state = json!({
+        "systemMetrics": {
+            "cpuPercent": 36.0,
+            "memoryPercent": 62.0,
+            "gpuPercent": 28.0,
+            "batteryPercent": 84,
+            "externalPower": true,
+            "wirelessDevices": [
+                { "kind": "headphones", "name": "AirPods Pro", "batteryPercent": 88, "connected": true }
+            ]
+        },
+        "screenTime": { "todayMs": 5400000, "yesterdayMs": 4200000, "week": [1000, 2000, 3000, 4000, 5000, 6000, 5400000] },
+        "widgetData": {
+            "focusStats": { "todayMs": 2700000, "week": [600000, 1200000, 900000, 1800000, 1500000, 2100000, 2700000] },
+            "weather1": { "temperature": 22.0, "city": "上海", "high": 25.0, "low": 16.0, "stale": false },
+            "storage1": { "free": 128000000000.0, "total": 512000000000.0 },
+            "world1": { "clock": "09:41", "city": "东京", "date": "2026-11-27 星期五" }
+        }
+    });
+    let mut text = Text::new_lazy_japanese();
+    for kind in Kind::ALL {
+        for size in Size::ALL {
+            for mat in allegro::theme::WidgetMaterial::ALL {
+                let captions: &[&str] = if kind == Kind::AppFolder { &["4", "9"] } else { &["2026 Studio"] };
+                for cap in captions {
+                    let id = match kind {
+                        Kind::Weather => "weather1",
+                        Kind::Storage => "storage1",
+                        Kind::WorldClock => "world1",
+                        _ => "w-all",
+                    };
+                    let p = dotisle_domain::desktop_widgets::Placement {
+                        id: id.into(),
+                        kind,
+                        size,
+                        style: dotisle_domain::desktop_widgets::Style::Original,
+                        config: serde_json::from_value(json!({
+                            "date": "2027-01-01",
+                            "deadline": "2027-01-01 09:00",
+                            "city": "上海",
+                            "text": "- [ ] 晨间梳理\n- [x] 完成重构",
+                            "target": "https://apple.com",
+                            "title": "捷径",
+                            "caption": cap
+                        }))
+                        .unwrap(),
+                        x: 0,
+                        y: 0,
+                        width: 0.,
+                        height: 0.,
+                        hidden: false,
+                        revision: 1,
+                        material: mat.as_str().into(),
+                        opacity: 0.92,
+                        stack_id: "".into(),
+                        stack_order: 0,
+                    };
+                    m.desktop_widgets.items = vec![p.clone()];
+                    let (w, h) = p.dimensions();
+                    let ctx = desktop_cards::AllegroCardContext {
+                        placement: &p,
+                        width: w,
+                        height: h,
+                        pointer: (-1., -1.),
+                        menu: false,
+                        scroll: 0.,
+                        todo_edit: None,
+                        note_edit: None,
+                        time: 1.0,
+                        media_position: Some(0.4),
+                        wallpaper_crop: None,
+                        wallpaper_luma: Some(0.82),
+                        dropzone_items: &[],
+                        photo_image: None,
+                        photo_meta: (0, 0),
+                        pro: None,
+                        stack_info: None,
+                        quote_index: 2,
+                        in_sidebar: false,
+                    };
+                    let view = desktop_cards::render_allegro_card(&m, &mut text, &ctx);
+                    assert!(!view.scene.is_empty(), "{:?} {:?} {:?} empty scene", kind, size, mat);
+                    assert_inside(&view, w, h);
+                    if kind == Kind::AppFolder {
+                        let launches = view.hits.iter().filter(|h| matches!(h.action, Action::AppFolderLaunch(..))).count();
+                        let expected = if *cap == "9" { 9 } else { 4 };
+                        assert_eq!(launches, expected, "appFolder {:?} cap={cap} launches", size);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn apple_context_menu_exposes_sizes_materials_and_actions() {
+    let mut text = Text::new_lazy_japanese();
+    let s = dotisle_domain::monet::scheme(0x0088FF, false);
+    let mut scene = vello::Scene::new();
+    let mut ui = crate::widgets::Ui::new(
+        &mut scene,
+        &mut text,
+        s,
+        (-1., -1.),
+        crate::draw::rect(0., 0., 400., 400.),
+    );
+    let p = dotisle_domain::desktop_widgets::Placement {
+        id: "ctx-1".into(),
+        kind: Kind::AnalogClock,
+        size: Size::Medium,
+        style: dotisle_domain::desktop_widgets::Style::Original,
+        config: Default::default(),
+        x: 0,
+        y: 0,
+        width: 0.,
+        height: 0.,
+        hidden: false,
+        revision: 1,
+        material: "liquidGlass".into(),
+        opacity: 0.9,
+        stack_id: "".into(),
+        stack_order: 0,
+    };
+    let panel = desktop_cards::paint_apple_context_menu(&mut ui, &p, (20., 30.), false);
+    assert!((panel.width() - desktop_cards::CONTEXT_MENU_W).abs() < 0.01);
+    assert!((panel.height() - desktop_cards::CONTEXT_MENU_H).abs() < 0.01);
+    for sz in Size::ALL {
+        assert!(ui.hits.iter().any(|h| matches!(h.action, Action::WidgetResize(ref id, s2) if id == "ctx-1" && s2 == sz)));
+    }
+    for mat in allegro::theme::WidgetMaterial::ALL {
+        assert!(ui.hits.iter().any(|h| matches!(h.action, Action::WidgetMaterial(ref id, ref m2) if id == "ctx-1" && m2 == mat.as_str())));
+    }
+    assert!(ui.hits.iter().any(|h| matches!(h.action, Action::WidgetConfigure(ref id) if id == "ctx-1")));
+    assert!(ui.hits.iter().any(|h| matches!(h.action, Action::EditModeToggle)));
+    assert!(ui.hits.iter().any(|h| matches!(h.action, Action::WidgetHide(ref id) if id == "ctx-1")));
+    assert!(ui.hits.iter().any(|h| matches!(h.action, Action::WidgetRemove(ref id) if id == "ctx-1")));
+
+    // 应用文件夹右键应露出 4/9 宫格直达切换操作
+    let mut ui2 = crate::widgets::Ui::new(
+        &mut scene,
+        &mut text,
+        s,
+        (-1., -1.),
+        crate::draw::rect(0., 0., 400., 400.),
+    );
+    let mut p_folder = p;
+    p_folder.id = "folder-1".into();
+    p_folder.kind = Kind::AppFolder;
+    let _ = desktop_cards::paint_apple_context_menu(&mut ui2, &p_folder, (20., 30.), false);
+    assert!(ui2.hits.iter().any(|h| matches!(h.action, Action::AppFolderToggleGrid(ref id) if id == "folder-1")));
+}
+
+#[test]
+fn stage_overlay_renders_right_sidebar_blocks_edit_and_search_within_bounds() {
+    let m = model();
+    let mut text = Text::new_lazy_japanese();
+    let mut apps = allegro::stage::AppIndex::default();
+    apps.ensure_loaded();
+    let mut cb = allegro::stage::ClipboardHistory::default();
+    cb.push_text("cargo build --release");
+    let quotes = std::collections::HashMap::new();
+    let metrics = crate::stage_overlay::sidebar_layout_metrics(1600.);
+    let win_size = (metrics.win_w, 960.);
+
+    for dark in [false, true] {
+        // 1. 独立右侧丝绸雾面侧边栏默认态
+        let mut scene = vello::Scene::new();
+        let mut stage = allegro::stage::StageState::default();
+        stage.ensure_sidebar_loaded(None, true);
+        let out = crate::stage_overlay::paint_stage_overlay(
+            &mut scene,
+            &mut text,
+            &m,
+            win_size,
+            metrics,
+            (-1., -1.),
+            dark,
+            1.0,
+            0.2,
+            None,
+            None,
+            &stage,
+            &[],
+            &cb.items,
+            None,
+            &quotes,
+        );
+        assert!(out.panel.x0 >= 0. && out.panel.y0 >= 0. && out.panel.x1 <= win_size.0 && out.panel.y1 <= win_size.1);
+        assert!(!out.card_slots.is_empty());
+        assert!(out.hits.iter().any(|h| matches!(h.action, Action::SidebarFocusSearch)));
+        assert!(out.hits.iter().any(|h| matches!(h.action, Action::SidebarToggleEdit)));
+        assert!(out.hits.iter().any(|h| matches!(h.action, Action::SidebarToggleAdd)));
+        assert!(out.hits.iter().any(|h| matches!(h.action, Action::SidebarClose)));
+        assert!(!out.hits.iter().any(|h| matches!(h.action, Action::WidgetRemove(_) | Action::WidgetResize(..))));
+
+        // 2. 编辑区块态：展示添加抽屉、删除角标、尺寸轮切与前移操作
+        let mut stage_edit = allegro::stage::StageState::default();
+        stage_edit.ensure_sidebar_loaded(None, true);
+        stage_edit.sidebar_edit = true;
+        let out_edit = crate::stage_overlay::paint_stage_overlay(
+            &mut scene,
+            &mut text,
+            &m,
+            win_size,
+            metrics,
+            (-1., -1.),
+            dark,
+            1.0,
+            0.3,
+            None,
+            None,
+            &stage_edit,
+            &[],
+            &cb.items,
+            None,
+            &quotes,
+        );
+        assert!(out_edit.hits.iter().any(|h| matches!(h.action, Action::SidebarAddWidget(..))));
+        assert!(out_edit.hits.iter().any(|h| matches!(h.action, Action::SidebarRemoveWidget(_))));
+        assert!(out_edit.hits.iter().any(|h| matches!(h.action, Action::SidebarCycleSize(_))));
+        assert!(out_edit.hits.iter().any(|h| matches!(h.action, Action::SidebarMove(_, -1))));
+
+        // 3. Spotlight 搜索计算态
+        let mut s_search = allegro::stage::StageState::default();
+        s_search.ensure_sidebar_loaded(None, true);
+        s_search.search_focused = true;
+        s_search.query = "128*36".into();
+        let results = allegro::stage::resolve_stage_results(&s_search.query, &apps);
+        let out_search = crate::stage_overlay::paint_stage_overlay(
+            &mut scene,
+            &mut text,
+            &m,
+            win_size,
+            metrics,
+            (-1., -1.),
+            dark,
+            1.0,
+            0.4,
+            None,
+            None,
+            &s_search,
+            &results,
+            &cb.items,
+            None,
+            &quotes,
+        );
+        assert!(out_search.hits.iter().any(|h| matches!(h.action, Action::StageCopyText(ref s) if s == "4608")));
+    }
+
+    // 4. 侧边栏专属右键菜单仅触发 Sidebar* 动作
+    let s = dotisle_domain::monet::scheme(0x0088FF, false);
+    let mut scene = vello::Scene::new();
+    let mut ui = crate::widgets::Ui::new(&mut scene, &mut text, s, (-1., -1.), crate::draw::rect(0., 0., 400., 400.));
+    let sb_item = allegro::stage::default_sidebar_widgets().remove(0);
+    let _ = desktop_cards::paint_sidebar_context_menu(&mut ui, &sb_item, (20., 20.), false);
+    for sz in Size::ALL {
+        assert!(ui.hits.iter().any(|h| matches!(h.action, Action::SidebarSetSize(_, s2) if s2 == sz)));
+    }
+    assert!(ui.hits.iter().any(|h| matches!(h.action, Action::SidebarRemoveWidget(_))));
+    assert!(!ui.hits.iter().any(|h| matches!(h.action, Action::WidgetRemove(_))));
+}

@@ -1,12 +1,12 @@
 # DotIsle V3: shared domain, media backend, one Vello application.
 [workspace]
 resolver = "2"
-members = ["crates/dotisle-lyrics", "crates/dotisle-widgets", "crates/dotisle-glow", "crates/dotisle-themes", "crates/dotisle-sound", "crates/dotisle-music", "crates/dotisle-osd", "crates/dotisle-devices", "crates/dotisle-notifications", "crates/dotisle-automation", "crates/dotisle-history", "crates/dotisle-todos", "crates/dotisle-module-api", "crates/dotisle-module-storage", "crates/dotisle-focus", "crates/dotisle-scene", "crates/lyric-core", "crates/lyric-backend", "crates/dotisle-domain", "crates/dotisle-desktop", "crates/dotisle-render", "crates/lyric-native", "crates/lyric-archive", "crates/lyric-bootstrap"]
+members = ["crates/dotisle-lyrics", "crates/dotisle-widgets", "crates/dotisle-glow", "crates/dotisle-themes", "crates/dotisle-sound", "crates/dotisle-music", "crates/dotisle-osd", "crates/dotisle-devices", "crates/dotisle-notifications", "crates/dotisle-automation", "crates/dotisle-history", "crates/dotisle-todos", "crates/dotisle-module-api", "crates/dotisle-module-storage", "crates/dotisle-focus", "crates/dotisle-scene", "crates/lyric-core", "crates/lyric-backend", "crates/dotisle-domain", "crates/allegro", "crates/dotisle-desktop", "crates/dotisle-render", "crates/lyric-native", "crates/lyric-archive", "crates/lyric-bootstrap"]
 # Vendored third-party crate: built as a path dependency, its own tests stay out of `cargo test --workspace`.
 exclude = ["vendor/material-colors-0.4.2", "vendor/wgpu-hal-29.0.4", "vendor/vello_hybrid-0.2.0"]
 
 [workspace.package]
-version = "5.2.6"
+version = "5.2.8"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"

@@ -130,7 +130,7 @@ pub fn manifest_digest(manifest: &str, version: &str) -> Option<String> {
     asset_digest(manifest, &format!("LyricIsland-{version}-Portable.zip"))
 }
 
-pub fn mirror_pair(target: &Path, version: &str, host: &str, key: &str) -> Result<(String, String)> {
+fn mirror_download(target: &Path, version: &str, host: &str, key: &str) -> Result<(String, String, String)> {
     let config = target.join("Assets/UpdateSources.json");
     if !config.is_file() { return Err(Error("未配置国内更新源".into())); }
     let settings: Value = paths::read_json(&config)?;
@@ -148,7 +148,7 @@ pub fn mirror_pair(target: &Path, version: &str, host: &str, key: &str) -> Resul
     let direct = |name: &str| release["assets"].as_array().and_then(|items| items.iter().find(|item| item["name"].as_str() == Some(name))).and_then(|item| item["browser_download_url"].as_str()).map(str::to_owned);
     for (manifest_name, package_name) in &pairs {
         if let (Some(manifest), Some(package)) = (direct(manifest_name), direct(package_name)) {
-            return Ok((manifest, package));
+            return Ok((manifest, package, package_name.to_owned()));
         }
     }
     let id = release["id"].as_u64().filter(|value| *value > 0).ok_or_else(|| Error("国内发行标识无效".into()))?;
@@ -162,9 +162,13 @@ pub fn mirror_pair(target: &Path, version: &str, host: &str, key: &str) -> Resul
     for (manifest_name, package_name) in &pairs {
         let manifest = listed.iter().find(|(name, _)| name == manifest_name).map(|(_, url)| url.clone());
         let package = listed.iter().find(|(name, _)| name == package_name).map(|(_, url)| url.clone());
-        if let (Some(manifest), Some(package)) = (manifest, package) { return Ok((manifest, package)); }
+        if let (Some(manifest), Some(package)) = (manifest, package) { return Ok((manifest, package, package_name.to_owned())); }
     }
     Err(Error("国内源缺少更新附件".into()))
+}
+
+pub fn mirror_pair(target:&Path,version:&str,host:&str,key:&str)->Result<(String,String)>{
+ let (manifest,package,_)=mirror_download(target,version,host,key)?;Ok((manifest,package))
 }
 
 pub fn domestic_pair(target: &Path, version: &str) -> Result<(String, String)> {
@@ -175,7 +179,25 @@ pub fn gitcode_pair(target: &Path, version: &str) -> Result<(String, String)> {
     mirror_pair(target, version, "gitcode.com", "gitcodeRepository")
 }
 
-fn primary_pair(version: &str, _preferred: &Option<(String, String)>) -> (String, String) {
+fn package_name(url:&str,manifest:&str,version:&str,hint:Option<&str>)->Result<String>{
+ let name=url.split('?').next().unwrap_or(url).rsplit('/').next().unwrap_or("");
+ let expected=[format!("DotIsle-{version}-Portable.7z"),format!("LyricIsland-{version}-Portable.zip")];
+ if let Some(hint)=hint.filter(|h|!h.is_empty()){
+  if !expected.iter().any(|valid|valid==hint)||asset_digest(manifest,hint).is_none()||name!="download"&&name!=hint{return Err(Error("更新附件名称与校验清单不符".into()));}
+  return Ok(hint.to_owned());
+ }
+ if name=="download"{
+  let listed=expected.iter().filter(|name|asset_digest(manifest,name).is_some()).collect::<Vec<_>>();
+  // An opaque URL cannot identify which of two different archives was selected.
+  if listed.len()==1{return Ok(listed[0].to_string());}
+  return Err(Error("更新附件名称不明确，请重新检查更新".into()));
+ }
+ if expected.iter().any(|valid|valid==name){return Ok(name.to_owned());}
+ Err(Error("更新包类型或版本无效".into()))
+}
+
+fn primary_pair(version: &str, preferred: &Option<(String, String)>) -> (String, String) {
+    if let Some(pair) = preferred { return pair.clone(); }
     let prefix = "https://github.com/Heiamer/DotIsle/releases/download/";
     let root = format!("{prefix}v{version}/DotIsle-{version}");
     (
@@ -184,35 +206,29 @@ fn primary_pair(version: &str, _preferred: &Option<(String, String)>) -> (String
     )
 }
 
-fn prepare_download(target: &Path, version: &str, scratch: &Path, preferred: Option<(String, String)>, reporter: &mut Reporter) -> Result<Option<crate::module_update::Prepared>> {
+fn prepare_download(target: &Path, version: &str, scratch: &Path, preferred: Option<(String, String)>, preferred_name:Option<&str>, reporter: &mut Reporter) -> Result<Option<crate::module_update::Prepared>> {
     let primary = primary_pair(version, &preferred);
     let mut errors = Vec::new();
     let mut tried = HashSet::new();
-let mut pinned: Option<(String, String)> = None;
-    let mut candidates: Vec<(String, String)> = vec![primary.clone()];
-    if let Some(pair) = preferred.clone() { candidates.push(pair); }
-    for (host, key, label) in [("gitee.com", "giteeRepository", "Gitee"), ("gitcode.com", "gitcodeRepository", "GitCode")] {
-        match mirror_pair(target, version, host, key) {
-            Ok(pair) => candidates.push(pair),
-            Err(error) => errors.push(format!("{label}：{error}")),
-        }
-    }
-    for (step, pair) in candidates.iter().enumerate() {
+    let mut pinned: Option<(String, String)> = None;
+    // Resolve fallback metadata only after the selected source actually fails.
+    for step in 0..4 {
+        let pair = match step {
+            0 => (primary.0.clone(),primary.1.clone(),preferred_name.unwrap_or("").to_owned()),
+            1 | 2 => {
+                let (host, key, label) = if step == 1 { ("gitcode.com", "gitcodeRepository", "GitCode") } else { ("gitee.com", "giteeRepository", "Gitee") };
+                match mirror_download(target, version, host, key) { Ok(pair) => pair, Err(error) => { errors.push(format!("{label}：{error}")); continue; } }
+            },
+            _ => {let p=primary_pair(version, &None);(p.0,p.1,String::new())},
+        };
         let (manifest_url, zip_url) = (pair.0.clone(), pair.1.clone());
         if !tried.insert(manifest_url.clone()) { continue; }
         reporter.report(if step == 0 { "downloading" } else { "switching" }, 0, None, if step == 0 { "开始下载" } else { "切换到备用更新源" }, true)?;
         let attempt = (|| -> Result<Option<crate::module_update::Prepared>> {
             if !official_url(&manifest_url) || !official_url(&zip_url) { return Err(Error("更新下载地址无效".into())); }
-            let asset_name = if zip_url.ends_with("/download") {
-                format!("LyricIsland-{version}-Portable.zip")
-            } else {
-                zip_url.rsplit('/').next().unwrap_or("").to_owned()
-            };
-            if !(asset_name.ends_with(".7z") || asset_name.ends_with(".zip")) {
-                return Err(Error("更新包类型无效".into()));
-            }
             let manifest = http::get_bytes(&manifest_url, 64 * 1024)?;
             let manifest = String::from_utf8_lossy(&manifest);
+            let asset_name = package_name(&zip_url, &manifest, version, Some(&pair.2))?;
             let expected = asset_digest(&manifest, &asset_name).ok_or_else(|| Error("校验清单缺少更新包".into()))?;
             if let Some((pinned_name, pinned_hash)) = &pinned {
                 if pinned_name == &asset_name && pinned_hash != &expected {
@@ -261,11 +277,20 @@ let mut pinned: Option<(String, String)> = None;
 #[cfg(test)]
 mod source_priority_tests{
  use super::*;
- #[test]fn github_download_is_primary_even_when_the_candidate_came_from_gitee(){
+ #[test]fn opaque_mirror_url_uses_the_exact_selected_package(){
+  let hash="a".repeat(64);let manifest=format!("{hash}  DotIsle-5.2.7-Portable.7z\n{hash}  LyricIsland-5.2.7-Portable.zip");
+  let url="https://gitcode.com/api/v5/repos/a/b/releases/1/attach_files/2/download";
+  assert_eq!(package_name(url,&manifest,"5.2.7",Some("DotIsle-5.2.7-Portable.7z")).unwrap(),"DotIsle-5.2.7-Portable.7z");
+  assert!(package_name(url,&manifest,"5.2.7",None).is_err());
+  assert!(package_name(url,&manifest,"5.2.7",Some("../evil.zip")).is_err());
+  assert!(package_name("https://github.com/a/DotIsle-5.2.7-Portable.7z",&manifest,"5.2.7",Some("LyricIsland-5.2.7-Portable.zip")).is_err());
+ }
+ #[test]fn selected_download_source_and_exact_pair_are_preserved(){
   let domestic=Some(("https://gitee.com/mirror/checksum".into(),"https://gitee.com/mirror/archive".into()));
-  assert_eq!(primary_pair("5.0.3-rc3",&domestic),("https://github.com/Heiamer/DotIsle/releases/download/v5.0.3-rc3/DotIsle-5.0.3-rc3-SHA256.txt".into(),"https://github.com/Heiamer/DotIsle/releases/download/v5.0.3-rc3/DotIsle-5.0.3-rc3-Portable.7z".into()));
+  assert_eq!(primary_pair("5.0.3-rc3",&domestic),domestic.clone().unwrap());
   let exact=Some(("https://github.com/Heiamer/DotIsle/releases/download/v5.0.3-rc3/custom-hash".into(),"https://github.com/Heiamer/DotIsle/releases/download/v5.0.3-rc3/custom-zip".into()));
-  assert_eq!(primary_pair("5.0.3-rc3",&exact).1,"https://github.com/Heiamer/DotIsle/releases/download/v5.0.3-rc3/DotIsle-5.0.3-rc3-Portable.7z");
+  assert_eq!(primary_pair("5.0.3-rc3",&exact),exact.unwrap());
+  assert!(primary_pair("5.2.6",&None).1.ends_with("DotIsle-5.2.6-Portable.7z"));
  }
  #[test]fn official_hosts_include_gitcode_and_reject_lookalikes(){
   assert!(official_url("https://gitcode.com/Heiamer/Dotisle/releases/download/v5.2.3/DotIsle-5.2.3-Portable.7z"));
@@ -519,7 +544,7 @@ pub fn run(args: Vec<String>) -> i32 {
     let mut scratch: Option<PathBuf> = None;
     let mut reporter: Option<Reporter> = None;
     let result = (|| -> Result<()> {
-        if !matches!(args.len(), 6 | 8 | 10) { return Err(Error("更新参数无效".into())); }
+        if !matches!(args.len(), 6 | 8 | 10 | 11) { return Err(Error("更新参数无效".into())); }
         let version = args[0].clone();
         if !Regex::new(r"^[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:(?:-?mini)|-(?:(?:alpha|beta|preview)\.[0-9]+|rc\.?[0-9]+))?$").unwrap().is_match(&version) { return Err(Error("版本号无效".into())); }
         let target_path = paths::full_path(&args[1])?;
@@ -529,7 +554,7 @@ pub fn run(args: Vec<String>) -> i32 {
         let pipe = args[5].clone();
         target = Some(target_path.clone());
         data = Some(data_path.clone());
-        let (authenticated, job, nonce) = if args.len() == 10 { (true, args[8].clone(), args[9].clone()) } else { (false, String::new(), String::new()) };
+        let (authenticated, job, nonce) = if args.len() >= 10 { (true, args[8].clone(), args[9].clone()) } else { (false, String::new(), String::new()) };
         if !target_path.join("LyricIsland.exe").is_file() { return Err(Error("找不到原应用".into())); }
         let mutex_name = format!("Local.LyricIsland.OTA.{}", executable_hash(&target_path)?);
         let _gate = win::NamedMutex::acquire(&mutex_name)?.ok_or_else(|| Error("已有更新正在进行".into()))?;
@@ -540,7 +565,7 @@ pub fn run(args: Vec<String>) -> i32 {
         let state = shared_state();
         reporter = Some(Reporter::new(authenticated, job.clone(), nonce, pipe.clone(), state.clone()));
         let reporter = reporter.as_mut().unwrap();
-        let components = prepare_download(&target_path, &version, &work, preferred, reporter)?;
+        let components = prepare_download(&target_path, &version, &work, preferred, args.get(10).map(String::as_str), reporter)?;
         let stage = if let Some(prepared) = &components {
             prepared.stage.clone()
         } else {
@@ -631,7 +656,7 @@ pub fn run(args: Vec<String>) -> i32 {
 }
 
 fn report_failure(args: &[String], error: &Error) -> Result<()> {
-    if args.len() != 10 { return Ok(()); }
+    if !matches!(args.len(), 10 | 11) { return Ok(()); }
     let state = shared_state();
     let mut reporter = Reporter::new(true, args[8].clone(), args[9].clone(), args[5].clone(), state.clone());
     let _ = state.lock().map(|mut value| value.phase = "failed".into());

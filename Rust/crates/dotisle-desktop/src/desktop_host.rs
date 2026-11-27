@@ -1,18 +1,45 @@
-//! Tool windows owned by the desktop, kept below application windows without SetParent.
+//! Allegro 单显示器全屏合批透明画布引擎：
+//! 每台活跃显示器仅维护 1 个透明置底无边框窗口与 1 份 `Surface` SwapChain，
+//! 配合动态 `SetWindowRgn` 精确点击穿透与全屏游戏自动休眠，实现高刷新合批渲染与极低资源占用。
 use crate::{
-    draw::Text,
+    desktop_cards::{self, AllegroCardContext},
+    draw::{rect, Text},
     gpu::Gpu,
     model::{Action, Model},
+    platform,
+    sidebar_io::{self, SidebarIo},
     views::{TodoEdit, TodoField},
-    widgets::Hit,
 };
-use dotisle_domain::desktop_widgets::{Kind, Placement};
+use allegro::{
+    canvas::{hit_test, plan_monitor_slots, union_input_rects, CanvasSlot, MonitorDesc},
+    efficiency::{
+        resolve_dropped_launcher, toggle_note_checkbox, DashboardState, DropzoneStore, NoteEdit,
+        PhotoFrameState,
+    },
+    snap::{
+        auto_pack_grid, compute_grid, paint_edit_grid, paint_guides, snap_drag, snap_rect_to_grid,
+        snap_resize, Rect2D, SnapConfig, SnapGuide, SnapPeer,
+    },
+    stack::{ContextSignals, StackManager},
+    stage::{resolve_stage_results, AppIndex, ClipboardHistory, StageResultKind, StageSlashCmd, StageState},
+    telemetry::ProTelemetry,
+    theme::{self as allegro_theme, WidgetMaterial},
+    wallpaper::AsyncWallpaperCache,
+};
+use dotisle_domain::desktop_widgets::Kind;
+use serde_json::json;
 use std::{
+    collections::HashMap,
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
+use vello::{
+    kurbo::{Affine, Rect},
+    Scene,
+};
 use winit::{
-    dpi::{LogicalPosition, LogicalSize, PhysicalPosition},
+    dpi::{LogicalPosition, PhysicalPosition, PhysicalSize},
     event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::ActiveEventLoop,
     keyboard::{Key, NamedKey},
@@ -20,18 +47,85 @@ use winit::{
     window::{CursorIcon, Window, WindowId},
 };
 
-const HIDDEN_BAR: f64 = 12.;
 const MIN_W: f64 = 160.;
 const MIN_H: f64 = 120.;
 const MAX_W: f64 = 1200.;
 const MAX_H: f64 = 1200.;
 const EDGE: f64 = 8.;
 
-pub struct Host {
-    windows: Vec<Card>,
-    last_second: Instant,
-    pub error: Option<String>,
+/// 单台显示器的合批透明画布容器。
+struct MonitorCanvas {
+    desc: MonitorDesc,
+    window: Arc<Window>,
+    surface: dotisle_render::surface::Surface,
+    slots: Vec<CanvasSlot>,
+    hits: Vec<HitEntry>,
+    pointer: (f64, f64),
+    hovered_hit: Option<usize>,
+    cursor: CursorIcon,
+    last_input_rects: Vec<(i32, i32, i32, i32, i32)>,
+    last_allow_full: bool,
+    dirty: bool,
 }
+
+/// 贴屏幕右侧独立滑出的负一屏风格侧边栏窗口（完全独立于桌面画布，展开时电脑其余区域 100% 正常交互）。
+struct SidebarWindow {
+    mon: MonitorDesc,
+    window: Arc<Window>,
+    surface: dotisle_render::surface::Surface,
+    metrics: crate::stage_overlay::SidebarMetrics,
+    win_log: (f64, f64),
+    hits: Vec<HitEntry>,
+    card_slots: Vec<(String, Rect)>,
+    viewport: Rect,
+    max_scroll: f64,
+    pointer: (f64, f64),
+    hovered_hit: Option<usize>,
+    visible: bool,
+    last_region: Option<(i32, i32, i32, i32, i32)>,
+    previous_foreground: Option<isize>,
+    dirty: bool,
+}
+
+impl SidebarWindow {
+    fn prime_region(&mut self) {
+        self.update_region(sidebar_initial_panel(self.metrics, self.win_log.1));
+    }
+
+    fn update_region(&mut self, panel: Rect) {
+        let region = sidebar_region(panel, self.mon.scale.max(0.5));
+        if self.last_region != Some(region) && platform::apply_sidebar_region(&self.window, region) {
+            self.last_region = Some(region);
+        }
+    }
+}
+
+/// 首帧即允许显示，关闭时等弹簧收敛到零后再交还窗口区域。
+fn sidebar_should_show(dashboard: &DashboardState) -> bool {
+    dashboard.open || dashboard.opacity > 0.0
+}
+
+/// 首帧之前使用既有面板边界，不拦截左侧桌面，也不从空 HRGN 启动。
+fn sidebar_initial_panel(metrics: crate::stage_overlay::SidebarMetrics, height: f64) -> Rect {
+    rect(metrics.shadow_left, 12.0, metrics.panel_w, (height - 24.0).max(360.0))
+}
+
+fn sidebar_region(panel: Rect, scale: f64) -> (i32, i32, i32, i32, i32) {
+    ((panel.x0 * scale).floor() as i32, (panel.y0 * scale).floor() as i32,
+     (panel.x1 * scale).ceil() as i32, (panel.y1 * scale).ceil() as i32,
+     (26.0 * scale).round() as i32)
+}
+
+#[derive(Clone, Debug)]
+struct HitEntry {
+    rect: Rect,
+    action: Action,
+    #[allow(dead_code)]
+    label: String,
+    enabled: bool,
+    widget_id: String,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct Edges {
     left: bool,
@@ -39,10 +133,12 @@ struct Edges {
     top: bool,
     bottom: bool,
 }
+
 impl Edges {
     fn any(self) -> bool {
         self.left || self.right || self.top || self.bottom
     }
+
     fn icon(self) -> CursorIcon {
         match (self.left, self.right, self.top, self.bottom) {
             (true, _, true, _) => CursorIcon::NwResize,
@@ -57,760 +153,2400 @@ impl Edges {
         }
     }
 }
-#[derive(Clone, Copy)]
-struct Resize {
+
+#[derive(Clone)]
+struct DragState {
+    widget_id: String,
+    canvas_id: WindowId,
+    orig_rect: Rect2D,
+    start_cursor: (f64, f64),
+    preview_rect: Rect2D,
+    guides: Vec<SnapGuide>,
+    stack_target: Option<String>,
+    moved: bool,
+}
+
+#[derive(Clone)]
+struct ResizeState {
+    widget_id: String,
+    canvas_id: WindowId,
     edges: Edges,
-    origin: (i32, i32),
-    size: (u32, u32),
-    cursor: (f64, f64),
+    orig_rect: Rect2D,
+    start_cursor: (f64, f64),
+    preview_rect: Rect2D,
+    guides: Vec<SnapGuide>,
 }
-struct Card {
-    window: Arc<Window>,
-    surface: dotisle_render::surface::Surface,
-    placement: Placement,
-    hits: Vec<Hit>,
-    pointer: (f64, f64),
-    pressed: Option<Action>,
-    drag: Option<((i32, i32), (f64, f64))>,
-    resize: Option<Resize>,
-    menu: bool,
-    pending: Option<((i32, i32), Instant)>,
-    hidden: bool,
-    scroll: f64,
-    edit: Option<TodoEdit>,
-    last_dims: (f64, f64),
-    cursor: CursorIcon,
+
+/// 桌面小组件全屏合批宿主的全局状态机。
+pub struct Host {
+    data_dir: PathBuf,
+    canvases: Vec<MonitorCanvas>,
+    sidebar_win: Option<SidebarWindow>,
+    wallpaper: AsyncWallpaperCache,
+    hotkeys: platform::HotkeyListener,
+    stacks: StackManager,
+    dashboard: DashboardState,
+    dropzone: DropzoneStore,
+    photos: PhotoFrameState,
+    telemetry: ProTelemetry,
+    edit_mode: bool,
+    stage: StageState,
+    clipboard: ClipboardHistory,
+    sidebar_io: Option<SidebarIo>,
+    app_index: AppIndex,
+    index_ready: bool,
+    menu_for: Option<(String, (f64, f64))>,
+    sidebar_menu_for: Option<(String, (f64, f64))>,
+    scroll_for: HashMap<String, f64>,
+    quote_indices: HashMap<String, usize>,
+    todo_edit: Option<(String, TodoEdit)>,
+    note_edit: Option<NoteEdit>,
+    pressed: Option<(WindowId, String, Action)>,
+    drag: Option<DragState>,
+    resize: Option<ResizeState>,
+    last_second: Instant,
+    now_sec: f64,
+    pub error: Option<String>,
 }
+
 impl Default for Host {
     fn default() -> Self {
+        Self::with_data_dir(PathBuf::new())
+    }
+}
+
+impl Host {
+    /// 使用指定配置目录构造宿主（侧边栏独立组件持久化在 `allegro-sidebar.json`，与桌面解耦）。
+    pub fn with_data_dir(data_dir: PathBuf) -> Self {
         Self {
-            windows: vec![],
+            data_dir,
+            canvases: Vec::new(),
+            sidebar_win: None,
+            wallpaper: AsyncWallpaperCache::new(crate::wake),
+            hotkeys: platform::HotkeyListener::start(),
+            stacks: StackManager::new(),
+            dashboard: DashboardState::default(),
+            dropzone: DropzoneStore::default(),
+            photos: PhotoFrameState::with_wake(crate::wake),
+            telemetry: ProTelemetry::with_wake(crate::wake),
+            edit_mode: false,
+            stage: StageState::default(),
+            clipboard: ClipboardHistory::default(),
+            sidebar_io: None,
+            app_index: AppIndex::with_wake(crate::wake),
+            index_ready: false,
+            menu_for: None,
+            sidebar_menu_for: None,
+            scroll_for: HashMap::new(),
+            quote_indices: HashMap::new(),
+            todo_edit: None,
+            note_edit: None,
+            pressed: None,
+            drag: None,
+            resize: None,
             last_second: Instant::now() - Duration::from_secs(2),
+            now_sec: 0.0,
             error: None,
         }
     }
-}
-fn clamp_position(window: &Window, x: i32, y: i32) -> (i32, i32) {
-    let size = window.outer_size();
-    let monitors = window.available_monitors().collect::<Vec<_>>();
-    if monitors.iter().any(|m| {
-        let p = m.position();
-        let s = m.size();
-        x >= p.x
-            && y >= p.y
-            && x + size.width as i32 <= p.x + s.width as i32
-            && y + size.height as i32 <= p.y + s.height as i32
-    }) {
-        return (x, y);
-    }
-    let selected = monitors.iter().min_by_key(|m| {
-        let p = m.position();
-        (x as i64 - p.x as i64).abs() + (y as i64 - p.y as i64).abs()
-    });
-    if let Some(m) = selected {
-        let p = m.position();
-        let s = m.size();
-        (
-            x.clamp(p.x, (p.x + s.width as i32 - size.width as i32).max(p.x)),
-            y.clamp(
-                p.y,
-                (p.y + s.height as i32 - size.height as i32 - 48).max(p.y),
-            ),
-        )
-    } else {
-        (x, y)
-    }
-}
-fn monitor_near(window: &Window, x: i32) -> Option<(i32, i32, u32, u32)> {
-    window
-        .available_monitors()
-        .min_by_key(|m| (x as i64 - m.position().x as i64).abs())
-        .map(|m| {
-            let p = m.position();
-            let s = m.size();
-            (p.x, p.y, s.width, s.height)
-        })
-}
-fn hidden_position(window: &Window, x: i32, width: f64, bar_width: f64) -> (i32, i32) {
-    let scale = window.scale_factor();
-    let Some((mx, my, mw, _)) = monitor_near(window, x) else {
-        return (x, 0);
-    };
-    let bar = (bar_width * scale).round() as i32;
-    let original = (width * scale).round() as i32;
-    let center = x + (original - bar) / 2;
-    (center.clamp(mx, (mx + mw as i32 - bar).max(mx)), my)
-}
-fn edges_at(pointer: (f64, f64), w: f64, h: f64) -> Edges {
-    Edges {
-        left: pointer.0 <= EDGE,
-        right: pointer.0 >= w - EDGE,
-        top: pointer.1 <= EDGE,
-        bottom: pointer.1 >= h - EDGE,
-    }
-}
-fn logical_size(window: &Window) -> (f64, f64) {
-    let scale = window.scale_factor();
-    let inner = window.inner_size();
-    (
-        (inner.width as f64 / scale).max(1.),
-        (inner.height as f64 / scale).max(1.),
-    )
-}
-fn enter_hidden(card: &mut Card) {
-    let scale = card.window.scale_factor();
-    let inner = card.window.inner_size();
-    let current = inner.width as f64 / scale;
-    let bar = current.clamp(MIN_W, 240.);
-    let position = card
-        .window
-        .outer_position()
-        .unwrap_or(PhysicalPosition::new(0, 0));
-    let (x, y) = hidden_position(&card.window, position.x, current, bar);
-    let _ = card
-        .window
-        .request_inner_size(LogicalSize::new(bar, HIDDEN_BAR));
-    card.window
-        .set_outer_position(PhysicalPosition::new(x, y));
-    card.hidden = true;
-    card.menu = false;
-    card.edit = None;
-    card.scroll = 0.;
-    card.window.set_ime_allowed(false);
-    card.window.request_redraw();
-}
-fn leave_hidden(card: &mut Card, placement: &Placement) {
-    let (w, h) = placement.dimensions();
-    let _ = card.window.request_inner_size(LogicalSize::new(w, h));
-    let (x, y) = clamp_position(&card.window, placement.x, placement.y);
-    card.window
-        .set_outer_position(PhysicalPosition::new(x, y));
-    card.hidden = false;
-    card.last_dims = (w, h);
-    card.window.request_redraw();
-}
-fn position_ime(card: &Card) {
-    let Some(edit) = card.edit.as_ref() else {
-        return;
-    };
-    let (w, _) = logical_size(&card.window);
-    let field = crate::desktop_cards::editor_field_rect(w, edit.field);
-    card.window.set_ime_cursor_area(
-        LogicalPosition::new(field.x0, field.y0 + field.height() / 2.),
-        LogicalSize::new(field.width(), field.height()),
-    );
-}
-fn days_in_month(year: i32, month: u32) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 => {
-            if year % 400 == 0 || (year % 4 == 0 && year % 100 != 0) {
-                29
+    /// 同步最新状态、管理每显示器画布生命周期、采集探针与处理全屏游戏休眠。
+    pub fn sync(
+        &mut self,
+        event: &ActiveEventLoop,
+        model: &mut Model,
+        gpu: &mut Gpu,
+        changed: bool,
+        moving: bool,
+        dt: f64,
+        now_sec: f64,
+    ) -> bool {
+        self.now_sec = now_sec;
+        let sidebar_data_changed = self.sync_sidebar_data(model.demo);
+
+        let [dashboard_presses, edit_presses] = self.hotkeys.take();
+        // 两路都是纯切换命令；合并唤醒时按奇偶处理，避免重复显示和隐藏。
+        if dashboard_presses % 2 != 0 {
+            if self.dashboard.open {
+                self.close_sidebar();
             } else {
-                28
+                self.dashboard.toggle();
+                self.sidebar_menu_for = None;
+                self.app_index.ensure_loaded();
+                if let Some(io) = &mut self.sidebar_io { io.poll_clipboard(); }
+                self.stage.clear_query();
+                self.stage.search_focused = false;
+                if let Some(sb) = &mut self.sidebar_win { sb.dirty = true; }
             }
         }
-        _ => 30,
-    }
-}
-/// One hour after now, carrying across midnight so a late-night draft is still in the future.
-fn next_default_time() -> (String, String) {
-    let d = crate::desktop_cards::date();
-    let total = d.hour * 60 + d.minute + 60;
-    let (mut year, mut month, mut day, minute) = if total >= 1440 {
-        (d.year, d.month, d.day, total - 1440)
-    } else {
-        (d.year, d.month, d.day, total)
-    };
-    if total >= 1440 {
-        day += 1;
-        if day > days_in_month(year, month) {
-            day = 1;
-            month += 1;
-            if month > 12 {
-                month = 1;
-                year += 1;
-            }
-        }
-    }
-    (
-        format!("{:04}-{:02}-{:02}", year, month, day),
-        format!("{:02}:{:02}", minute / 60, minute % 60),
-    )
-}
-fn begin_edit(card: &mut Card, m: &Model, id: Option<String>) {
-    let mut edit = TodoEdit::default();
-    if let Some(id) = id {
-        if let Some(todo) = m.todos.items.iter().find(|t| t.id == id) {
-            edit.id = Some(todo.id.clone());
-            edit.title = todo.title.clone();
-            edit.date = todo.date.clone();
-            edit.time = todo.time.clone();
-            edit.content = todo.content.clone();
-            edit.daily = todo.daily;
-            edit.color = todo.color.clone();
-        }
-    } else {
-        let (date, time) = next_default_time();
-        edit.date = date;
-        edit.time = time;
-    }
-    card.edit = Some(edit);
-    card.scroll = 0.;
-    card.menu = false;
-    card.window.focus_window();
-    crate::platform::activate(&card.window);
-    card.window.set_ime_allowed(true);
-    position_ime(card);
-    card.window.request_redraw();
-}
-fn save_edit(card: &mut Card, m: &Model) {
-    let Some(edit) = card.edit.as_mut() else {
-        return;
-    };
-    let title = edit.title.trim();
-    if title.is_empty() {
-        edit.error = Some("请填写待办标题".into());
-        card.window.request_redraw();
-        return;
-    }
-    if title.chars().count() > 120 {
-        edit.error = Some("标题最多 120 个字符".into());
-        card.window.request_redraw();
-        return;
-    }
-    if !crate::desktop_cards::valid_date(&edit.date) {
-        edit.error = Some("日期需为 YYYY-MM-DD".into());
-        card.window.request_redraw();
-        return;
-    }
-    if !crate::desktop_cards::valid_time(&edit.time) {
-        edit.error = Some("时间需为 HH:MM".into());
-        card.window.request_redraw();
-        return;
-    }
-    let mut value = serde_json::json!({
-        "title": title,
-        "content": edit.content,
-        "date": edit.date,
-        "time": edit.time,
-        "daily": edit.daily,
-        "color": edit.color,
-    });
-    if let Some(id) = &edit.id {
-        value["id"] = serde_json::json!(id);
-    }
-    m.native_command("todoSave", value);
-    card.edit = None;
-    card.window.set_ime_allowed(false);
-    crate::platform::sink(&card.window);
-    card.window.request_redraw();
-}
-fn cancel_edit(card: &mut Card) {
-    card.edit = None;
-    card.window.set_ime_allowed(false);
-    crate::platform::sink(&card.window);
-    card.window.request_redraw();
-}
-fn edit_text(card: &mut Card, text: &str) {
-    let Some(edit) = card.edit.as_mut() else {
-        return;
-    };
-    edit.error = None;
-    edit.preedit.clear();
-    match edit.field {
-        TodoField::Title => edit.title.push_str(text),
-        TodoField::Date => edit.date.push_str(text),
-        TodoField::Time => edit.time.push_str(text),
-    }
-    card.window.request_redraw();
-}
-fn edit_backspace(card: &mut Card) {
-    let Some(edit) = card.edit.as_mut() else {
-        return;
-    };
-    edit.error = None;
-    edit.preedit.clear();
-    match edit.field {
-        TodoField::Title => {
-            edit.title.pop();
-        }
-        TodoField::Date => {
-            edit.date.pop();
-        }
-        TodoField::Time => {
-            edit.time.pop();
-        }
-    }
-    card.window.request_redraw();
-}
-impl Host {
-    pub fn is_empty(&self) -> bool {
-        self.windows.is_empty()
-    }
-    pub fn contains(&self, id: WindowId) -> bool {
-        self.windows.iter().any(|c| c.window.id() == id)
-    }
-    pub fn sync(&mut self, event: &ActiveEventLoop, m: &mut Model, gpu: &mut Gpu, changed: bool, moving: bool) {
-        self.windows.retain(|c| {
-            m.desktop_widgets
-                .items
-                .iter()
-                .any(|p| p.id == c.placement.id)
-        });
-        for p in m.desktop_widgets.items.clone() {
-            if let Some(card) = self.windows.iter_mut().find(|c| c.placement.id == p.id) {
-                if card.hidden != p.hidden {
-                    if p.hidden {
-                        enter_hidden(card);
-                    } else {
-                        leave_hidden(card, &p);
-                    }
-                }
-                if !p.hidden {
-                    let dims = p.dimensions();
-                    if card.resize.is_none()
-                        && card.drag.is_none()
-                        && ((card.last_dims.0 - dims.0).abs() > 0.5
-                            || (card.last_dims.1 - dims.1).abs() > 0.5)
-                    {
-                        let _ = card
-                            .window
-                            .request_inner_size(LogicalSize::new(dims.0, dims.1));
-                        card.last_dims = dims;
-                        card.window.request_redraw();
-                    }
-                    if card.drag.is_none() && card.resize.is_none() {
-                        if let Some((position, at)) = card.pending {
-                            if (p.x, p.y) == position {
-                                card.pending = None;
-                            } else if at.elapsed() > Duration::from_secs(4) {
-                                card.pending = None;
-                            }
-                        }
-                        if card.pending.is_none() {
-                            let position = clamp_position(&card.window, p.x, p.y);
-                            if card.window.outer_position().ok().map(|v| (v.x, v.y)) != Some(position) {
-                                card.window
-                                    .set_outer_position(PhysicalPosition::new(position.0, position.1));
-                            }
-                            if position != (p.x, p.y) {
-                                m.native_command(
-                                    "widgetUpdate",
-                                    serde_json::json!({"id":p.id,"x":position.0,"y":position.1}),
-                                );
-                                card.pending = Some((position, Instant::now()));
-                            }
-                        }
-                    }
-                }
-                card.placement = p;
-                continue;
-            }
-            let dims = p.dimensions();
-            let (w, h) = if p.hidden {
-                (dims.0.clamp(MIN_W, 240.), HIDDEN_BAR)
-            } else {
-                dims
-            };
-            let attributes = Window::default_attributes()
-                .with_title(format!("点屿桌面组件 · {}", p.kind.label()))
-                .with_inner_size(LogicalSize::new(w, h))
-                .with_decorations(false)
-                .with_resizable(false)
-                .with_transparent(true)
-                .with_visible(false)
-                .with_active(false)
-                .with_skip_taskbar(true)
-                .with_no_redirection_bitmap(true);
-            match event
-                .create_window(attributes)
-                .map_err(|e| e.to_string())
-                .and_then(|window| {
-                    let window = Arc::new(window);
-                    crate::platform::desktop_owner(&window);
-                    crate::platform::remove_dwm_frame(&window);
-                    let position = if p.hidden {
-                        hidden_position(&window, p.x, dims.0, w)
-                    } else {
-                        clamp_position(&window, p.x, p.y)
-                    };
-                    window.set_outer_position(PhysicalPosition::new(position.0, position.1));
-                    let surface = gpu.surface(window.clone())?;
-                    Ok(Card {
-                        window,
-                        surface,
-                        placement: p.clone(),
-                        hits: vec![],
-                        pointer: (-1., -1.),
-                        pressed: None,
-                        drag: None,
-                        resize: None,
-                        menu: false,
-                        pending: None,
-                        hidden: p.hidden,
-                        scroll: 0.,
-                        edit: None,
-                        last_dims: dims,
-                        cursor: CursorIcon::Default,
-                    })
-                }) {
-                Ok(card) => {
-                    self.windows.push(card);
-                    if let Some(c) = self.windows.last() {
-                        c.window.set_visible(true);
-                        crate::platform::desktop_floor(&c.window);
-                        c.window.request_redraw();
-                    }
-                }
-                Err(error) => {
-                    self.error = Some(error.clone());
-                    m.message(format!("桌面组件未能显示：{error}"));
-                    break;
-                }
-            }
-        }
-        let second = self.last_second.elapsed() >= Duration::from_secs(1);
-        if second {
-            self.last_second = Instant::now();
-        }
-        for c in &self.windows {
-            if second && c.edit.is_none() {
-                crate::platform::desktop_floor(&c.window);
-            }
-            if changed || second || (moving && c.placement.kind == Kind::Music) {
+        if edit_presses % 2 != 0 {
+            self.edit_mode = !self.edit_mode;
+            self.menu_for = None;
+            for c in &self.canvases {
+                platform::set_dashboard_layer(&c.window, self.edit_mode);
                 c.window.request_redraw();
             }
         }
+
+        let dash_anim = self.dashboard.tick(dt);
+        let toast_was_visible = self.stage.toast.is_some();
+        let toast_active = self.stage.tick(dt);
+        let placements = &model.desktop_widgets.items;
+        self.stacks.sync_from_placements(placements);
+        self.dropzone.sync_from_placements(placements);
+        let photos_changed = self.photos.poll();
+        if changed || photos_changed {
+            self.photos.retain(|id| placements.iter().any(|p| p.id == id && p.kind == Kind::PhotoFrame));
+        }
+        for p in placements {
+            if p.kind == Kind::PhotoFrame {
+                self.photos.sync_folder(&p.id, &p.config.folder);
+            }
+        }
+
+        let wallpaper_changed = self.wallpaper.poll(now_sec);
+        if changed || wallpaper_changed {
+            self.wallpaper.retain_cards(|id| placements.iter().any(|p| p.id == id));
+        }
+        let cpu_now = model.native_state["systemMetrics"]["cpuPercent"].as_f64();
+        let telemetry_changed = self.telemetry.poll_updates(cpu_now);
+        let index_changed = !self.index_ready && self.app_index.is_ready();
+        self.index_ready |= index_changed;
+
+        let signals = ContextSignals {
+            music_playing: model.playing(),
+            focus_running: model.timers.items.iter().any(|t| t.running),
+            upcoming_schedule_mins: None,
+            dropzone_count: self.dropzone.total_count(),
+        };
+        let stack_auto_changed = self.stacks.auto_rotate(now_sec, signals, placements);
+
+        let has_fast_clock = placements.iter().any(|p| {
+            !p.hidden
+                && (matches!(p.kind, Kind::AnalogClock | Kind::SystemPro)
+                    || (p.kind == Kind::Music && model.playing())
+                    || (p.kind == Kind::Focus && model.timers.items.iter().any(|t| t.running)))
+        });
+        let tick_interval = if has_fast_clock {
+            Duration::from_secs(1)
+        } else {
+            Duration::from_secs(15)
+        };
+        let second_tick = self.last_second.elapsed() >= tick_interval;
+        if second_tick {
+            self.last_second = Instant::now();
+            if let Some(io) = &mut self.sidebar_io { io.poll_clipboard(); }
+        }
+
+        let descs = collect_monitors(event);
+
+        // 同步独立右侧侧边栏窗口（完全不触碰桌面画布 Z 序与点击穿透选区，保证电脑正常操作）
+        self.sync_sidebar_window(event, gpu, &descs);
+        let sidebar_visible = sidebar_should_show(&self.dashboard);
+        if let Some(sb) = &mut self.sidebar_win {
+            if sidebar_visible && (sb.dirty || changed || second_tick || dash_anim || toast_was_visible
+                || wallpaper_changed || telemetry_changed || index_changed || sidebar_data_changed) {
+                sb.dirty = false;
+                sb.window.request_redraw();
+            }
+        }
+
+        // 无任何桌面小组件时释放桌面全屏画布，做到零占用（侧边栏独立运行不受影响）
+        if placements.is_empty() {
+            self.canvases.clear();
+            return dash_anim || toast_active;
+        }
+        if descs.is_empty() {
+            return dash_anim || toast_active;
+        }
+
+        // 移除已不存在或已无任何可见/隐藏槽位的桌面画布
+        let mut planned: Vec<(MonitorDesc, Vec<CanvasSlot>)> = Vec::new();
+        for desc in descs {
+            planned.push((desc, Vec::new()));
+        }
+        let all_descs: Vec<MonitorDesc> = planned.iter().map(|(d, _)| d.clone()).collect();
+        for (desc, slots) in &mut planned {
+            *slots = plan_monitor_slots(desc, &all_descs, placements, &self.stacks);
+        }
+        planned.retain(|(_, slots)| !slots.is_empty());
+
+        self.canvases
+            .retain(|c| planned.iter().any(|(d, _)| d.key == c.desc.key));
+
+        for (desc, slots) in planned {
+            if let Some(c) = self.canvases.iter_mut().find(|c| c.desc.key == desc.key) {
+                if c.desc != desc {
+                    c.desc = desc.clone();
+                    let _ = c
+                        .window
+                        .request_inner_size(PhysicalSize::new(desc.phys_w, desc.phys_h));
+                    c.window
+                        .set_outer_position(PhysicalPosition::new(desc.phys_x, desc.phys_y));
+                    c.surface.resize(desc.phys_w.max(1), desc.phys_h.max(1));
+                    c.dirty = true;
+                }
+                if c.slots != slots {
+                    c.slots = slots;
+                    c.dirty = true;
+                }
+            } else if let Some(mut created) = create_canvas(event, gpu, desc, slots, self.edit_mode)
+            {
+                created.dirty = true;
+                self.canvases.push(created);
+            } else {
+                eprintln!("Allegro create_canvas returned None");
+                self.error = Some("无法创建 Allegro 全屏透明画布".into());
+            }
+        }
+
+        self.refresh_input_regions();
+
+        let editing = self.todo_edit.is_some() || self.note_edit.is_some();
+        let active_anim = moving || dash_anim || toast_active;
+        let sleeping = !self.canvases.is_empty()
+            && !changed
+            && !self.edit_mode
+            && !editing
+            && self.drag.is_none()
+            && self.resize.is_none()
+            && self.telemetry.sleeping();
+        let force_redraw = changed || stack_auto_changed || second_tick || moving || editing
+            || wallpaper_changed || photos_changed || (has_fast_clock && telemetry_changed) || edit_presses % 2 != 0;
+
+        for c in &mut self.canvases {
+            if c.dirty || (!sleeping && force_redraw) {
+                c.dirty = false;
+                c.window.request_redraw();
+            }
+        }
+
+        (active_anim && !sleeping) || (sidebar_visible && (dash_anim || toast_active))
     }
+
+    /// 计算 Apple 玻璃右键浮层在画布内的防越界逻辑矩形。
+    fn clamped_menu_rect(mon_w: f64, mon_h: f64, anchor: (f64, f64)) -> Rect2D {
+        let mw = desktop_cards::CONTEXT_MENU_W;
+        let mh = desktop_cards::CONTEXT_MENU_H;
+        let x = anchor.0.clamp(12.0, (mon_w - mw - 12.0).max(12.0));
+        let y = anchor.1.clamp(12.0, (mon_h - mh - 12.0).max(12.0));
+        Rect2D::new(x, y, mw, mh)
+    }
+
+    /// 同步所有桌面画布上的精确 Win32 `SetWindowRgn` 穿透选区（不再被侧边栏占用全屏）。
+    fn refresh_input_regions(&mut self) {
+        let allow_full = self.edit_mode || self.drag.is_some() || self.resize.is_some();
+        for c in &mut self.canvases {
+            let scale = c.desc.scale.max(0.5);
+            let mut rects = union_input_rects(
+                &c.slots,
+                false,
+                c.desc.phys_w,
+                c.desc.phys_h,
+                scale,
+            );
+            if let Some((wid, anchor)) = &self.menu_for {
+                if c.slots.iter().any(|s| &s.id == wid) {
+                    let mr = Self::clamped_menu_rect(
+                        c.desc.phys_w as f64 / scale,
+                        c.desc.phys_h as f64 / scale,
+                        *anchor,
+                    );
+                    rects.push((
+                        (mr.x * scale).floor() as i32 - 6,
+                        (mr.y * scale).floor() as i32 - 6,
+                        (mr.right() * scale).ceil() as i32 + 6,
+                        (mr.bottom() * scale).ceil() as i32 + 12,
+                        (14.0 * scale).round() as i32,
+                    ));
+                }
+            }
+            if c.last_allow_full != allow_full || c.last_input_rects != rects {
+                platform::apply_input_region(&c.window, &rects, allow_full);
+                c.last_allow_full = allow_full;
+                c.last_input_rects = rects;
+            }
+        }
+    }
+
+    /// 处理窗口事件（先路由至独立右侧侧边栏窗口，再路由至桌面全屏画布）。
     pub fn event(
         &mut self,
         id: WindowId,
         event: WindowEvent,
-        m: &mut Model,
+        model: &mut Model,
         gpu: &mut Gpu,
         text: &mut Text,
         time: f64,
         media_position: Option<f64>,
     ) -> Option<Action> {
-        let c = self.windows.iter_mut().find(|c| c.window.id() == id)?;
-        let mut action = None;
+        if self.sidebar_win.as_ref().is_some_and(|sb| sb.window.id() == id) {
+            return self.handle_sidebar_event(event, model, gpu, text, time, media_position);
+        }
+        let idx = self.canvases.iter().position(|c| c.window.id() == id)?;
+
         match event {
+            WindowEvent::Resized(new_size) => {
+                {
+                    let c = &mut self.canvases[idx];
+                    c.desc.phys_w = new_size.width.max(1);
+                    c.desc.phys_h = new_size.height.max(1);
+                    c.surface.resize(c.desc.phys_w, c.desc.phys_h);
+                    c.dirty = true;
+                }
+                self.refresh_input_regions();
+                self.canvases[idx].window.request_redraw();
+                None
+            }
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                {
+                    let c = &mut self.canvases[idx];
+                    c.desc.scale = scale_factor;
+                    c.dirty = true;
+                }
+                self.refresh_input_regions();
+                self.canvases[idx].window.request_redraw();
+                None
+            }
             WindowEvent::RedrawRequested => {
-                let (w, h) = logical_size(&c.window);
-                let view = crate::desktop_cards::render(
-                    m,
-                    text,
-                    c.placement.kind,
-                    c.placement.size,
-                    &c.placement.id,
-                    w,
-                    h,
-                    c.pointer,
-                    c.menu,
-                    c.hidden,
-                    c.scroll,
-                    c.edit.as_ref(),
-                    time,
-                    media_position,
-                );
-                c.hits = view.hits;
-                if let Err(e) = gpu.draw(&mut c.surface, &view.scene, c.window.scale_factor()) {
-                    self.error = Some(e);
-                }
-            }
-            WindowEvent::Resized(size) => {
-                if size.width > 0 && size.height > 0 {
-                    c.surface.resize(size.width, size.height);
-                    let scale = c.window.scale_factor();
-                    c.last_dims = (
-                        size.width as f64 / scale,
-                        size.height as f64 / scale,
-                    );
-                    c.window.request_redraw();
-                }
-            }
-            WindowEvent::ScaleFactorChanged { .. } => {
-                if c.hidden {
-                    let (_, _) = logical_size(&c.window);
-                    let bar = (c.placement.dimensions().0).clamp(MIN_W, 240.);
-                    let _ = c.window.request_inner_size(LogicalSize::new(bar, HIDDEN_BAR));
-                } else {
-                    let (w, h) = c.placement.dimensions();
-                    let _ = c.window.request_inner_size(LogicalSize::new(w, h));
-                }
-                c.window.request_redraw();
+                self.redraw_canvas(idx, model, gpu, text, time, media_position);
+                None
             }
             WindowEvent::CursorMoved { position, .. } => {
-                let scale = c.window.scale_factor();
-                c.pointer = (position.x / scale, position.y / scale);
-                if let Some(resize) = c.resize {
-                    let dx = position.x - resize.cursor.0;
-                    let dy = position.y - resize.cursor.1;
-                    let scale = c.window.scale_factor();
-                    let mut w = resize.size.0 as f64;
-                    let mut h = resize.size.1 as f64;
-                    if resize.edges.right {
-                        w += dx;
-                    }
-                    if resize.edges.left {
-                        w -= dx;
-                    }
-                    if resize.edges.bottom {
-                        h += dy;
-                    }
-                    if resize.edges.top {
-                        h -= dy;
-                    }
-                    w = w.clamp(MIN_W * scale, MAX_W * scale);
-                    h = h.clamp(MIN_H * scale, MAX_H * scale);
-                    let _ = c
-                        .window
-                        .request_inner_size(LogicalSize::new(w / scale, h / scale));
-                    let mut x = resize.origin.0;
-                    let mut y = resize.origin.1;
-                    if resize.edges.left {
-                        x += resize.size.0 as i32 - w.round() as i32;
-                    }
-                    if resize.edges.top {
-                        y += resize.size.1 as i32 - h.round() as i32;
-                    }
-                    c.window
-                        .set_outer_position(PhysicalPosition::new(x, y));
-                } else if let Some((origin, grab)) = c.drag {
-                    let current = c
-                        .window
-                        .outer_position()
-                        .unwrap_or(PhysicalPosition::new(origin.0, origin.1));
-                    let target = (
-                        origin.0 + (current.x as f64 + position.x - grab.0).round() as i32,
-                        origin.1 + (current.y as f64 + position.y - grab.1).round() as i32,
-                    );
-                    c.window
-                        .set_outer_position(PhysicalPosition::new(target.0, target.1));
-                }
-                let (w, h) = logical_size(&c.window);
-                let cursor = if c.hidden {
-                    CursorIcon::Pointer
-                } else if c.edit.is_some() {
-                    CursorIcon::Text
-                } else {
-                    edges_at(c.pointer, w, h).icon()
-                };
-                if c.cursor != cursor {
-                    c.cursor = cursor;
-                    c.window.set_cursor_icon(cursor);
-                }
-                c.window.request_redraw();
+                let scale = self.canvases[idx].desc.scale.max(0.5);
+                let pt = position.to_logical::<f64>(scale);
+                self.canvases[idx].pointer = (pt.x, pt.y);
+                self.handle_cursor_move(idx, (pt.x, pt.y), model);
+                None
             }
-            WindowEvent::CursorLeft { .. } => {
-                if c.drag.is_none() && c.resize.is_none() {
-                    c.pointer = (-1., -1.);
-                    c.window.request_redraw();
-                }
+            WindowEvent::MouseInput { state, button, .. } => {
+                self.handle_mouse(idx, id, state, button, model)
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                if !c.hidden && c.edit.is_none() && c.placement.kind == Kind::Todos {
-                    let amount = match delta {
-                        MouseScrollDelta::LineDelta(_, y) => y as f64 * 46.,
-                        MouseScrollDelta::PixelDelta(p) => p.y,
-                    };
-                    let (w, h) = logical_size(&c.window);
-                    let count = m
-                        .todos
+                self.handle_wheel(idx, delta, model);
+                None
+            }
+            WindowEvent::DroppedFile(path) => self.handle_drop(idx, &path, model),
+            WindowEvent::KeyboardInput { event, .. } => {
+                if event.state == ElementState::Pressed {
+                    return self.handle_key(event.logical_key, model);
+                }
+                None
+            }
+            WindowEvent::Ime(ime) => {
+                self.handle_ime(ime, model);
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn slot_draw_rect(&self, canvas_id: WindowId, slot: &CanvasSlot) -> Rect2D {
+        if let Some(d) = &self.drag {
+            if d.canvas_id == canvas_id && d.widget_id == slot.id {
+                return d.preview_rect;
+            }
+        }
+        if let Some(r) = &self.resize {
+            if r.canvas_id == canvas_id && r.widget_id == slot.id {
+                return r.preview_rect;
+            }
+        }
+        slot.rect
+    }
+
+    fn redraw_canvas(
+        &mut self,
+        idx: usize,
+        model: &Model,
+        gpu: &mut Gpu,
+        text: &mut Text,
+        time: f64,
+        media_position: Option<f64>,
+    ) {
+        let canvas_id = self.canvases[idx].window.id();
+        let scale = self.canvases[idx].desc.scale.max(0.5);
+        let mon_key = self.canvases[idx].desc.key.clone();
+        let screen_log = (
+            self.canvases[idx].desc.phys_w as f64 / scale,
+            self.canvases[idx].desc.phys_h as f64 / scale,
+        );
+        let pointer = self.canvases[idx].pointer;
+        let slots = self.canvases[idx].slots.clone();
+
+        let mut scene = Scene::new();
+        let mut next_hits = Vec::new();
+
+        // 全屏网格编辑模式：铺满可排布的桌面网格槽位与拖放高亮槽
+        if self.edit_mode {
+            use vello::peniko::Fill;
+            let veil_a = if model.prefs.dark { 0.34 } else { 0.14 };
+            scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                allegro_theme::rgba(if model.prefs.dark { 0x050810 } else { 0x0F172A }, veil_a),
+                None,
+                &rect(0., 0., screen_log.0, screen_log.1),
+            );
+            let grid = compute_grid(screen_log.0, screen_log.1);
+            let hl = self.drag.as_ref().and_then(|d| {
+                (d.canvas_id == canvas_id && d.stack_target.is_none()).then_some(d.preview_rect)
+            });
+            paint_edit_grid(&mut scene, &grid, hl, model.prefs.dark);
+        }
+
+        // 为保证被拖动或调整大小的卡片始终绘制在最上方，先排普通组件再排焦点组件。
+        let active_id = self
+            .drag
+            .as_ref()
+            .map(|d| d.widget_id.as_str())
+            .or_else(|| self.resize.as_ref().map(|r| r.widget_id.as_str()));
+
+        let mut ordered_indices: Vec<usize> = (0..slots.len()).collect();
+        ordered_indices.sort_by_key(|&i| usize::from(Some(slots[i].id.as_str()) == active_id));
+
+        for si in ordered_indices {
+            let slot = &slots[si];
+            let Some(placement) = model.desktop_widgets.items.get(slot.placement_index) else {
+                continue;
+            };
+            let draw_r = self.slot_draw_rect(canvas_id, slot);
+            let _mat = WidgetMaterial::from_str_opt(&placement.material);
+            let is_moving_card = Some(placement.id.as_str()) == active_id;
+            // 桌面全卡片统一采样透明亚克力模糊壁纸切片
+            let sample = if !placement.hidden {
+                self.wallpaper.acrylic(&placement.id, &mon_key, screen_log, draw_r, is_moving_card)
+            } else {
+                None
+            };
+            let todo_ref = self
+                .todo_edit
+                .as_ref()
+                .filter(|(wid, _)| wid == &placement.id)
+                .map(|(_, ed)| ed);
+            let note_ref = self
+                .note_edit
+                .as_ref()
+                .filter(|ed| ed.widget_id == placement.id);
+            let photo_meta = self.photos.photo_count(&placement.id);
+            let photo_img = if placement.kind == Kind::PhotoFrame {
+                self.photos.current_image(&placement.id)
+            } else {
+                None
+            };
+            let drop_items = self.dropzone.items(&placement.id);
+            let scroll = self.scroll_for.get(&placement.id).copied().unwrap_or(0.0);
+            let quote_idx = self.quote_indices.get(&placement.id).copied().unwrap_or(0);
+
+            let ctx = AllegroCardContext {
+                placement,
+                width: draw_r.w,
+                height: draw_r.h,
+                pointer: (pointer.0 - draw_r.x, pointer.1 - draw_r.y),
+                menu: false,
+                scroll,
+                todo_edit: todo_ref,
+                note_edit: note_ref,
+                time,
+                media_position,
+                wallpaper_crop: sample.as_ref().map(|s| &s.image),
+                wallpaper_luma: sample.as_ref().map(|s| s.avg_luma),
+                dropzone_items: drop_items,
+                photo_image: photo_img,
+                photo_meta,
+                pro: Some(&self.telemetry),
+                stack_info: slot.stack_info,
+                quote_index: quote_idx,
+                in_sidebar: false,
+            };
+            let view = desktop_cards::render_allegro_card(model, text, &ctx);
+            scene.append(&view.scene, Some(Affine::translate((draw_r.x, draw_r.y))));
+            for hit in view.hits {
+                next_hits.push(HitEntry {
+                    rect: rect(
+                        hit.rect.x0 + draw_r.x,
+                        hit.rect.y0 + draw_r.y,
+                        hit.rect.width(),
+                        hit.rect.height(),
+                    ),
+                    action: hit.action,
+                    label: hit.label,
+                    enabled: hit.enabled,
+                    widget_id: placement.id.clone(),
+                });
+            }
+
+            // 编辑模式下绘制卡片聚焦外框及 Apple 红色「−」删除角标
+            if self.edit_mode && !placement.hidden {
+                use vello::kurbo::{Circle, Stroke};
+                use vello::peniko::Fill;
+                let border_r = rect(draw_r.x, draw_r.y, draw_r.w, draw_r.h);
+                scene.stroke(
+                    &Stroke::new(1.5),
+                    Affine::IDENTITY,
+                    allegro_theme::rgba(0x0A84FF, 0.72),
+                    None,
+                    &allegro_theme::squircle_path(border_r, 24.0),
+                );
+                let badge_c = (draw_r.x + 2.0, draw_r.y + 2.0);
+                scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    allegro_theme::rgba(0xFF3B30, 0.96),
+                    None,
+                    &Circle::new(badge_c, 11.0),
+                );
+                scene.stroke(
+                    &Stroke::new(1.2),
+                    Affine::IDENTITY,
+                    allegro_theme::rgba(0xFFFFFF, 0.90),
+                    None,
+                    &Circle::new(badge_c, 11.0),
+                );
+                scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    allegro_theme::rgba(0xFFFFFF, 0.98),
+                    None,
+                    &rect(badge_c.0 - 4.5, badge_c.1 - 1.1, 9.0, 2.2),
+                );
+                next_hits.push(HitEntry {
+                    rect: rect(badge_c.0 - 12.0, badge_c.1 - 12.0, 24.0, 24.0),
+                    action: Action::WidgetRemove(placement.id.clone()),
+                    label: "删除小组件".into(),
+                    enabled: true,
+                    widget_id: placement.id.clone(),
+                });
+            }
+        }
+
+        // 编辑模式顶部悬浮 Apple 玻璃工具胶囊（一键自动对齐 / 完成）
+        if self.edit_mode {
+            use vello::kurbo::Stroke;
+            use vello::peniko::Fill;
+            let bar_w = 438.0_f64.min((screen_log.0 - 32.0).max(240.0));
+            let bar_h = 38.0;
+            let bar_x = (screen_log.0 - bar_w) * 0.5;
+            let bar_y = 14.0;
+            let bar_r = rect(bar_x, bar_y, bar_w, bar_h);
+            let bar_shape = allegro_theme::squircle_path(bar_r, 19.0);
+            scene.fill(
+                Fill::NonZero,
+                Affine::translate((0., 4.)),
+                allegro_theme::rgba(0x090D16, 0.22),
+                None,
+                &bar_shape,
+            );
+            scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                allegro_theme::rgba(if model.prefs.dark { 0x1C1E26 } else { 0xFCFCFE }, 0.92),
+                None,
+                &bar_shape,
+            );
+            scene.stroke(
+                &Stroke::new(0.9),
+                Affine::IDENTITY,
+                allegro_theme::rgba(if model.prefs.dark { 0xFFFFFF } else { 0x0F172A }, 0.14),
+                None,
+                &bar_shape,
+            );
+            text.draw_face_fixed(
+                &mut scene,
+                "Noto Sans SC",
+                "网格编辑 · 拖动对齐格子（Alt+E / Esc 退出）",
+                bar_x + 16.,
+                bar_y + 11.,
+                11.5,
+                if model.prefs.dark { 0xF5F7FA } else { 0x1D1D1F },
+                600,
+                (bar_w - 176.).max(80.),
+            );
+            let align_r = rect(bar_r.x1 - 156., bar_y + 6., 78., 26.);
+            let done_r = rect(bar_r.x1 - 72., bar_y + 6., 64., 26.);
+            let align_hov = align_r.contains(pointer);
+            scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                allegro_theme::rgba(0x0A84FF, if align_hov { 0.22 } else { 0.12 }),
+                None,
+                &allegro_theme::squircle_path(align_r, 13.0),
+            );
+            text.draw_face_fixed(
+                &mut scene,
+                "Noto Sans SC",
+                "自动对齐",
+                align_r.x0 + 14.,
+                align_r.y0 + 5.5,
+                11.5,
+                0x0A84FF,
+                600,
+                60.,
+            );
+            let done_hov = done_r.contains(pointer);
+            scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                allegro_theme::rgba(0x0A84FF, if done_hov { 1.0 } else { 0.92 }),
+                None,
+                &allegro_theme::squircle_path(done_r, 13.0),
+            );
+            text.draw_face_fixed(
+                &mut scene,
+                "Noto Sans SC",
+                "完成",
+                done_r.x0 + 19.,
+                done_r.y0 + 5.5,
+                11.5,
+                0xFFFFFF,
+                600,
+                40.,
+            );
+            next_hits.push(HitEntry {
+                rect: align_r,
+                action: Action::EditModeAutoAlign,
+                label: "自动对齐网格".into(),
+                enabled: true,
+                widget_id: String::new(),
+            });
+            next_hits.push(HitEntry {
+                rect: done_r,
+                action: Action::EditModeToggle,
+                label: "完成网格编辑".into(),
+                enabled: true,
+                widget_id: String::new(),
+            });
+        }
+
+        // 在全屏场景最顶层绘制跨组件磁吸辅助线和智能叠放融合边框。
+        if let Some(drag) = &self.drag {
+            if drag.canvas_id == canvas_id {
+                let target_rect = drag.stack_target.as_ref().and_then(|tid| {
+                    slots.iter().find(|s| &s.id == tid).map(|s| s.rect)
+                });
+                paint_guides(&mut scene, &drag.guides, target_rect);
+            }
+        } else if let Some(rs) = &self.resize {
+            if rs.canvas_id == canvas_id {
+                paint_guides(&mut scene, &rs.guides, None);
+            }
+        }
+
+        // 在画布最顶层弹出 Apple 风格玻璃右键菜单（可自由跨越卡片边缘且不挤占内容）
+        if let Some((wid, anchor)) = &self.menu_for {
+            if let Some(slot) = slots.iter().find(|s| &s.id == wid) {
+                if let Some(placement) = model.desktop_widgets.items.get(slot.placement_index) {
+                    let mr = Self::clamped_menu_rect(screen_log.0, screen_log.1, *anchor);
+                    let scheme = dotisle_domain::monet::scheme(0x0A84FF, model.prefs.dark);
+                    let mut menu_ui = crate::widgets::Ui::new(
+                        &mut scene,
+                        text,
+                        scheme,
+                        pointer,
+                        rect(0., 0., screen_log.0, screen_log.1),
+                    );
+                    let _ = desktop_cards::paint_apple_context_menu(
+                        &mut menu_ui,
+                        placement,
+                        (mr.x, mr.y),
+                        model.prefs.dark,
+                    );
+                    for hit in menu_ui.hits {
+                        next_hits.push(HitEntry {
+                            rect: hit.rect,
+                            action: hit.action,
+                            label: hit.label,
+                            enabled: hit.enabled,
+                            widget_id: placement.id.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        let c = &mut self.canvases[idx];
+        c.hits = next_hits;
+        if let Err(err) = gpu.draw(&mut c.surface, &scene, scale) {
+            eprintln!("Allegro gpu.draw failed: {err}");
+            self.error = Some(err);
+        }
+    }
+
+    fn collect_peers(slots: &[CanvasSlot]) -> Vec<SnapPeer> {
+        slots
+            .iter()
+            .map(|s| SnapPeer {
+                id: s.id.clone(),
+                rect: s.rect,
+                hidden: s.hidden,
+            })
+            .collect()
+    }
+
+    fn handle_cursor_move(&mut self, idx: usize, pt: (f64, f64), _model: &Model) {
+        let canvas_id = self.canvases[idx].window.id();
+        let scale = self.canvases[idx].desc.scale.max(0.5);
+        let work_area = Rect2D::new(
+            0.0,
+            0.0,
+            self.canvases[idx].desc.phys_w as f64 / scale,
+            self.canvases[idx].desc.phys_h as f64 / scale,
+        );
+        let peers = Self::collect_peers(&self.canvases[idx].slots);
+
+        if let Some(drag) = &mut self.drag {
+            if drag.canvas_id == canvas_id {
+                let dx = pt.0 - drag.start_cursor.0;
+                let dy = pt.1 - drag.start_cursor.1;
+                if dx.abs() > 3.0 || dy.abs() > 3.0 {
+                    drag.moved = true;
+                }
+                let raw = Rect2D::new(
+                    drag.orig_rect.x + dx,
+                    drag.orig_rect.y + dy,
+                    drag.orig_rect.w,
+                    drag.orig_rect.h,
+                );
+                if self.edit_mode {
+                    let grid = compute_grid(work_area.w, work_area.h);
+                    drag.preview_rect = snap_rect_to_grid(raw, &grid);
+                    drag.guides.clear();
+                    drag.stack_target = None;
+                } else {
+                    let snapped = snap_drag(
+                        &drag.widget_id,
+                        raw,
+                        work_area,
+                        &peers,
+                        SnapConfig::default(),
+                    );
+                    drag.preview_rect = snapped.rect;
+                    drag.guides = snapped.guides;
+                    drag.stack_target = snapped.stack_target;
+                }
+                self.canvases[idx].window.request_redraw();
+                return;
+            }
+        }
+
+        if let Some(rs) = &mut self.resize {
+            if rs.canvas_id == canvas_id {
+                let dx = pt.0 - rs.start_cursor.0;
+                let dy = pt.1 - rs.start_cursor.1;
+                let mut x = rs.orig_rect.x;
+                let mut y = rs.orig_rect.y;
+                let mut w = rs.orig_rect.w;
+                let mut h = rs.orig_rect.h;
+                if rs.edges.right {
+                    w = (rs.orig_rect.w + dx).clamp(MIN_W, MAX_W);
+                } else if rs.edges.left {
+                    let nw = (rs.orig_rect.w - dx).clamp(MIN_W, MAX_W);
+                    x = rs.orig_rect.right() - nw;
+                    w = nw;
+                }
+                if rs.edges.bottom {
+                    h = (rs.orig_rect.h + dy).clamp(MIN_H, MAX_H);
+                } else if rs.edges.top {
+                    let nh = (rs.orig_rect.h - dy).clamp(MIN_H, MAX_H);
+                    y = rs.orig_rect.bottom() - nh;
+                    h = nh;
+                }
+                let raw = Rect2D::new(x, y, w, h);
+                let (snapped_rect, guides) = snap_resize(
+                    &rs.widget_id,
+                    rs.edges.left,
+                    rs.edges.right,
+                    rs.edges.top,
+                    rs.edges.bottom,
+                    raw,
+                    &peers,
+                    SnapConfig::default(),
+                );
+                rs.preview_rect = snapped_rect;
+                rs.guides = guides;
+                self.canvases[idx].window.request_redraw();
+                return;
+            }
+        }
+
+        let hover_slot = self.canvases[idx]
+            .slots
+            .iter()
+            .rposition(|s| !s.hidden && s.rect.contains(pt.0, pt.1))
+            .map(|i| self.canvases[idx].slots[i].rect);
+        let cursor = hover_slot
+            .map(|r| detect_edges(r, pt).icon())
+            .unwrap_or(CursorIcon::Default);
+        let next_hit = self.canvases[idx]
+            .hits
+            .iter()
+            .rposition(|h| h.enabled && h.rect.contains(pt));
+        let c = &mut self.canvases[idx];
+        let hit_changed = c.hovered_hit != next_hit;
+        let cursor_changed = c.cursor != cursor;
+        c.hovered_hit = next_hit;
+        if cursor_changed {
+            c.cursor = cursor;
+            c.window.set_cursor(cursor);
+        }
+        // 非拖拽时仅在右键菜单打开、网格编辑模式或悬停切换时重绘，消除无意义重绘开销。
+        if self.menu_for.is_some()
+            || self.edit_mode
+            || hit_changed
+            || cursor_changed
+        {
+            c.window.request_redraw();
+        }
+    }
+
+    fn handle_mouse(
+        &mut self,
+        idx: usize,
+        canvas_id: WindowId,
+        state: ElementState,
+        button: MouseButton,
+        model: &mut Model,
+    ) -> Option<Action> {
+        let pt = self.canvases[idx].pointer;
+
+        if button == MouseButton::Right {
+            if state == ElementState::Released {
+                if let Some(si) = hit_test(&self.canvases[idx].slots, pt) {
+                    let wid = self.canvases[idx].slots[si].id.clone();
+                    let hidden = self.canvases[idx].slots[si].hidden;
+                    if !hidden {
+                        self.menu_for = Some((wid, pt));
+                        self.refresh_input_regions();
+                        self.canvases[idx].window.request_redraw();
+                    }
+                } else if self.menu_for.take().is_some() {
+                    self.refresh_input_regions();
+                    self.canvases[idx].window.request_redraw();
+                }
+            }
+            return None;
+        }
+
+        if button != MouseButton::Left {
+            return None;
+        }
+
+        if state == ElementState::Pressed {
+            // 若当前有右键菜单打开，点击菜单区域外直接收起菜单并拦截透传。
+            if let Some((ref m_wid, m_anchor)) = self.menu_for {
+                if self.canvases[idx].slots.iter().any(|s| &s.id == m_wid) {
+                    let scale = self.canvases[idx].desc.scale.max(0.5);
+                    let mr = Self::clamped_menu_rect(
+                        self.canvases[idx].desc.phys_w as f64 / scale,
+                        self.canvases[idx].desc.phys_h as f64 / scale,
+                        m_anchor,
+                    );
+                    if !mr.contains(pt.0, pt.1) {
+                        self.menu_for = None;
+                        self.refresh_input_regions();
+                        self.canvases[idx].window.request_redraw();
+                        return None;
+                    }
+                }
+            }
+
+            platform::capture_pointer(&self.canvases[idx].window, true);
+
+            // 1. 优先命中逆序交互元素（按钮 / 复选框 / 输入框 / 叠放页码箭头）。
+            let hit_action = self.canvases[idx]
+                .hits
+                .iter()
+                .rev()
+                .find(|h| h.enabled && h.rect.contains(pt))
+                .map(|h| (h.widget_id.clone(), h.action.clone()));
+
+            // 2. 检测卡片边缘调整尺寸（如果不在明确的子按钮上）。
+            if let Some(si) = self.canvases[idx]
+                .slots
+                .iter()
+                .rposition(|s| !s.hidden && s.rect.contains(pt.0, pt.1))
+            {
+                let slot = self.canvases[idx].slots[si].clone();
+                let edges = detect_edges(slot.rect, pt);
+                let is_card_body_action = matches!(
+                    hit_action.as_ref().map(|(_, a)| a),
+                    None | Some(Action::WidgetConfigure(_))
+                );
+                if edges.any() && is_card_body_action && self.menu_for.is_none() {
+                    self.resize = Some(ResizeState {
+                        widget_id: slot.id,
+                        canvas_id,
+                        edges,
+                        orig_rect: slot.rect,
+                        start_cursor: pt,
+                        preview_rect: slot.rect,
+                        guides: Vec::new(),
+                    });
+                    self.refresh_input_regions();
+                    return None;
+                }
+
+                // 3. 记录可能转为拖拽或触发点击。
+                self.drag = Some(DragState {
+                    widget_id: slot.id.clone(),
+                    canvas_id,
+                    orig_rect: slot.rect,
+                    start_cursor: pt,
+                    preview_rect: slot.rect,
+                    guides: Vec::new(),
+                    stack_target: None,
+                    moved: false,
+                });
+                if let Some((wid, act)) = hit_action {
+                    self.pressed = Some((canvas_id, wid, act));
+                }
+                self.refresh_input_regions();
+                return None;
+            }
+
+            if let Some((wid, act)) = hit_action {
+                self.pressed = Some((canvas_id, wid, act));
+            }
+            return None;
+        }
+
+        // Left mouse button Released
+        platform::capture_pointer(&self.canvases[idx].window, false);
+        let pressed = self.pressed.take();
+        let drag = self.drag.take();
+        let resize = self.resize.take();
+
+        if let Some(rs) = resize {
+            let scale = self.canvases[idx].desc.scale.max(0.5);
+            let mon_x = self.canvases[idx].desc.phys_x;
+            let mon_y = self.canvases[idx].desc.phys_y;
+            let nx = mon_x + (rs.preview_rect.x * scale).round() as i32;
+            let ny = mon_y + (rs.preview_rect.y * scale).round() as i32;
+            model.native_command(
+                "widgetUpdate",
+                json!({
+                    "id": rs.widget_id,
+                    "x": nx,
+                    "y": ny,
+                    "width": rs.preview_rect.w.round(),
+                    "height": rs.preview_rect.h.round(),
+                }),
+            );
+            self.refresh_input_regions();
+            self.canvases[idx].window.request_redraw();
+            return None;
+        }
+
+        if let Some(d) = drag {
+            if d.moved {
+                if let Some(target_id) = d.stack_target {
+                    if let Some(base) = model
+                        .desktop_widgets
                         .items
                         .iter()
-                        .filter(|t| !t.done(&dotisle_domain::todos::Now::local()))
-                        .count();
-                    let (_, max) = crate::desktop_cards::todo_metrics(w, h, c.placement.size, count);
-                    c.scroll = (c.scroll - amount).clamp(0., max);
-                    c.window.request_redraw();
-                }
-            }
-            WindowEvent::MouseInput {
-                state: ElementState::Pressed,
-                button: MouseButton::Right,
-                ..
-            } => {
-                if c.hidden {
-                    action = Some(Action::WidgetRestore(c.placement.id.clone()));
-                } else if c.edit.is_none() {
-                    c.menu = !c.menu;
-                    c.window.request_redraw();
-                }
-            }
-            WindowEvent::MouseInput {
-                state,
-                button: MouseButton::Left,
-                ..
-            } => {
-                if state == ElementState::Pressed {
-                    c.pressed = c
-                        .hits
-                        .iter()
-                        .rfind(|h| h.enabled && h.rect.contains(c.pointer))
-                        .map(|h| h.action.clone());
-                    if c.pressed.is_none() && !c.hidden && c.edit.is_none() {
-                        let (w, h) = logical_size(&c.window);
-                        let edges = edges_at(c.pointer, w, h);
-                        if edges.any() {
-                            if let Ok(origin) = c.window.outer_position() {
-                                let scale = c.window.scale_factor();
-                                let inner = c.window.inner_size();
-                                c.resize = Some(Resize {
-                                    edges,
-                                    origin: (origin.x, origin.y),
-                                    size: (inner.width, inner.height),
-                                    cursor: (c.pointer.0 * scale, c.pointer.1 * scale),
-                                });
-                                crate::platform::capture_pointer(&c.window, true);
-                            }
-                        } else if let Ok(origin) = c.window.outer_position() {
-                            let scale = c.window.scale_factor();
-                            c.drag = Some((
-                                (origin.x, origin.y),
-                                (
-                                    origin.x as f64 + c.pointer.0 * scale,
-                                    origin.y as f64 + c.pointer.1 * scale,
-                                ),
-                            ));
-                            crate::platform::capture_pointer(&c.window, true);
+                        .find(|p| p.id == target_id)
+                        .cloned()
+                    {
+                        let (_sid, updates) = self.stacks.merge_pair(
+                            &base.id,
+                            &d.widget_id,
+                            &base.stack_id,
+                        );
+                        for (mid, stack_id, order) in updates {
+                            model.native_command(
+                                "widgetUpdate",
+                                json!({
+                                    "id": mid,
+                                    "x": base.x,
+                                    "y": base.y,
+                                    "width": base.width,
+                                    "height": base.height,
+                                    "size": base.size,
+                                    "stackId": stack_id,
+                                    "stackOrder": order,
+                                }),
+                            );
                         }
                     }
                 } else {
-                    if let Some(_resize) = c.resize.take() {
-                        crate::platform::capture_pointer(&c.window, false);
-                        let (w, h) = logical_size(&c.window);
-                        m.native_command(
-                            "widgetUpdate",
-                            serde_json::json!({"id":c.placement.id,"width":w,"height":h}),
-                        );
-                        if m.demo {
-                            let _ = m.desktop_widgets.update(
-                                &serde_json::json!({"id":c.placement.id,"width":w,"height":h}),
-                            );
-                        }
-                        c.last_dims = (w, h);
-                        c.pending = None;
-                    } else if c.drag.take().is_some() {
-                        crate::platform::capture_pointer(&c.window, false);
-                        if let Ok(position) = c.window.outer_position() {
-                            let p = clamp_position(&c.window, position.x, position.y);
-                            c.window.set_outer_position(PhysicalPosition::new(p.0, p.1));
-                            m.native_command(
+                    let scale = self.canvases[idx].desc.scale.max(0.5);
+                    let nx = self.canvases[idx].desc.phys_x
+                        + (d.preview_rect.x * scale).round() as i32;
+                    let ny = self.canvases[idx].desc.phys_y
+                        + (d.preview_rect.y * scale).round() as i32;
+                    let stack_group = model
+                        .desktop_widgets
+                        .items
+                        .iter()
+                        .find(|p| p.id == d.widget_id)
+                        .map(|p| p.stack_id.clone())
+                        .unwrap_or_default();
+                    if stack_group.is_empty() {
+                        if self.edit_mode {
+                            model.native_command(
                                 "widgetUpdate",
-                                serde_json::json!({"id":c.placement.id,"x":p.0,"y":p.1}),
+                                json!({
+                                    "id": d.widget_id,
+                                    "x": nx,
+                                    "y": ny,
+                                    "width": d.preview_rect.w.round(),
+                                    "height": d.preview_rect.h.round(),
+                                }),
                             );
-                            if m.demo {
-                                let _ = m.desktop_widgets.update(
-                                    &serde_json::json!({"id":c.placement.id,"x":p.0,"y":p.1}),
-                                );
-                            }
-                            c.pending = Some((p, Instant::now()));
+                        } else {
+                            model.native_command(
+                                "widgetUpdate",
+                                json!({"id": d.widget_id, "x": nx, "y": ny}),
+                            );
                         }
-                    } else if let Some(pressed) = c.pressed.take() {
-                        if c.hits.iter().any(|h| {
-                            h.enabled
-                                && h.rect.contains(c.pointer)
-                                && format!("{:?}", h.action) == format!("{pressed:?}")
-                        }) {
-                            match pressed {
-                                Action::WidgetFocus => c.menu = !c.menu,
-                                Action::TodoInlineEdit(todo) => begin_edit(c, m, todo),
-                                Action::TodoField(field) => {
-                                    if let Some(edit) = c.edit.as_mut() {
-                                        edit.field = field;
-                                        edit.preedit.clear();
-                                        edit.error = None;
-                                    }
-                                    c.window.focus_window();
-                                    crate::platform::activate(&c.window);
-                                    c.window.set_ime_allowed(true);
-                                    position_ime(c);
-                                    c.window.request_redraw();
-                                }
-                                Action::TodoSave => save_edit(c, m),
-                                Action::TodoCancel => cancel_edit(c),
-                                pressed => {
-                                    action = Some(pressed);
-                                    c.menu = false;
-                                }
-                            }
+                    } else {
+                        let members: Vec<String> = model
+                            .desktop_widgets
+                            .items
+                            .iter()
+                            .filter(|p| p.stack_id == stack_group)
+                            .map(|p| p.id.clone())
+                            .collect();
+                        for mid in members {
+                            model.native_command(
+                                "widgetUpdate",
+                                json!({"id": mid, "x": nx, "y": ny}),
+                            );
                         }
                     }
+                }
+                self.refresh_input_regions();
+                self.canvases[idx].window.request_redraw();
+                return None;
+            }
+        }
+
+        self.refresh_input_regions();
+
+        if let Some((cid, _wid, action)) = pressed {
+            if cid == canvas_id {
+                return self.execute_local_or_forward(idx, action, model);
+            }
+        }
+
+        None
+    }
+
+    fn execute_local_or_forward(
+        &mut self,
+        idx: usize,
+        action: Action,
+        model: &mut Model,
+    ) -> Option<Action> {
+        let win = self.canvases[idx].window.clone();
+        match action {
+            Action::StackNext(id) => {
+                self.stacks.step_by_member(&id, 1, self.now_sec);
+                self.canvases[idx].dirty = true;
+                win.request_redraw();
+                None
+            }
+            Action::StackPrev(id) => {
+                self.stacks.step_by_member(&id, -1, self.now_sec);
+                self.canvases[idx].dirty = true;
+                win.request_redraw();
+                None
+            }
+            Action::StackUnpack(id) => {
+                self.menu_for = None;
+                let base = model.desktop_widgets.items.iter().find(|p| p.id == id);
+                let offset_x = base.map(|p| p.x + 36).unwrap_or(100);
+                let offset_y = base.map(|p| p.y + 36).unwrap_or(100);
+                let updates = self.stacks.unpack_member(&id);
+                for (mid, sid, ord) in updates {
+                    if mid == id {
+                        model.native_command(
+                            "widgetUpdate",
+                            json!({"id": mid, "x": offset_x, "y": offset_y, "stackId": sid, "stackOrder": ord}),
+                        );
+                    } else {
+                        model.native_command(
+                            "widgetUpdate",
+                            json!({"id": mid, "stackId": sid, "stackOrder": ord}),
+                        );
+                    }
+                }
+                None
+            }
+            Action::NoteInlineEdit(id) => {
+                if let Some(p) = model.desktop_widgets.items.iter().find(|p| p.id == id) {
+                    self.note_edit = Some(NoteEdit::new(&p.id, &p.config.title, &p.config.text));
+                    platform::activate(&win);
+                    win.set_ime_allowed(true);
+                    let px = (self.canvases[idx].pointer.0.max(20.0) as i32).max(0);
+                    let py = (self.canvases[idx].pointer.1.max(20.0) as i32).max(0);
+                    win.set_ime_cursor_area(
+                        LogicalPosition::new(px, py),
+                        PhysicalSize::new(120, 24),
+                    );
+                    win.request_redraw();
+                }
+                None
+            }
+            Action::NoteCancel => {
+                self.note_edit = None;
+                win.set_ime_allowed(false);
+                platform::set_dashboard_layer(&win, self.edit_mode);
+                win.request_redraw();
+                None
+            }
+            Action::NoteSave => {
+                if let Some(edit) = self.note_edit.take() {
+                    if let Some(p) = model
+                        .desktop_widgets
+                        .items
+                        .iter()
+                        .find(|p| p.id == edit.widget_id)
+                    {
+                        let mut cfg = p.config.clone();
+                        cfg.text = edit.text;
+                        model.native_command(
+                            "widgetUpdate",
+                            json!({"id": edit.widget_id, "config": cfg}),
+                        );
+                    }
+                }
+                win.set_ime_allowed(false);
+                platform::set_dashboard_layer(&win, self.edit_mode);
+                win.request_redraw();
+                None
+            }
+            Action::NoteToggleCheck(id, line_idx) => {
+                if let Some(p) = model.desktop_widgets.items.iter().find(|p| p.id == id) {
+                    if let Some(next_text) = toggle_note_checkbox(&p.config.text, line_idx) {
+                        let mut cfg = p.config.clone();
+                        cfg.text = next_text;
+                        model.native_command("widgetUpdate", json!({"id": id, "config": cfg}));
+                    }
+                }
+                None
+            }
+            Action::DropzoneOpen(id, item_idx) => {
+                if let Some(it) = self.dropzone.items(&id).get(item_idx) {
+                    platform::open_shell_path(&it.path);
+                } else if let Some(raw) = model
+                    .desktop_widgets
+                    .items
+                    .iter()
+                    .find(|p| p.id == id)
+                    .and_then(|p| p.config.items.get(item_idx))
+                {
+                    platform::open_shell_path(raw);
+                }
+                None
+            }
+            Action::DropzoneClear(id) => {
+                self.dropzone.clear(&id);
+                if let Some(p) = model.desktop_widgets.items.iter().find(|p| p.id == id) {
+                    let mut cfg = p.config.clone();
+                    cfg.items.clear();
+                    model.native_command("widgetUpdate", json!({"id": id, "config": cfg}));
+                }
+                win.request_redraw();
+                None
+            }
+            Action::PhotoNext(id) => {
+                self.photos.next_photo(&id);
+                win.request_redraw();
+                None
+            }
+            Action::QuoteNext(id) => {
+                let entry = self.quote_indices.entry(id).or_insert(0);
+                *entry = entry.wrapping_add(1);
+                win.request_redraw();
+                None
+            }
+            Action::AppFolderLaunch(id, item_idx) => {
+                if let Some(p) = model.desktop_widgets.items.iter().find(|p| p.id == id) {
+                    let entries = crate::apple_desktop::app_folder_entries(&p.config);
+                    if let Some(entry) = entries.get(item_idx) {
+                        platform::open_shell_path(&entry.target);
+                    }
+                }
+                None
+            }
+            Action::AppFolderToggleGrid(id) => {
+                self.menu_for = None;
+                self.refresh_input_regions();
+                if let Some(p) = model.desktop_widgets.items.iter().find(|p| p.id == id) {
+                    let mut cfg = p.config.clone();
+                    cfg.caption = if cfg.caption.trim() == "9" {
+                        "4".into()
+                    } else {
+                        "9".into()
+                    };
+                    model.native_command("widgetUpdate", json!({"id": id, "config": cfg}));
+                }
+                win.request_redraw();
+                None
+            }
+            Action::EditModeToggle => {
+                self.edit_mode = !self.edit_mode;
+                self.menu_for = None;
+                for c in &self.canvases {
+                    platform::set_dashboard_layer(&c.window, self.dashboard.open || self.edit_mode);
                     c.window.request_redraw();
                 }
+                self.refresh_input_regions();
+                None
             }
-            WindowEvent::KeyboardInput { event, .. } => {
-                if c.edit.is_some() && event.state == ElementState::Pressed {
-                    match &event.logical_key {
-                        Key::Named(NamedKey::Escape) => cancel_edit(c),
-                        Key::Named(NamedKey::Enter) => save_edit(c, m),
-                        Key::Named(NamedKey::Tab) => {
-                            if let Some(edit) = c.edit.as_mut() {
-                                edit.field = edit.field.next();
-                                edit.preedit.clear();
-                            }
-                            position_ime(c);
-                            c.window.request_redraw();
-                        }
-                        Key::Named(NamedKey::Backspace) => edit_backspace(c),
-                        Key::Character(value) if !value.chars().any(char::is_control) => {
-                            edit_text(c, value)
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            WindowEvent::Ime(Ime::Preedit(value, _)) => {
-                if let Some(edit) = c.edit.as_mut() {
-                    edit.preedit = value;
-                }
-                c.window.request_redraw();
-            }
-            WindowEvent::Ime(Ime::Commit(value)) => {
-                if let Some(edit) = c.edit.as_mut() {
-                    edit.preedit.clear();
-                }
-                if c.edit.is_some() {
-                    edit_text(c, &value);
-                }
-                c.window.request_redraw();
-            }
-            WindowEvent::Ime(Ime::Disabled) => {
-                if let Some(edit) = c.edit.as_mut() {
-                    edit.preedit.clear();
-                }
-                c.window.request_redraw();
-            }
-            WindowEvent::Focused(false) => {
-                if let Some(_resize) = c.resize.take() {
-                    crate::platform::capture_pointer(&c.window, false);
-                    let (w, h) = logical_size(&c.window);
-                    m.native_command(
+            Action::EditModeAutoAlign => {
+                let scale = self.canvases[idx].desc.scale.max(0.5);
+                let mon_x = self.canvases[idx].desc.phys_x;
+                let mon_y = self.canvases[idx].desc.phys_y;
+                let grid = compute_grid(
+                    self.canvases[idx].desc.phys_w as f64 / scale,
+                    self.canvases[idx].desc.phys_h as f64 / scale,
+                );
+                let items: Vec<(String, Rect2D)> = self.canvases[idx]
+                    .slots
+                    .iter()
+                    .filter(|s| !s.hidden)
+                    .map(|s| (s.id.clone(), s.rect))
+                    .collect();
+                for (wid, aligned) in auto_pack_grid(&items, &grid) {
+                    let nx = mon_x + (aligned.x * scale).round() as i32;
+                    let ny = mon_y + (aligned.y * scale).round() as i32;
+                    model.native_command(
                         "widgetUpdate",
-                        serde_json::json!({"id":c.placement.id,"width":w,"height":h}),
+                        json!({
+                            "id": wid,
+                            "x": nx,
+                            "y": ny,
+                            "width": aligned.w.round(),
+                            "height": aligned.h.round(),
+                        }),
                     );
-                    c.last_dims = (w, h);
                 }
-                if c.drag.take().is_some() {
-                    crate::platform::capture_pointer(&c.window, false);
-                    if let Ok(p) = c.window.outer_position() {
-                        m.native_command(
-                            "widgetUpdate",
-                            serde_json::json!({"id":c.placement.id,"x":p.x,"y":p.y}),
-                        );
-                        c.pending = Some(((p.x, p.y), Instant::now()));
+                win.request_redraw();
+                None
+            }
+            Action::TodoInlineEdit(todo_id) => {
+                let target_wid = self.canvases[idx]
+                    .hits
+                    .iter()
+                    .find(|h| matches!(h.action, Action::TodoInlineEdit(_)))
+                    .map(|h| h.widget_id.clone())
+                    .or_else(|| {
+                        model
+                            .desktop_widgets
+                            .items
+                            .iter()
+                            .find(|p| p.kind == Kind::Todos)
+                            .map(|p| p.id.clone())
+                    });
+                if let Some(wid) = target_wid {
+                    let ed = if let Some(tid) = todo_id {
+                        model
+                            .todos
+                            .items
+                            .iter()
+                            .find(|t| t.id == tid)
+                            .map(|t| TodoEdit {
+                                id: Some(t.id.clone()),
+                                title: t.title.clone(),
+                                date: t.date.clone(),
+                                time: t.time.clone(),
+                                content: t.content.clone(),
+                                daily: t.daily,
+                                color: t.color.clone(),
+                                ..Default::default()
+                            })
+                            .unwrap_or_default()
+                    } else {
+                        let d = crate::desktop_cards::date();
+                        TodoEdit {
+                            date: format!("{:04}-{:02}-{:02}", d.year, d.month, d.day),
+                            ..Default::default()
+                        }
+                    };
+                    self.todo_edit = Some((wid, ed));
+                    platform::activate(&win);
+                    win.set_ime_allowed(true);
+                    win.request_redraw();
+                }
+                None
+            }
+            Action::TodoField(f) => {
+                if let Some((_, ed)) = &mut self.todo_edit {
+                    ed.field = f;
+                    ed.preedit.clear();
+                    ed.error = None;
+                    win.request_redraw();
+                }
+                None
+            }
+            Action::TodoCancel => {
+                self.todo_edit = None;
+                win.set_ime_allowed(false);
+                platform::set_dashboard_layer(&win, self.edit_mode);
+                win.request_redraw();
+                None
+            }
+            Action::TodoSave => {
+                self.save_todo_edit(model);
+                win.set_ime_allowed(false);
+                platform::set_dashboard_layer(&win, self.edit_mode);
+                win.request_redraw();
+                None
+            }
+            other => {
+                if matches!(
+                    other,
+                    Action::WidgetStyle(..)
+                        | Action::WidgetMaterial(..)
+                        | Action::WidgetResize(..)
+                        | Action::WidgetHide(..)
+                        | Action::WidgetRemove(..)
+                        | Action::WidgetConfigure(..)
+                ) {
+                    // 仅在隐藏/移除时收起菜单，方便连续切换主题和材质手感。
+                    if matches!(
+                        other,
+                        Action::WidgetHide(_) | Action::WidgetRemove(_) | Action::WidgetConfigure(_)
+                    ) {
+                        self.menu_for = None;
+                        self.refresh_input_regions();
+                    }
+                    win.request_redraw();
+                }
+                Some(other)
+            }
+        }
+    }
+
+    fn save_todo_edit(&mut self, model: &mut Model) {
+        let Some((wid, mut ed)) = self.todo_edit.take() else {
+            return;
+        };
+        let title = ed.title.trim();
+        if title.is_empty() {
+            ed.error = Some("请填写标题".into());
+            self.todo_edit = Some((wid, ed));
+            return;
+        }
+        if !ed.date.is_empty() && !crate::desktop_cards::valid_date(&ed.date) {
+            ed.error = Some("日期格式 yyyy-MM-dd".into());
+            self.todo_edit = Some((wid, ed));
+            return;
+        }
+        if !ed.time.is_empty() && !crate::desktop_cards::valid_time(&ed.time) {
+            ed.error = Some("时间格式 HH:mm".into());
+            self.todo_edit = Some((wid, ed));
+            return;
+        }
+        if let Some(tid) = ed.id {
+            model.native_command(
+                "todoEdit",
+                json!({"id":tid,"title":title,"date":ed.date,"time":ed.time,"content":ed.content,"daily":ed.daily,"color":ed.color}),
+            );
+        } else {
+            model.native_command(
+                "todoCreate",
+                json!({"title":title,"date":ed.date,"time":ed.time,"content":ed.content,"daily":ed.daily,"color":ed.color}),
+            );
+        }
+    }
+
+    fn handle_wheel(&mut self, idx: usize, delta: MouseScrollDelta, model: &Model) {
+        let dy = match delta {
+            MouseScrollDelta::LineDelta(_, y) => y as f64 * 32.0,
+            MouseScrollDelta::PixelDelta(p) => p.y,
+        };
+        if dy.abs() < 0.1 {
+            return;
+        }
+        let pt = self.canvases[idx].pointer;
+        let Some(si) = hit_test(&self.canvases[idx].slots, pt) else {
+            return;
+        };
+        let slot = self.canvases[idx].slots[si].clone();
+        let Some(p) = model.desktop_widgets.items.get(slot.placement_index) else {
+            return;
+        };
+
+        let in_header = pt.1 - slot.rect.y <= 34.0;
+        let stacked = slot.stack_info.is_some_and(|(_, tot)| tot >= 2);
+        if stacked && (p.kind != Kind::Todos || in_header) {
+            let step = if dy < 0.0 { 1 } else { -1 };
+            self.stacks.step_by_member(&p.id, step, self.now_sec);
+            self.canvases[idx].dirty = true;
+            self.canvases[idx].window.request_redraw();
+            return;
+        }
+
+        if p.kind == Kind::Todos {
+            let (_, max) = crate::desktop_cards::todo_metrics(
+                slot.rect.w,
+                slot.rect.h,
+                p.size,
+                model.todos.items.len(),
+            );
+            let cur = self.scroll_for.entry(p.id.clone()).or_insert(0.0);
+            *cur = (*cur - dy).clamp(0.0, max);
+            self.canvases[idx].window.request_redraw();
+        }
+    }
+
+    fn handle_drop(&mut self, idx: usize, path: &std::path::Path, model: &Model) -> Option<Action> {
+        let pt = self.canvases[idx].pointer;
+        let target_slot = hit_test(&self.canvases[idx].slots, pt)
+            .or_else(|| {
+                self.canvases[idx].slots.iter().position(|s| {
+                    model
+                        .desktop_widgets
+                        .items
+                        .get(s.placement_index)
+                        .is_some_and(|p| p.kind == Kind::Dropzone)
+                })
+            })?;
+        let pid = self.canvases[idx].slots[target_slot].id.clone();
+        let p = model
+            .desktop_widgets
+            .items
+            .iter()
+            .find(|p| p.id == pid)?
+            .clone();
+
+        match p.kind {
+            Kind::Dropzone => {
+                if let Some(paths) = self.dropzone.push_path(&p.id, path) {
+                    let mut cfg = p.config.clone();
+                    cfg.items = paths;
+                    model.native_command("widgetUpdate", json!({"id": p.id, "config": cfg}));
+                    self.canvases[idx].window.request_redraw();
+                }
+            }
+            Kind::Launcher => {
+                if let Some((title, target)) = resolve_dropped_launcher(path) {
+                    let mut cfg = p.config.clone();
+                    if cfg.title.is_empty() {
+                        cfg.title = title;
+                    }
+                    cfg.target = target;
+                    model.native_command("widgetUpdate", json!({"id": p.id, "config": cfg}));
+                }
+            }
+            Kind::PhotoFrame => {
+                let folder = if path.is_dir() {
+                    Some(path.to_path_buf())
+                } else {
+                    path.parent().map(|d| d.to_path_buf())
+                };
+                if let Some(dir) = folder {
+                    let mut cfg = p.config.clone();
+                    cfg.folder = dir.to_string_lossy().to_string();
+                    model.native_command("widgetUpdate", json!({"id": p.id, "config": cfg}));
+                    self.canvases[idx].window.request_redraw();
+                }
+            }
+            Kind::AppFolder => {
+                if let Some((title, target)) = resolve_dropped_launcher(path) {
+                    let mut cfg = p.config.clone();
+                    let entry = format!("{title}|{target}");
+                    if !cfg.items.iter().any(|existing| existing == &entry || existing == &target) {
+                        cfg.items.insert(0, entry);
+                        cfg.items.truncate(9);
+                        model.native_command("widgetUpdate", json!({"id": p.id, "config": cfg}));
+                        self.canvases[idx].window.request_redraw();
                     }
                 }
-                c.pressed = None;
-            }
-            WindowEvent::CloseRequested => {
-                action = Some(Action::WidgetRemove(c.placement.id.clone()))
             }
             _ => {}
         }
-        action
+        None
+    }
+
+    fn handle_key(&mut self, key: Key, model: &mut Model) -> Option<Action> {
+        if key == Key::Named(NamedKey::Escape) {
+            if self.note_edit.take().is_some() {
+                for c in &self.canvases {
+                    c.window.set_ime_allowed(false);
+                    platform::set_dashboard_layer(&c.window, self.edit_mode);
+                    c.window.request_redraw();
+                }
+                return None;
+            }
+            if self.todo_edit.take().is_some() {
+                for c in &self.canvases {
+                    c.window.set_ime_allowed(false);
+                    platform::set_dashboard_layer(&c.window, self.edit_mode);
+                    c.window.request_redraw();
+                }
+                return None;
+            }
+            if self.menu_for.take().is_some() {
+                self.refresh_input_regions();
+                for c in &self.canvases {
+                    c.window.request_redraw();
+                }
+                return None;
+            }
+            if self.edit_mode {
+                self.edit_mode = false;
+                for c in &self.canvases {
+                    platform::set_dashboard_layer(&c.window, false);
+                    c.window.request_redraw();
+                }
+                self.refresh_input_regions();
+                return None;
+            }
+        }
+
+        if let Some(note) = &mut self.note_edit {
+            match key {
+                Key::Named(NamedKey::Backspace) => note.backspace(),
+                Key::Named(NamedKey::Enter) => note.newline(),
+                Key::Named(NamedKey::Space) => note.push_str(" "),
+                Key::Character(s) => note.push_str(&s),
+                _ => return None,
+            }
+            for c in &self.canvases {
+                c.window.request_redraw();
+            }
+            return None;
+        }
+
+        if let Some((wid, ed)) = &mut self.todo_edit {
+            match key {
+                Key::Named(NamedKey::Tab) => {
+                    ed.field = ed.field.next();
+                    ed.preedit.clear();
+                }
+                Key::Named(NamedKey::Backspace) => {
+                    ed.preedit.clear();
+                    match ed.field {
+                        TodoField::Title => {
+                            ed.title.pop();
+                        }
+                        TodoField::Date => {
+                            ed.date.pop();
+                        }
+                        TodoField::Time => {
+                            ed.time.pop();
+                        }
+                    }
+                }
+                Key::Named(NamedKey::Enter) => {
+                    let _ = wid.clone();
+                    self.save_todo_edit(model);
+                    for c in &self.canvases {
+                        c.window.set_ime_allowed(false);
+                        platform::set_dashboard_layer(&c.window, self.edit_mode);
+                        c.window.request_redraw();
+                    }
+                    return None;
+                }
+                Key::Named(NamedKey::Space) => push_todo_field(ed, " "),
+                Key::Character(s) => push_todo_field(ed, &s),
+                _ => return None,
+            }
+            for c in &self.canvases {
+                c.window.request_redraw();
+            }
+        }
+        None
+    }
+
+    fn handle_ime(&mut self, ime: Ime, _model: &mut Model) {
+        if let Some(note) = &mut self.note_edit {
+            match ime {
+                Ime::Preedit(s, _) => note.preedit = s,
+                Ime::Commit(s) => note.push_str(&s),
+                Ime::Disabled => note.preedit.clear(),
+                Ime::Enabled => {}
+            }
+            for c in &self.canvases {
+                c.window.request_redraw();
+            }
+            return;
+        }
+        if let Some((_, ed)) = &mut self.todo_edit {
+            match ime {
+                Ime::Preedit(s, _) => ed.preedit = s,
+                Ime::Commit(s) => {
+                    ed.preedit.clear();
+                    push_todo_field(ed, &s);
+                }
+                Ime::Disabled => ed.preedit.clear(),
+                Ime::Enabled => {}
+            }
+            for c in &self.canvases {
+                c.window.request_redraw();
+            }
+        }
+    }
+
+    /// 同步右侧独立置顶侧边栏窗口：按 `Alt+~` 显示于主屏右侧并保持左侧电脑 100% 可操作。
+    fn sync_sidebar_window(
+        &mut self,
+        event: &ActiveEventLoop,
+        gpu: &mut Gpu,
+        descs: &[MonitorDesc],
+    ) {
+        let should_show = sidebar_should_show(&self.dashboard);
+        if !should_show {
+            if let Some(sb) = &mut self.sidebar_win {
+                if sb.visible {
+                    sb.visible = false;
+                    sb.window.set_ime_allowed(false);
+                    platform::hide_window(&sb.window);
+                    sb.last_region = None;
+                    sb.hits.clear();
+                    sb.pointer = (-1000.0, -1000.0);
+                    sb.hovered_hit = None;
+                }
+            }
+            return;
+        }
+        let Some(mon) = descs.first() else {
+            return;
+        };
+        let scale = mon.scale.max(0.5);
+        let mon_log_w = mon.phys_w as f64 / scale;
+        let mon_log_h = mon.phys_h as f64 / scale;
+        let metrics = crate::stage_overlay::sidebar_layout_metrics(mon_log_w);
+        let win_log_w = metrics.win_w;
+        let win_phys_w = (win_log_w * scale).round().max(1.0) as u32;
+        let win_phys_h = mon.phys_h.max(1);
+        let win_phys_x = mon.phys_x + mon.phys_w as i32 - win_phys_w as i32;
+        let win_phys_y = mon.phys_y;
+
+        if let Some(sb) = &mut self.sidebar_win {
+            if sb.mon != *mon || (sb.win_log.0 - win_log_w).abs() > 1.0 {
+                sb.mon = mon.clone();
+                sb.metrics = metrics;
+                sb.win_log = (win_log_w, mon_log_h);
+                let _ = sb
+                    .window
+                    .request_inner_size(PhysicalSize::new(win_phys_w, win_phys_h));
+                sb.window
+                    .set_outer_position(PhysicalPosition::new(win_phys_x, win_phys_y));
+                sb.surface.resize(win_phys_w, win_phys_h);
+                sb.prime_region();
+                sb.dirty = true;
+            }
+            if !sb.visible {
+                sb.prime_region();
+                sb.visible = true;
+                sb.dirty = true;
+                platform::show_sidebar_topmost(&sb.window, false);
+                sb.window.request_redraw();
+            }
+            return;
+        }
+
+        let attrs = Window::default_attributes()
+            .with_title("DotIsle Allegro Sidebar")
+            .with_decorations(false)
+            .with_transparent(true)
+            .with_no_redirection_bitmap(true)
+            .with_undecorated_shadow(false)
+            .with_resizable(false)
+            .with_skip_taskbar(true)
+            .with_visible(false)
+            .with_active(false)
+            .with_inner_size(PhysicalSize::new(win_phys_w, win_phys_h))
+            .with_position(PhysicalPosition::new(win_phys_x, win_phys_y));
+        let Ok(window) = event.create_window(attrs) else {
+            return;
+        };
+        let window = Arc::new(window);
+        platform::remove_dwm_frame(&window);
+        let region = sidebar_region(sidebar_initial_panel(metrics, mon_log_h), scale);
+        let region_applied = platform::apply_sidebar_region(&window, region);
+        // 首次用 winit 同步可见标记；后续从 Win32 无激活显示/隐藏，避免 SW_SHOW 抢焦点。
+        window.set_visible(true);
+        platform::show_sidebar_topmost(&window, false);
+        let surface = match gpu.surface(window.clone()) {
+            Ok(surface) => surface,
+            Err(err) => {
+                platform::hide_window(&window);
+                eprintln!("Allegro sidebar surface: {err}");
+                self.error = Some(err);
+                return;
+            }
+        };
+        window.request_redraw();
+        self.sidebar_win = Some(SidebarWindow {
+            mon: mon.clone(),
+            window,
+            surface,
+            metrics,
+            win_log: (win_log_w, mon_log_h),
+            hits: Vec::new(),
+            card_slots: Vec::new(),
+            viewport: Rect::ZERO,
+            max_scroll: 0.0,
+            pointer: (-1000.0, -1000.0),
+            hovered_hit: None,
+            visible: true,
+            last_region: region_applied.then_some(region),
+            previous_foreground: None,
+            dirty: true,
+        });
+    }
+
+    /// 首帧可先画默认组件；文件加载完成前禁止覆盖已有配置。
+    fn sync_sidebar_data(&mut self, demo: bool) -> bool {
+        if self.sidebar_io.is_none() {
+            let path = (!demo && !self.data_dir.as_os_str().is_empty())
+                .then(|| self.data_dir.join("allegro-sidebar.json"));
+            let loading = path.is_some();
+            let io = SidebarIo::start(path);
+            self.stage.ensure_sidebar_loaded(None, demo);
+            self.stage.sidebar_loaded = !loading || !io.available();
+            self.sidebar_io = Some(io);
+        }
+        let io = self.sidebar_io.as_mut().unwrap();
+        let mut changed = false;
+        while let Some(result) = io.take() {
+            match result {
+                sidebar_io::Result::Loaded(widgets) => {
+                    self.stage.sidebar_widgets = widgets;
+                    self.stage.sidebar_loaded = true;
+                    changed = true;
+                }
+                sidebar_io::Result::Clipboard(items) if !items.is_empty() => {
+                    self.clipboard.items = items;
+                    changed = true;
+                }
+                sidebar_io::Result::Copied(Some(text)) => {
+                    self.stage.set_toast(if text.is_empty() { "已复制到剪贴板".into() }
+                        else { format!("已复制 {text} 到剪贴板") });
+                    io.poll_clipboard();
+                    changed = true;
+                }
+                _ => {}
+            }
+        }
+        changed
+    }
+
+    fn request_sidebar_redraw(&self) {
+        if let Some(sb) = &self.sidebar_win {
+            sb.window.request_redraw();
+        }
+    }
+
+    fn end_sidebar_search(&mut self) {
+        self.stage.search_focused = false;
+        self.stage.preedit.clear();
+        if let Some(sb) = &mut self.sidebar_win {
+            sb.window.set_ime_allowed(false);
+            if let Some(previous) = sb.previous_foreground.take() {
+                platform::restore_sidebar_focus(&sb.window, previous);
+            }
+        }
+    }
+
+    fn close_sidebar(&mut self) {
+        self.dashboard.close();
+        self.sidebar_menu_for = None;
+        self.end_sidebar_search();
+        self.stage.sidebar_add_open = false;
+        self.stage.clear_query();
+        if let Some(sb) = &mut self.sidebar_win {
+            sb.window.set_ime_allowed(false);
+            sb.window.request_redraw();
+        }
+    }
+
+    fn handle_sidebar_event(
+        &mut self,
+        event: WindowEvent,
+        model: &mut Model,
+        gpu: &mut Gpu,
+        text: &mut Text,
+        time: f64,
+        media_position: Option<f64>,
+    ) -> Option<Action> {
+        match event {
+            WindowEvent::Resized(new_size) => {
+                if let Some(sb) = &mut self.sidebar_win {
+                    let scale = sb.mon.scale.max(0.5);
+                    sb.win_log = (new_size.width.max(1) as f64 / scale, new_size.height.max(1) as f64 / scale);
+                    sb.surface.resize(new_size.width.max(1), new_size.height.max(1));
+                    if sb.visible { sb.prime_region(); }
+                    sb.window.request_redraw();
+                }
+                None
+            }
+            WindowEvent::RedrawRequested => {
+                self.redraw_sidebar(model, gpu, text, time, media_position);
+                None
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                let Some(sb) = &mut self.sidebar_win else {
+                    return None;
+                };
+                let scale = sb.mon.scale.max(0.5);
+                let pt = position.to_logical::<f64>(scale);
+                sb.pointer = (pt.x, pt.y);
+                let next_hit = sb.hits.iter().rposition(|h| h.enabled && h.rect.contains((pt.x, pt.y)));
+                if sb.hovered_hit != next_hit || self.sidebar_menu_for.is_some() {
+                    sb.hovered_hit = next_hit;
+                    sb.window.request_redraw();
+                }
+                None
+            }
+            WindowEvent::CursorLeft { .. } => {
+                if let Some(sb) = &mut self.sidebar_win {
+                    sb.pointer = (-1000.0, -1000.0);
+                    if sb.hovered_hit.take().is_some() || self.sidebar_menu_for.is_some() {
+                        sb.window.request_redraw();
+                    }
+                }
+                None
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let dy = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y as f64 * 36.0,
+                    MouseScrollDelta::PixelDelta(p) => p.y,
+                };
+                if let Some(sb) = &mut self.sidebar_win {
+                    if sb.viewport.contains(sb.pointer) && sb.max_scroll > 0.0 {
+                        self.stage.sidebar_scroll =
+                            (self.stage.sidebar_scroll - dy).clamp(0.0, sb.max_scroll);
+                        sb.window.request_redraw();
+                    }
+                }
+                None
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                let Some(sb) = &self.sidebar_win else {
+                    return None;
+                };
+                let pt = sb.pointer;
+                let win = sb.window.clone();
+                let win_log = sb.win_log;
+                if button == MouseButton::Right {
+                    if state == ElementState::Released {
+                        if let Some((wid, _)) = sb.card_slots.iter().rev().find(|(_, r)| r.contains(pt)) {
+                            self.sidebar_menu_for = Some((wid.clone(), pt));
+                            win.request_redraw();
+                        } else if self.sidebar_menu_for.take().is_some() {
+                            win.request_redraw();
+                        }
+                    }
+                    return None;
+                }
+                if button != MouseButton::Left || state != ElementState::Released {
+                    return None;
+                }
+                if let Some((_, m_anchor)) = self.sidebar_menu_for {
+                    let mr = Self::clamped_menu_rect(win_log.0, win_log.1, m_anchor);
+                    if !mr.contains(pt.0, pt.1) {
+                        self.sidebar_menu_for = None;
+                        win.request_redraw();
+                        return None;
+                    }
+                }
+                let hit_action = sb
+                    .hits
+                    .iter()
+                    .rev()
+                    .find(|h| h.enabled && h.rect.contains(pt))
+                    .map(|h| h.action.clone());
+                if let Some(act) = hit_action {
+                    return self.apply_sidebar_action(act, model);
+                } else if self.stage.search_focused {
+                    self.end_sidebar_search();
+                    win.request_redraw();
+                }
+                None
+            }
+            WindowEvent::Focused(focused) => {
+                if !focused && self.stage.search_focused {
+                    self.end_sidebar_search();
+                    self.request_sidebar_redraw();
+                }
+                None
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                if event.state != ElementState::Pressed {
+                    return None;
+                }
+                match event.logical_key {
+                    Key::Named(NamedKey::Escape) => {
+                        if self.sidebar_menu_for.take().is_some() {
+                            self.request_sidebar_redraw();
+                        } else if !self.stage.query.is_empty() {
+                            self.stage.clear_query();
+                            self.request_sidebar_redraw();
+                        } else if self.stage.search_focused {
+                            self.end_sidebar_search();
+                            self.request_sidebar_redraw();
+                        } else {
+                            self.close_sidebar();
+                        }
+                    }
+                    Key::Named(NamedKey::ArrowDown) => {
+                        let total = resolve_stage_results(&self.stage.query, &self.app_index).len();
+                        self.stage.step_selection(1, total);
+                        self.request_sidebar_redraw();
+                    }
+                    Key::Named(NamedKey::ArrowUp) => {
+                        let total = resolve_stage_results(&self.stage.query, &self.app_index).len();
+                        self.stage.step_selection(-1, total);
+                        self.request_sidebar_redraw();
+                    }
+                    Key::Named(NamedKey::Backspace) => {
+                        self.stage.backspace();
+                        self.request_sidebar_redraw();
+                    }
+                    Key::Named(NamedKey::Enter) => {
+                        let results = resolve_stage_results(&self.stage.query, &self.app_index);
+                        if let Some(chosen) = results.get(self.stage.selected).cloned() {
+                            let act = match chosen.kind {
+                                StageResultKind::MathCopy(v) => Action::StageCopyText(v),
+                                StageResultKind::LaunchApp { target, .. } => Action::StageRunApp(target),
+                                StageResultKind::RunCommand(cmd) => Action::StageSlash(cmd),
+                            };
+                            return self.apply_sidebar_action(act, model);
+                        }
+                    }
+                    Key::Named(NamedKey::Space) => {
+                        self.stage.push_str(" ");
+                        self.request_sidebar_redraw();
+                    }
+                    Key::Character(s) => {
+                        self.stage.push_str(&s);
+                        self.request_sidebar_redraw();
+                    }
+                    _ => {}
+                }
+                None
+            }
+            WindowEvent::Ime(ime) => {
+                if self.stage.search_focused {
+                    match ime {
+                        Ime::Preedit(s, _) => self.stage.preedit = s,
+                        Ime::Commit(s) => self.stage.push_str(&s),
+                        Ime::Disabled => self.stage.preedit.clear(),
+                        Ime::Enabled => {}
+                    }
+                    self.request_sidebar_redraw();
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn redraw_sidebar(
+        &mut self,
+        model: &Model,
+        gpu: &mut Gpu,
+        text: &mut Text,
+        time: f64,
+        media_position: Option<f64>,
+    ) {
+        let Some(sb) = self.sidebar_win.as_mut().filter(|sb| sb.visible) else {
+            return;
+        };
+        let scale = sb.mon.scale.max(0.5);
+        let mon_key = sb.mon.key.clone();
+        let mon_log = (sb.mon.phys_w as f64 / scale, sb.mon.phys_h as f64 / scale);
+        let panel_rect_global = Rect2D::new(
+            (mon_log.0 - sb.win_log.0 + sb.metrics.shadow_left).max(0.0),
+            12.0,
+            sb.metrics.panel_w,
+            (sb.win_log.1 - 24.0).max(360.0),
+        );
+        let frost = self.wallpaper.sidebar(&mon_key, mon_log, panel_rect_global);
+        let results = resolve_stage_results(&self.stage.query, &self.app_index);
+
+        let mut scene = Scene::new();
+        let out = crate::stage_overlay::paint_stage_overlay(
+            &mut scene,
+            text,
+            model,
+            sb.win_log,
+            sb.metrics,
+            sb.pointer,
+            model.prefs.dark,
+            self.dashboard.opacity as f32,
+            time,
+            media_position,
+            frost.as_ref().map(|s| &s.image),
+            &self.stage,
+            &results,
+            &self.clipboard.items,
+            Some(&self.telemetry),
+            &self.quote_indices,
+        );
+
+        let mut next_hits = Vec::new();
+        for h in out.hits {
+            next_hits.push(HitEntry {
+                rect: h.rect,
+                action: h.action,
+                label: h.label,
+                enabled: true,
+                widget_id: String::new(),
+            });
+        }
+        if let Some((ref wid, anchor)) = self.sidebar_menu_for {
+            if let Some(p) = self.stage.sidebar_widgets.iter().find(|w| &w.id == wid) {
+                let mr = Self::clamped_menu_rect(sb.win_log.0, sb.win_log.1, anchor);
+                let scheme = dotisle_domain::monet::scheme(0x0A84FF, model.prefs.dark);
+                let mut menu_ui = crate::widgets::Ui::new(
+                    &mut scene,
+                    text,
+                    scheme,
+                    sb.pointer,
+                    rect(0., 0., sb.win_log.0, sb.win_log.1),
+                );
+                let _ = desktop_cards::paint_sidebar_context_menu(
+                    &mut menu_ui,
+                    p,
+                    (mr.x, mr.y),
+                    model.prefs.dark,
+                );
+                for hit in menu_ui.hits {
+                    next_hits.push(HitEntry {
+                        rect: hit.rect,
+                        action: hit.action,
+                        label: hit.label,
+                        enabled: hit.enabled,
+                        widget_id: p.id.clone(),
+                    });
+                }
+            }
+        }
+
+        sb.viewport = out.viewport;
+        sb.max_scroll = out.max_scroll;
+        sb.card_slots = out.card_slots;
+        self.stage.sidebar_scroll = self.stage.sidebar_scroll.clamp(0.0, out.max_scroll);
+        sb.hits = next_hits;
+
+        // 仅面板自身圆角矩形响应鼠标，外围透明投影缓冲直接穿透给桌面或应用
+        sb.update_region(out.panel);
+
+        if let Err(err) = gpu.draw(&mut sb.surface, &scene, scale) {
+            eprintln!("Allegro sidebar gpu.draw failed: {err}");
+            self.error = Some(err);
+        }
+    }
+
+    fn apply_sidebar_action(&mut self, action: Action, model: &mut Model) -> Option<Action> {
+        if !self.dashboard.open { return None; }
+        let mutates_widgets = matches!(action,
+            Action::SidebarAddWidget(..) | Action::SidebarRemoveWidget(..) | Action::SidebarSetSize(..)
+            | Action::SidebarCycleSize(..) | Action::SidebarSetMaterial(..) | Action::SidebarMove(..)
+            | Action::SidebarAppFolderToggleGrid(..) | Action::SidebarNoteToggleCheck(..));
+        if mutates_widgets && !self.stage.sidebar_loaded { return None; }
+        let previous = mutates_widgets.then(|| self.stage.sidebar_widgets.clone());
+        let result = self.apply_sidebar_action_inner(action, model);
+        if previous.is_some_and(|old| old != self.stage.sidebar_widgets) {
+            if let Some(io) = &self.sidebar_io { io.save(self.stage.sidebar_widgets.clone()); }
+        }
+        result
+    }
+
+    fn apply_sidebar_action_inner(&mut self, action: Action, model: &mut Model) -> Option<Action> {
+        let clicked_search = matches!(action, Action::SidebarFocusSearch);
+        if !clicked_search && self.stage.search_focused {
+            self.end_sidebar_search();
+        }
+        match action {
+            Action::SidebarClose => {
+                self.close_sidebar();
+                None
+            }
+            Action::SidebarFocusSearch => {
+                self.stage.search_focused = true;
+                if let Some(io) = &mut self.sidebar_io { io.poll_clipboard(); }
+                self.app_index.ensure_loaded();
+                if let Some(sb) = &mut self.sidebar_win {
+                    sb.previous_foreground.get_or_insert_with(platform::foreground_window);
+                    platform::show_sidebar_topmost(&sb.window, true);
+                    sb.window.set_ime_allowed(true);
+                    sb.window.request_redraw();
+                }
+                None
+            }
+            Action::SidebarToggleEdit => {
+                self.sidebar_menu_for = None;
+                self.stage.sidebar_edit = !self.stage.sidebar_edit;
+                self.request_sidebar_redraw();
+                None
+            }
+            Action::SidebarToggleAdd => {
+                self.sidebar_menu_for = None;
+                self.stage.sidebar_add_open = !self.stage.sidebar_add_open;
+                self.request_sidebar_redraw();
+                None
+            }
+            Action::SidebarAddWidget(kind, size, cap) => {
+                self.stage.add_sidebar_widget(kind, size, &cap);
+                let span_lbl = match size {
+                    dotisle_domain::desktop_widgets::Size::Small => "1×1 小",
+                    dotisle_domain::desktop_widgets::Size::Medium => "2×1 大",
+                    dotisle_domain::desktop_widgets::Size::Large => "2×2 特大",
+                };
+                self.stage.set_toast(format!("已添加到侧边栏：{} ({span_lbl})", kind.label()));
+                self.request_sidebar_redraw();
+                None
+            }
+            Action::SidebarRemoveWidget(id) => {
+                self.sidebar_menu_for = None;
+                if self.stage.remove_sidebar_widget(&id) {
+                    self.stage.set_toast("已从侧边栏移除组件");
+                }
+                self.request_sidebar_redraw();
+                None
+            }
+            Action::SidebarSetSize(id, size) => {
+                if self.stage.set_sidebar_size(&id, size) {
+                    self.stage.set_toast(format!("已切换为「{}」区块", size.label()));
+                }
+                self.request_sidebar_redraw();
+                None
+            }
+            Action::SidebarCycleSize(id) => {
+                if let Some(next) = self.stage.cycle_sidebar_size(&id) {
+                    self.stage.set_toast(format!("区块尺寸已切换为「{}」", next.label()));
+                }
+                self.request_sidebar_redraw();
+                None
+            }
+            Action::SidebarSetMaterial(id, mat) => {
+                let _ = self.stage.set_sidebar_material(&id, &mat);
+                self.request_sidebar_redraw();
+                None
+            }
+            Action::SidebarMove(id, delta) => {
+                self.sidebar_menu_for = None;
+                if self.stage.move_sidebar_widget(&id, delta) {
+                    self.stage.set_toast("已调整区块顺序");
+                }
+                self.request_sidebar_redraw();
+                None
+            }
+            Action::SidebarAppFolderLaunch(id, item_idx) => {
+                if let Some(p) = self.stage.sidebar_widgets.iter().find(|w| w.id == id) {
+                    let entries = crate::apple_desktop::app_folder_entries(&p.config);
+                    if let Some(entry) = entries.get(item_idx) {
+                        platform::open_shell_path(&entry.target);
+                    }
+                }
+                None
+            }
+            Action::SidebarAppFolderToggleGrid(id) => {
+                self.sidebar_menu_for = None;
+                let _ = self.stage.toggle_sidebar_app_folder_grid(&id);
+                self.request_sidebar_redraw();
+                None
+            }
+            Action::SidebarNoteToggleCheck(id, line_idx) => {
+                let _ = self.stage.toggle_sidebar_note_check(&id, line_idx);
+                self.request_sidebar_redraw();
+                None
+            }
+            Action::SidebarQuoteNext(id) => {
+                let entry = self.quote_indices.entry(id).or_insert(0);
+                *entry = entry.wrapping_add(1);
+                self.request_sidebar_redraw();
+                None
+            }
+            Action::StageClipboardCopy(cb_idx) => {
+                if let (Some(io), Some(item)) = (&self.sidebar_io, self.clipboard.items.get(cb_idx)) {
+                    io.copy(item.text.clone(), true);
+                }
+                None
+            }
+            Action::StageCopyText(txt) => {
+                if let Some(io) = &self.sidebar_io { io.copy(txt, false); }
+                None
+            }
+            Action::StageRunApp(target) => {
+                platform::open_shell_path(&target);
+                self.stage.clear_query();
+                self.request_sidebar_redraw();
+                None
+            }
+            Action::StageSlash(cmd) => {
+                match cmd {
+                    StageSlashCmd::StartFocus(mins) => {
+                        model.native_command(
+                            "timerCreate",
+                            json!({"mode":"pomodoro","duration": (mins as u64)*60,"focus": (mins as u64)*60,"rest":300,"rounds":4}),
+                        );
+                        self.stage.set_toast(format!("已开启 {mins} 分钟番茄专注"));
+                        self.stage.clear_query();
+                    }
+                    StageSlashCmd::AddTodo(title) => {
+                        model.native_command("todoCreate", json!({"title": title}));
+                        self.stage.set_toast(format!("已添加待办：{title}"));
+                        self.stage.clear_query();
+                    }
+                    StageSlashCmd::EnterGridEdit => {
+                        self.close_sidebar();
+                        self.edit_mode = true;
+                        for c in &self.canvases {
+                            platform::set_dashboard_layer(&c.window, true);
+                            c.window.request_redraw();
+                        }
+                        self.refresh_input_regions();
+                    }
+                    StageSlashCmd::QuickAddSidebarWidget(kind, size, cap) => {
+                        self.stage.add_sidebar_widget(kind, size, &cap);
+                        self.stage.set_toast(format!("已向侧边栏添加「{}」", kind.label()));
+                        self.stage.clear_query();
+                    }
+                }
+                self.request_sidebar_redraw();
+                None
+            }
+            Action::ToggleTodo(_) | Action::Timer(..) | Action::QuickFocus | Action::Media(_) => {
+                Some(action)
+            }
+            _ => None,
+        }
+    }
+}
+
+fn push_todo_field(ed: &mut TodoEdit, text: &str) {
+    ed.preedit.clear();
+    match ed.field {
+        TodoField::Title if ed.title.chars().count() < 80 => ed.title.push_str(text),
+        TodoField::Date if ed.date.len() < 10 => ed.date.push_str(text),
+        TodoField::Time if ed.time.len() < 5 => ed.time.push_str(text),
+        _ => {}
+    }
+}
+
+fn detect_edges(r: Rect2D, pt: (f64, f64)) -> Edges {
+    Edges {
+        left: (pt.0 - r.x).abs() <= EDGE,
+        right: (pt.0 - r.right()).abs() <= EDGE,
+        top: (pt.1 - r.y).abs() <= EDGE,
+        bottom: (pt.1 - r.bottom()).abs() <= EDGE,
+    }
+}
+
+fn collect_monitors(event: &ActiveEventLoop) -> Vec<MonitorDesc> {
+    let mut out = Vec::new();
+    for m in event.available_monitors() {
+        let s = m.size();
+        if s.width == 0 || s.height == 0 {
+            continue;
+        }
+        let p = m.position();
+        out.push(MonitorDesc {
+            key: format!("{}:{}:{}x{}", p.x, p.y, s.width, s.height),
+            phys_x: p.x,
+            phys_y: p.y,
+            phys_w: s.width,
+            phys_h: s.height,
+            scale: m.scale_factor(),
+        });
+    }
+    if out.is_empty() {
+        if let Some(m) = event.primary_monitor() {
+            let s = m.size();
+            let p = m.position();
+            if s.width > 0 && s.height > 0 {
+                out.push(MonitorDesc {
+                    key: format!("{}:{}:{}x{}", p.x, p.y, s.width, s.height),
+                    phys_x: p.x,
+                    phys_y: p.y,
+                    phys_w: s.width,
+                    phys_h: s.height,
+                    scale: m.scale_factor(),
+                });
+            }
+        }
+    }
+    out
+}
+
+fn create_canvas(
+    event: &ActiveEventLoop,
+    gpu: &mut Gpu,
+    desc: MonitorDesc,
+    slots: Vec<CanvasSlot>,
+    dashboard_open: bool,
+) -> Option<MonitorCanvas> {
+    let attrs = Window::default_attributes()
+        .with_title("DotIsle Allegro Canvas")
+        .with_decorations(false)
+        .with_transparent(true)
+        .with_no_redirection_bitmap(true)
+        .with_undecorated_shadow(false)
+        .with_drag_and_drop(true)
+        .with_resizable(false)
+        .with_skip_taskbar(true)
+        .with_visible(true)
+        .with_inner_size(PhysicalSize::new(desc.phys_w, desc.phys_h))
+        .with_position(PhysicalPosition::new(desc.phys_x, desc.phys_y));
+    let window = match event.create_window(attrs) {
+        Ok(w) => Arc::new(w),
+        Err(err) => {
+            eprintln!("Allegro create_window failed: {err}");
+            return None;
+        }
+    };
+    platform::desktop_owner(&window);
+    platform::remove_dwm_frame(&window);
+    let surface = match gpu.surface(window.clone()) {
+        Ok(s) => s,
+        Err(err) => {
+            eprintln!("Allegro gpu.surface failed: {err}");
+            return None;
+        }
+    };
+    window.set_visible(true);
+    platform::show_inactive(&window);
+    platform::set_dashboard_layer(&window, dashboard_open);
+    Some(MonitorCanvas {
+        desc,
+        window,
+        surface,
+        slots,
+        hits: Vec::new(),
+        pointer: (-1000.0, -1000.0),
+        hovered_hit: None,
+        cursor: CursorIcon::Default,
+        last_input_rects: Vec::new(),
+        last_allow_full: false,
+        dirty: true,
+    })
+}
+
+#[cfg(test)]
+mod sidebar_lifecycle_tests {
+    use super::*;
+
+    #[test]
+    fn shows_before_first_tick_and_hides_only_after_exit_animation() {
+        let mut state = DashboardState::default();
+        assert!(!sidebar_should_show(&state));
+        state.toggle();
+        assert_eq!(state.opacity, 0.0);
+        assert!(sidebar_should_show(&state));
+        state.tick(0.016);
+        state.close();
+        assert!(sidebar_should_show(&state));
+        for _ in 0..60 { state.tick(0.016); }
+        assert_eq!(state.opacity, 0.0);
+        assert!(!sidebar_should_show(&state));
+    }
+
+    #[test]
+    fn initial_region_is_nonempty_and_excludes_shadow_at_multiple_dpis() {
+        let metrics = crate::stage_overlay::sidebar_layout_metrics(1707.0);
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let (left, top, right, bottom, radius) = sidebar_region(sidebar_initial_panel(metrics, 900.0), scale);
+            assert!(left > 2 && top > 2 && right > left && bottom > top && radius > 0);
+            assert!(right < (metrics.win_w * scale).ceil() as i32);
+        }
     }
 }

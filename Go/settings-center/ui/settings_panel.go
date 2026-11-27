@@ -20,6 +20,9 @@ type settingCategory struct {
 }
 
 var settingsCategories = []settingCategory{
+	{"侧边栏与组件", "widgets", []settingSection{
+		{10, "效率侧边栏", "启用侧边栏、更改热键与展开方向，查看使用教程。", "侧边栏 快捷键 热键 教程 组件"},
+	}},
 	{"通用与窗口", "settings", []settingSection{
 		{4, "启动与窗口", "启动行为、快捷键和字体加载。", "开机 托盘 关闭 隐藏 启动页 字体"},
 	}},

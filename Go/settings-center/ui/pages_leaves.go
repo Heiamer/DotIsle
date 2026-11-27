@@ -39,6 +39,8 @@ func (a *App) leafSettingsBody(c *ui.Context, p *Palette, x, y, w float32, tab u
 		return a.focusPrefsBody(c, p, x, y, w)
 	case 9:
 		return a.moduleManagerBody(c, p, x, y, w)
+	case 10:
+		return a.allegroSettingsBody(c, p, x, y, w)
 	}
 	return y
 }

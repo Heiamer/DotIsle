@@ -1,22 +1,16 @@
 # 第三方组件与许可
 
-本文件对应点屿 3.2.6 歌词与进度实现。项目自有源码的 MIT 许可见根目录 LICENSE，Copyright (c) 2026 Heiamer；以下依赖分别遵循各自许可。其他锁定依赖见 Rust/Cargo.lock。
+本文件对应点屿 5.2.8 歌词与进度实现。项目自有源码的 MIT 许可见根目录 LICENSE，Copyright (c) 2026 Heiamer；以下依赖分别遵循各自许可。其他锁定依赖见 Rust/Cargo.lock。
 
 ## 1. 当前歌词实现
 
-歌曲匹配、单时间轴模型、解析、缓存、本地歌词检索与在线适配器采用重新实现的代码。网易云自动进度独立实现只读进程内存读取，通过客户端自身类型信息、指令解码和参数流向自动推导 x86/x64 音频对象、字段和进度缓存，不按版本号或文件哈希设白名单；本机页面通道为可选回退。替换范围、兼容差异及验证边界见 REWRITE.md 和 NETEASE-SEEKFIX.md。
+在线歌词获取顺序、匹配与搜索词变体、在线歌词解析及翻译/音译附着移植自 H0308/taskbar-lyrics-displayer（Apache-2.0，提交 3fae9287dfb0636fc19a0df2587a1a59a54cf9bb），使用 Go/Rust 实现。许可全文与修改声明见 licenses/Lyrics-Apache-2.0.txt 和 licenses/Lyrics-Upstream-NOTICE.txt。LRCLIB lyricsfile 解析使用 go.yaml.in/yaml/v3 v3.0.5，原许可见 licenses/Go/go.yaml.in-yaml-v3.txt。单时间轴模型、缓存和本地歌词检索保留点屿实现。网易云自动进度独立实现只读进程内存读取，通过客户端自身类型信息、指令解码和参数流向自动推导 x86/x64 音频对象、字段和进度缓存，不按版本号或文件哈希设白名单；本机页面通道为可选回退。替换范围、兼容差异及验证边界见 REWRITE.md 和 NETEASE-SEEKFIX.md。
 
 ## 2. QQ 逐字歌词块解码器
 
 来源：https://github.com/SuJiKiNen/LyricDecoder ，提交 36fc1eaf31f8ef14a23de6f9f1427ce04178a900。
 
 采用 QQMusicDES/des.c 和 des.h，MIT，Copyright (c) 2019 SuJiKiNen。原文件头的 Brad Conte、wangqr 声明保留。DotIsle 将两个左移表达式转换为无符号 WORD，以避免有符号溢出；其余接入由 Rust 实现。源码与修改说明见 Rust/vendor/qq-lyric-codec，完整许可见该目录 LICENSE 和 licenses/qq-lyric-codec-MIT.txt。
-
-## 3. 网易云 EAPI 协议参考
-
-来源：https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced ，提交 4a7d557326d16d2f1e5172ee69c9471eb3a50173。
-
-MIT，Copyright (c) 2013-2022 Binaryify。providers.rs 的 EAPI 请求封装以其协议为独立替换参考；完整许可见 licenses/NeteaseCloudMusicApi-MIT.txt。没有捆绑其 Node 服务端。
 
 ## 4. Rust / Vello 界面栈
 
@@ -111,6 +105,3 @@ lazy_static 1.5.1，https://github.com/rust-lang-nursery/lazy-static.rs ，MIT O
 
 使用 MyGo v0.9.0、purego、go-text/typesetting 与 golang.org/x 库，锁定版本见 Go/settings-center/go.mod；许可全文保存在 licenses/Go。中文字体使用 Noto Sans SC，许可见 licenses/NotoSansSC-OFL.txt。
 
-## 在线逐字歌词
-
-[AMLL TTML DB](https://github.com/amll-dev/amll-ttml-db) 社区提供的同步时间轴由其公开 API 在线查询。点屿不随包分发曲库；下载歌词及其文本适用各自权利，不因公开 API 而变成点屿开源代码的一部分。

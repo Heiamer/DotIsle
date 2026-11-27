@@ -90,7 +90,7 @@ func updateChannelLocked(phase string) bool {
 // Channel state is acknowledged by the native updater, never guessed locally.
 func (a *App) aboutBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	s := &p.Scheme
-	version := stateString(a.State, stateString(a.State, "5.2.6", "version"), "bundleVersion")
+	version := stateString(a.State, stateString(a.State, "5.2.8", "version"), "bundleVersion")
 	u, _ := a.State["softwareUpdate"].(map[string]any)
 	phase := leafStr(u["phase"], "idle")
 	channel := stateString(a.State, "stable", "updateChannel")
@@ -131,6 +131,27 @@ func (a *App) aboutBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	}
 	Label(c, detail, x+24, y+106, 12, s.OnSurfaceVariant, false, w-48)
 	y += 156
+	settingCard(c, x, y, w, 132, s.Container)
+	Label(c, "更新源", x+24, y+17, 14, s.OnSurface, true, w-48)
+	source := stateString(a.State, "gitcode", "updateSource")
+	sourceIDs := []string{"gitcode", "gitee", "github"}
+	selected := 0
+	for i, id := range sourceIDs {
+		if source == id {
+			selected = i
+		}
+	}
+	SegmentedKeyed(c, p, "software-update-source", x+24, y+46, w-48, []string{"GITCODE", "GITEE", "GITHUB"}, selected, func(i int) {
+		if !locked && a.Connected && sourceIDs[i] != source {
+			a.command("updateSource", sourceIDs[i])
+		}
+	})
+	sourceDetail := "优先使用所选源，连接失败时自动切换 · 默认 GITCODE"
+	if locked {
+		sourceDetail = "当前更新任务完成或取消后可切换更新源"
+	}
+	Label(c, sourceDetail, x+24, y+100, 12, s.OnSurfaceVariant, false, w-48)
+	y += 148
 	settingCard(c, x, y, w, 204, s.Container)
 	title, ink := leafUpdateStatus(phase), s.OnSurface
 	if v := leafStr(u["version"], ""); v != "" && phase != "idle" {

@@ -1,0 +1,10 @@
+H0308/taskbar-lyrics-displayer
+https://github.com/H0308/taskbar-lyrics-displayer
+Commit: 3fae9287dfb0636fc19a0df2587a1a59a54cf9bb
+License: Apache-2.0 (full text: Lyrics-Apache-2.0.txt)
+
+DotIsle ports the automatic online source order, source HTTP contracts, matching,
+search variants, secondary alignment, preview alignment and online parsers to Go/Rust.
+The upstream C++ sources are not required at runtime. Local files and the existing
+DotIsle media/display adapters keep their own implementations. Product User-Agent
+identifies DotIsle. No forwarding service or Java runtime is used.

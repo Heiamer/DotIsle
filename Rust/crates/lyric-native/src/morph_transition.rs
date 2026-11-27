@@ -2,12 +2,13 @@
 //! 采用独立轴二阶阻尼谐振子，支持任意时刻无跳变打断与反向回弹。
 use crate::layout::Rect;
 
-/// 灵动岛折叠态的三种外观形态。
+/// 灵动岛折叠/展开态的四向外观形态（含从蓝条直接展开大卡片）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IslandMode {
     Normal,
     Strip,
     Mini,
+    Card,
 }
 
 /// 单轴解析式二阶阻尼弹簧（欠阻尼 / 临界阻尼 / 过阻尼统一解析求解）。
@@ -115,8 +116,10 @@ pub struct MorphPresentation {
     pub radius: f64,
     pub strip_mix: f64,
     pub mini_mix: f64,
+    pub card_mix: f64,
     pub classic_alpha: f32,
     pub mini_alpha: f32,
+    pub card_alpha: f32,
     pub softness: f64,
     pub shadow_mul: f64,
 }
@@ -129,8 +132,10 @@ impl Default for MorphPresentation {
             radius: 0.,
             strip_mix: 0.,
             mini_mix: 0.,
+            card_mix: 0.,
             classic_alpha: 1.,
             mini_alpha: 0.,
+            card_alpha: 0.,
             softness: 0.,
             shadow_mul: 1.,
         }
@@ -151,6 +156,7 @@ pub struct IslandMorph {
     radius: SpringAxis,
     strip_mix: SpringAxis,
     mini_mix: SpringAxis,
+    card_mix: SpringAxis,
 }
 
 impl Default for IslandMorph {
@@ -174,6 +180,7 @@ impl IslandMorph {
             radius: SpringAxis::default(),
             strip_mix: SpringAxis::default(),
             mini_mix: SpringAxis::default(),
+            card_mix: SpringAxis::default(),
         }
     }
 
@@ -185,14 +192,15 @@ impl IslandMorph {
         self.mode
     }
 
-    /// 启动或中途打断切换至新的目标形态。
+    /// 启动或中途打断切换至新的目标形态（支持 `from_card` 卡片直连过渡）。
     #[allow(clippy::too_many_arguments)]
-    pub fn transition(
+    pub fn transition_with_card(
         &mut self,
         from_rect: Rect,
         from_radius: f64,
         from_strip: f64,
         from_mini: f64,
+        from_card: f64,
         to_mode: IslandMode,
         to_rect: Rect,
         to_radius: f64,
@@ -200,10 +208,11 @@ impl IslandMorph {
         animate: bool,
         duration_ms: f64,
     ) {
-        let (to_strip, to_mini) = match to_mode {
-            IslandMode::Normal => (0., 0.),
-            IslandMode::Strip => (1., 0.),
-            IslandMode::Mini => (0., 1.),
+        let (to_strip, to_mini, to_card) = match to_mode {
+            IslandMode::Normal => (0., 0., 0.),
+            IslandMode::Strip => (1., 0., 0.),
+            IslandMode::Mini => (0., 1., 0.),
+            IslandMode::Card => (0., 0., 1.),
         };
 
         if !animate {
@@ -214,6 +223,7 @@ impl IslandMorph {
             self.radius.snap(to_radius, now);
             self.strip_mix.snap(to_strip, now);
             self.mini_mix.snap(to_mini, now);
+            self.card_mix.snap(to_card, now);
             self.active = false;
             self.animate = false;
             self.from_mode = to_mode;
@@ -230,10 +240,13 @@ impl IslandMorph {
             self.radius.snap(from_radius, now);
             self.strip_mix.snap(from_strip.clamp(0., 1.), now);
             self.mini_mix.snap(from_mini.clamp(0., 1.), now);
+            self.card_mix.snap(from_card.clamp(0., 1.), now);
             self.from_mode = if from_strip > 0.5 {
                 IslandMode::Strip
             } else if from_mini > 0.5 {
                 IslandMode::Mini
+            } else if from_card > 0.5 {
+                IslandMode::Card
             } else {
                 IslandMode::Normal
             };
@@ -247,47 +260,62 @@ impl IslandMorph {
         self.speed_scale = (480. / duration_ms.clamp(150., 1200.)).clamp(0.65, 1.45);
         let k = self.speed_scale;
 
-        // 针对四组核心路径调校差异化的 Apple 级弹簧频率与阻尼比
-        let (p_cx, p_y, p_w, p_h, p_rad, p_strip, p_mini) = match (self.from_mode, to_mode) {
-            // 1. 灵动岛 / Mini 岛 -> 蓝条：水平快速凝聚，高度柔顺收窄，材质渐变融入主题色
+        // 针对各条核心路径调校差异化的 Apple 级弹簧频率与阻尼比，保证收束与直接展开卡片清晰丝滑
+        let (p_cx, p_y, p_w, p_h, p_rad, p_strip, p_mini, p_card) = match (self.from_mode, to_mode) {
+            // 1. 灵动岛 / Mini 岛 / 大卡片 -> 蓝条：沉稳流畅凝聚成顶部状态条
             (_, IslandMode::Strip) => (
-                (20.0, 0.92),
-                (20.0, 0.90),
-                (19.5, 0.84),
-                (17.0, 0.82),
-                (18.5, 0.95),
+                (15.5, 0.94),
+                (15.5, 0.92),
+                (14.5, 0.88),
+                (13.5, 0.86),
+                (15.0, 0.95),
+                (14.0, 1.00),
                 (18.0, 1.00),
-                (22.0, 1.00),
+                (18.0, 1.00),
             ),
-            // 2. 蓝条 -> 灵动岛：高度领先弹起，宽度带 ~2.6% 果冻微过冲回吸，蓝条材质先让位
+            // 2. 蓝条 -> 大卡片：一气呵成直接展开为大卡片，无中间停顿
+            (IslandMode::Strip, IslandMode::Card) => (
+                (16.0, 0.92),
+                (16.0, 0.90),
+                (14.5, 0.82),
+                (16.0, 0.82),
+                (15.5, 0.92),
+                (24.0, 1.00),
+                (20.0, 1.00),
+                (16.0, 0.94),
+            ),
+            // 3. 蓝条 -> 灵动岛：高度领先弹起，宽度带轻量果冻微过冲回吸，蓝条材质平滑让位
             (IslandMode::Strip, IslandMode::Normal) => (
-                (19.0, 0.90),
-                (19.0, 0.88),
-                (17.5, 0.76),
-                (21.0, 0.78),
-                (19.0, 0.92),
-                (24.0, 1.00),
-                (22.0, 1.00),
-            ),
-            // 3. 灵动岛 -> Mini 岛：干净收束为细巧胶囊
-            (IslandMode::Normal, IslandMode::Mini) => (
-                (20.0, 0.92),
-                (20.0, 0.90),
-                (18.0, 0.82),
-                (19.5, 0.80),
-                (19.5, 0.95),
-                (24.0, 1.00),
+                (16.5, 0.92),
+                (16.5, 0.90),
+                (15.0, 0.78),
+                (17.5, 0.80),
+                (16.0, 0.92),
+                (19.0, 1.00),
                 (18.0, 1.00),
+                (20.0, 1.00),
             ),
-            // 4. Mini 岛 -> 灵动岛（以及蓝条 -> Mini 等补充路径）：舒展弹开并伴随克制回吸
+            // 4. 灵动岛 -> Mini 岛：柔顺收束为细巧胶囊，清晰可见尺寸收缩过程
+            (IslandMode::Normal, IslandMode::Mini) => (
+                (15.5, 0.94),
+                (15.5, 0.92),
+                (14.5, 0.86),
+                (15.0, 0.85),
+                (15.5, 0.95),
+                (20.0, 1.00),
+                (14.0, 1.00),
+                (20.0, 1.00),
+            ),
+            // 5. 其余展开路径（Mini -> Normal / Normal -> Card 等）
             _ => (
-                (19.0, 0.90),
-                (19.0, 0.88),
-                (17.8, 0.76),
-                (20.5, 0.77),
-                (19.0, 0.92),
-                (24.0, 1.00),
-                (21.0, 1.00),
+                (16.5, 0.92),
+                (16.5, 0.90),
+                (15.2, 0.78),
+                (17.2, 0.79),
+                (16.0, 0.92),
+                (20.0, 1.00),
+                (16.5, 1.00),
+                (15.0, 0.96),
             ),
         };
 
@@ -298,6 +326,37 @@ impl IslandMorph {
         self.radius.retarget(to_radius, now, p_rad.0 * k, p_rad.1);
         self.strip_mix.retarget(to_strip, now, p_strip.0 * k, p_strip.1);
         self.mini_mix.retarget(to_mini, now, p_mini.0 * k, p_mini.1);
+        self.card_mix.retarget(to_card, now, p_card.0 * k, p_card.1);
+    }
+
+    /// 兼容原有四参数签名的形态切换入口。
+    #[allow(clippy::too_many_arguments)]
+    pub fn transition(
+        &mut self,
+        from_rect: Rect,
+        from_radius: f64,
+        from_strip: f64,
+        from_mini: f64,
+        to_mode: IslandMode,
+        to_rect: Rect,
+        to_radius: f64,
+        now: f64,
+        animate: bool,
+        duration_ms: f64,
+    ) {
+        self.transition_with_card(
+            from_rect,
+            from_radius,
+            from_strip,
+            from_mini,
+            0.,
+            to_mode,
+            to_rect,
+            to_radius,
+            now,
+            animate,
+            duration_ms,
+        );
     }
 
     /// 过渡进行中若目标几何尺寸因歌词变化而微调，平滑更新目标位置与大小。
@@ -328,7 +387,8 @@ impl IslandMorph {
             && self.h.settled(now, 0.08, 0.5)
             && self.radius.settled(now, 0.08, 0.5);
         let mix_done = self.strip_mix.settled(now, 0.002, 0.01)
-            && self.mini_mix.settled(now, 0.002, 0.01);
+            && self.mini_mix.settled(now, 0.002, 0.01)
+            && self.card_mix.settled(now, 0.002, 0.01);
         if geom_done && mix_done {
             self.cx.snap(self.cx.to, now);
             self.y.snap(self.y.to, now);
@@ -337,6 +397,7 @@ impl IslandMorph {
             self.radius.snap(self.radius.to, now);
             self.strip_mix.snap(self.strip_mix.to, now);
             self.mini_mix.snap(self.mini_mix.to, now);
+            self.card_mix.snap(self.card_mix.to, now);
             self.active = false;
             return false;
         }
@@ -358,16 +419,20 @@ impl IslandMorph {
         let radius = self.radius.sample(now).0.clamp(0., w.min(h) / 2.);
         let strip_mix = self.strip_mix.sample(now).0.clamp(0., 1.);
         let mini_mix = self.mini_mix.sample(now).0.clamp(0., 1.);
+        let card_mix = self.card_mix.sample(now).0.clamp(0., 1.);
 
-        // 交叉淡化：空间缩小时先退出旧排版，再在新空间稳定后渐显新排版，防止文字被强行压扁
-        let classic_from_strip = 1. - smoothstep(strip_mix, 0.0, 0.42);
-        let classic_from_mini = 1. - smoothstep(mini_mix, 0.0, 0.45);
-        let classic_alpha = (classic_from_strip * classic_from_mini) as f32;
-        let mini_alpha =
-            (smoothstep(mini_mix, 0.50, 0.95) * (1. - smoothstep(strip_mix, 0.0, 0.35))) as f32;
+        // 零黑洞内容接力曲线：
+        // 1) Strip <-> Card：蓝条直接变为大卡片时，card_alpha 随壳体撑开平顺浮现；
+        // 2) Strip <-> Normal <-> Mini：胶囊内容对称互补过渡。
+        let card_mask = 1. - smoothstep(card_mix, 0.05, 0.55);
+        let classic_from_strip = 1. - smoothstep(strip_mix, 0.05, 0.88);
+        let classic_from_mini = 1. - smoothstep(mini_mix, 0.15, 0.85);
+        let classic_alpha = (classic_from_strip * classic_from_mini * card_mask) as f32;
+        let mini_alpha = (smoothstep(mini_mix, 0.15, 0.85) * classic_from_strip * card_mask) as f32;
+        let card_alpha = (smoothstep(card_mix, 0.04, 0.62) * (1. - smoothstep(strip_mix, 0.12, 0.82))) as f32;
 
         // 仅在快速形变中段施加热力学零端斜率微柔焦，两端静止文字绝对锐利
-        let u = strip_mix.max(mini_mix);
+        let u = strip_mix.max(mini_mix).max(card_mix);
         let softness = if self.animate && self.active {
             let env = 16. * u * u * (1. - u) * (1. - u);
             let s = 1.15 * env;
@@ -376,9 +441,9 @@ impl IslandMorph {
             0.
         };
 
-        // 阴影强度随蓝条化消失、随 Mini 化柔和至极淡投影
+        // 阴影强度随蓝条化消失、随 Mini 化柔和至极淡投影、大卡片化保留饱满立体投影
         let mini_shadow = 10. / 56.;
-        let base_shadow = 1. - (1. - mini_shadow) * mini_mix;
+        let base_shadow = 1. - (1. - mini_shadow) * mini_mix * (1. - card_mix);
         let shadow_mul = (base_shadow * (1. - strip_mix)).clamp(0., 1.);
 
         MorphPresentation {
@@ -387,8 +452,10 @@ impl IslandMorph {
             radius,
             strip_mix,
             mini_mix,
+            card_mix,
             classic_alpha,
             mini_alpha,
+            card_alpha,
             softness,
             shadow_mul,
         }
@@ -444,7 +511,7 @@ mod tests {
                 t += 1. / 120.;
             }
             assert!(!m.active(), "transition {:?} -> {:?} did not settle (t={t})", fm, tm);
-            assert!(t < 0.85, "transition {:?} -> {:?} took too long: {t}s", fm, tm);
+            assert!(t < 1.05, "transition {:?} -> {:?} took too long: {t}s", fm, tm);
             assert!((m.cx.to - (tr.x + tr.w / 2.)).abs() < 1e-6);
             assert!((m.w.from - tr.w).abs() < 1e-6);
             assert!((m.h.from - tr.h).abs() < 1e-6);
@@ -520,5 +587,114 @@ mod tests {
         m.transition(normal(), 20., 0., 0., IslandMode::Strip, strip(), 2.5, 1.0, false, 480.);
         assert!(!m.active());
         assert_eq!(m.mode(), IslandMode::Strip);
+    }
+
+    #[test]
+    fn normal_mini_morph_never_has_blank_black_frame() {
+        for (fm, fr, frad, fm_mix, tm, tr, trad) in [
+            (IslandMode::Normal, normal(), 20., 0., IslandMode::Mini, mini(), 7.),
+            (IslandMode::Mini, mini(), 7., 1., IslandMode::Normal, normal(), 20.),
+        ] {
+            let mut m = IslandMorph::new();
+            m.transition(fr, frad, 0., fm_mix, tm, tr, trad, 0., true, 480.);
+            for i in 0..=120 {
+                let p = m.presentation(i as f64 / 120., host());
+                let sum = p.classic_alpha + p.mini_alpha;
+                assert!(
+                    sum >= 0.99,
+                    "{:?} -> {:?} dropped content sum={sum} at step {i}",
+                    fm,
+                    tm
+                );
+                assert!(
+                    p.classic_alpha.max(p.mini_alpha) >= 0.5 - 1e-4,
+                    "{:?} -> {:?} content dimmer at step {i}: ({}, {})",
+                    fm,
+                    tm,
+                    p.classic_alpha,
+                    p.mini_alpha
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn strip_restore_reveals_content_alongside_dark_shell() {
+        let mut m = IslandMorph::new();
+        m.transition(strip(), 2.5, 1., 0., IslandMode::Normal, normal(), 20., 0., true, 480.);
+        for i in 0..=120 {
+            let p = m.presentation(i as f64 / 120., host());
+            if p.strip_mix <= 0.65 {
+                assert!(
+                    p.classic_alpha >= 0.15,
+                    "dark shell appeared without content: strip_mix={}, classic_alpha={}",
+                    p.strip_mix,
+                    p.classic_alpha
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn strip_to_card_single_continuous_morph() {
+        let card_rect = Rect::new(84., 24., 360., 184.);
+        let mut m = IslandMorph::new();
+        m.transition_with_card(
+            strip(),
+            2.5,
+            1.,
+            0.,
+            0.,
+            IslandMode::Card,
+            card_rect,
+            28.,
+            0.,
+            true,
+            480.,
+        );
+        assert!(m.active());
+        assert_eq!(m.mode(), IslandMode::Card);
+        let mut prev_h = strip().h;
+        let mut saw_card_mid = false;
+        for i in 1..=90 {
+            let t = i as f64 / 120.;
+            let p = m.presentation(t, host());
+            if p.card_mix > 0.2 && p.card_mix < 0.9 {
+                saw_card_mid = true;
+                assert!(p.card_alpha > 0.05 && p.rect.w > strip().w);
+            }
+            if t < 0.15 {
+                assert!(p.rect.h >= prev_h - 0.1);
+                prev_h = p.rect.h;
+            }
+        }
+        assert!(saw_card_mid);
+    }
+
+    #[test]
+    fn card_to_strip_morph() {
+        let card_rect = Rect::new(84., 24., 360., 184.);
+        let mut m = IslandMorph::new();
+        m.transition_with_card(
+            card_rect,
+            28.,
+            0.,
+            0.,
+            1.,
+            IslandMode::Strip,
+            strip(),
+            2.5,
+            0.,
+            true,
+            440.,
+        );
+        let p0 = m.presentation(0., host());
+        assert!((p0.rect.w - card_rect.w).abs() < 1e-6);
+        assert!((p0.card_mix - 1.0).abs() < 1e-6);
+        let mut t = 0.;
+        while m.tick(t) && t < 1.5 {
+            t += 1. / 120.;
+        }
+        assert!(!m.active());
     }
 }

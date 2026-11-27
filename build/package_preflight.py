@@ -18,6 +18,7 @@ SHIPPED_BINARIES = (
     'lyric-uninstall.exe',
     'lyric-setup.exe',
     'LyricIsland.Center.exe',
+    'DotIsle-Allegro.exe',
 )
 MODULE_DLLS = (
     'dotisle_core.dll',

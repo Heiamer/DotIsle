@@ -41,6 +41,12 @@ func (a *App) openWidgetEditor(id string) {
 			e.field, e.label, e.limit = "drive", "盘符 · 如 C: 或 D:", 3
 		case "launcher":
 			e.field, e.label, e.limit = "target", "程序、文件夹路径或 HTTPS 网页", 2048
+		case "photoFrame":
+			e.field, e.label, e.limit = "folder", "照片文件夹路径", 512
+		case "quote":
+			e.field, e.label, e.limit = "text", "自定义日签语录（留空使用内置语录）", 200
+		case "appFolder":
+			e.field, e.label, e.limit = "caption", "网格模式 · 输入 4（2×2）或 9（3×3）", 2
 		}
 		e.value = stateString(e.config, "", e.field)
 		a.widgetEditor = e

@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+allegro = { path = "../allegro" }
 dotisle-module-api={path="../dotisle-module-api"}
 lyric-core = { path = "../lyric-core" }
 dotisle-render = { path = "../dotisle-render" }
@@ -20,12 +21,16 @@ parley = "=0.5.0"
 pollster = "0.4"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
 raw-window-handle = "0.6"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_System_Com", "Win32_System_Threading", "Win32_System_SystemInformation", "Win32_System_WindowsProgramming", "Win32_System_Diagnostics_Debug", "Win32_Graphics_Dwm", "Win32_UI_Controls", "Win32_UI_Controls_Dialogs", "Win32_Graphics_Gdi", "Win32_System_DataExchange", "Win32_System_Memory"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_System_Com", "Win32_System_Threading", "Win32_System_SystemInformation", "Win32_System_WindowsProgramming", "Win32_System_Diagnostics_Debug", "Win32_Graphics_Dwm", "Win32_UI_Controls", "Win32_UI_Controls_Dialogs", "Win32_Graphics_Gdi", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_UI_Input_KeyboardAndMouse"] }
 
 [build-dependencies]
 
 [lib]
 name = "dotisle_desktop"
 path = "src/lib.rs"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "DotIsle-Allegro"
+path = "src/bin/dotisle_allegro.rs"
 

@@ -98,7 +98,7 @@ fn check_mirror(host:&str,repo:&str,label:&str,channel:&str)->Result<Value,Strin
   let mut found=false;
   for (manifest_name,package_name) in &pairs{
    if let (Some(manifest),Some(package))=(direct(manifest_name),direct(package_name)){
-    result["manifestUrl"]=json!(manifest);result["zipUrl"]=json!(package);found=true;break;
+    result["manifestUrl"]=json!(manifest);result["zipUrl"]=json!(package);result["packageName"]=json!(package_name);found=true;break;
    }
   }
   if !found{
@@ -114,7 +114,7 @@ fn check_mirror(host:&str,repo:&str,label:&str,channel:&str)->Result<Value,Strin
     let manifest=listed.iter().find(|(name,_)|name==manifest_name).map(|(_,url)|url.clone());
     let package=listed.iter().find(|(name,_)|name==package_name).map(|(_,url)|url.clone());
     if let (Some(manifest),Some(package))=(manifest,package){
-     result["manifestUrl"]=json!(manifest);result["zipUrl"]=json!(package);found=true;break;
+     result["manifestUrl"]=json!(manifest);result["zipUrl"]=json!(package);result["packageName"]=json!(package_name);found=true;break;
     }
    }
   }
@@ -194,20 +194,54 @@ fn check_github_beta()->Result<Value,String>{
  github_notes(&mut result,tag,v);Ok(result)
 }
 pub fn check()->Result<Value,String>{check_channel("stable")}
-// GitHub is authoritative. The domestic mirror is queried only on failure;
-// keep each candidate's tag and asset URLs together throughout selection.
-pub fn check_channel(channel:&str)->Result<Value,String>{
- if !valid_channel(channel){return Err("更新渠道无效".into())}
- let config=sources();
- let mirrors:Vec<(&'static str,Box<dyn FnOnce()->Result<Value,String>+'_>)>=mirror_repositories(&config).into_iter().map(|(host,label,repo)|(label,Box::new(move||check_mirror(host,&repo,label,channel)) as Box<dyn FnOnce()->Result<Value,String>+'_>)).collect();
- check_sources(channel,&installed_version(),||check_github(channel),mirrors)
+/// The selected source is authoritative for this check; failures fall back in order.
+pub fn valid_source(source:&str)->bool{matches!(source,"gitcode"|"gitee"|"github")}
+pub fn check_channel(channel:&str)->Result<Value,String>{check_preferred(channel,"gitcode")}
+pub fn source_order(preferred:&str)->Result<Vec<&'static str>,String>{
+ if !valid_source(preferred){return Err("更新源无效".into())}
+ let mut order=vec!["gitcode","gitee","github"];
+ order.sort_by_key(|source|*source!=preferred);Ok(order)
 }
+pub fn check_preferred(channel:&str,preferred:&str)->Result<Value,String>{
+ if !valid_channel(channel){return Err("更新渠道无效".into())}
+ let config=sources();let order=source_order(preferred)?;
+ check_ordered(channel,&installed_version(),preferred,order.into_iter().map(|source|{
+  let config=&config;
+  (source,Box::new(move||match source{
+   "github"=>check_github(channel),
+   "gitee"=>check_mirror("gitee.com",config["giteeRepository"].as_str().unwrap_or(""),"Gitee",channel),
+   _=>check_mirror("gitcode.com",config["gitcodeRepository"].as_str().unwrap_or(""),"GitCode",channel),
+  }) as Box<dyn FnOnce()->Result<Value,String>+'_>)
+ }).collect())
+}
+fn check_ordered(channel:&str,current:&str,preferred:&str,candidates:Vec<(&str,Box<dyn FnOnce()->Result<Value,String>+'_>)>)->Result<Value,String>{
+ let mut errors=Vec::new();
+ for (source,run) in candidates{
+  match run(){
+   Ok(mut result)=>{
+    if release_version(result["version"].as_str().unwrap_or(""))<release_version(current){
+     errors.push(format!("{source} 的版本早于当前版本，无法确认更新"));continue;
+    }
+    let label=result["source"].as_str().unwrap_or(source).to_owned();
+    let message=result["message"].as_str().unwrap_or("").to_owned();
+    result["message"]=json!(format!("{message} · {label}"));
+    result["channel"]=json!(channel);result["preferredSource"]=json!(preferred);
+    if !errors.is_empty(){let mut warnings=result["sourceWarnings"].as_array().cloned().unwrap_or_default();warnings.extend(errors.iter().map(|e|json!(e)));result["sourceWarnings"]=json!(warnings);}
+    return Ok(result)
+   },
+   Err(error)=>errors.push(format!("{source}：{error}")),
+  }
+ }
+ Err(format!("检查更新失败。{}。请检查网络或系统代理。",errors.join("；")))
+}
+#[cfg(test)]
 fn mirror_repositories(config:&Value)->Vec<(&'static str,&'static str,String)>{
  [("gitee.com","Gitee 国内源","giteeRepository"),("gitcode.com","GitCode 国内源","gitcodeRepository")]
   .into_iter()
   .filter_map(|(host,label,key)|config[key].as_str().filter(|repo|!repo.is_empty()).map(|repo|(host,label,repo.to_owned())))
   .collect()
 }
+#[cfg(test)]
 fn check_sources(channel:&str,current:&str,github:impl FnOnce()->Result<Value,String>,mirrors:Vec<(&'static str,Box<dyn FnOnce()->Result<Value,String>+'_>)>)->Result<Value,String>{
  let mut result=match github(){
   Ok(result)=>result,
@@ -373,7 +407,7 @@ pub fn launch_candidate(release:&Value,base:&std::path::Path,data:&std::path::Pa
  let pid=std::process::id();
  let temp=std::env::temp_dir().join(format!("DotIsle.UpdateHelper.{}",job.replace(['{','}','-'],"")));std::fs::create_dir_all(&temp).map_err(|e|e.to_string())?;
  let helper=temp.join("LyricIsland.Updater.exe");std::fs::copy(base.join("LyricIsland.Updater.exe"),&helper).map_err(|e|e.to_string())?;
- std::process::Command::new(helper).arg(version).arg(base).arg(data).arg(pid.to_string()).arg("0").arg(pipe).arg(release["manifestUrl"].as_str().unwrap_or("")).arg(release["zipUrl"].as_str().unwrap_or("")).arg(job).arg(nonce).spawn().map_err(|e|e.to_string())?;Ok(())
+ std::process::Command::new(helper).arg(version).arg(base).arg(data).arg(pid.to_string()).arg("0").arg(pipe).arg(release["manifestUrl"].as_str().unwrap_or("")).arg(release["zipUrl"].as_str().unwrap_or("")).arg(job).arg(nonce).arg(release["packageName"].as_str().unwrap_or("")).spawn().map_err(|e|e.to_string())?;Ok(())
 }
 
 #[cfg(test)]mod mini_version_tests{use super::*;
@@ -422,4 +456,13 @@ fn release_page_respects_preview_badge_on_numeric_tags() {
  let html=r#"<div><a class='Link--primary' href='/Heiamer/DotIsle/releases/tag/v5.1.0'>preview</a><span class='Label Label--warning'>Pre-release</span></div><div><a class='Link--primary' href='/Heiamer/DotIsle/releases/tag/v5.0.2'>stable</a></div>"#;
  assert_eq!(page_channel_release(html,"stable","5.0.0").unwrap()["tag_name"],"v5.0.2");
  assert_eq!(page_channel_release(html,"beta","5.0.0").unwrap()["tag_name"],"v5.1.0");
+}
+
+#[cfg(test)]mod source_selection_tests{use super::*;
+ #[test]fn preferred_order_and_failover_are_real(){
+  assert_eq!(source_order("gitcode").unwrap(),vec!["gitcode","gitee","github"]);
+  assert_eq!(source_order("github").unwrap(),vec!["github","gitcode","gitee"]);assert!(source_order("bad").is_err());
+  let v=check_ordered("stable","5.2.7","gitee",vec![("gitee",Box::new(||Ok(json!({"version":"v5.2.8","source":"Gitee"})))),("github",Box::new(||panic!("do not query fallback after success")))]).unwrap();assert_eq!(v["preferredSource"],"gitee");assert_eq!(v["source"],"Gitee");
+  let v=check_ordered("stable","5.2.7","gitcode",vec![("gitcode",Box::new(||Err("offline".into()))),("gitee",Box::new(||Ok(json!({"version":"v5.2.5"})))),("github",Box::new(||Ok(json!({"version":"v5.2.8","source":"GitHub"}))))]).unwrap();assert_eq!(v["source"],"GitHub");assert_eq!(v["sourceWarnings"].as_array().unwrap().len(),2);
+ }
 }

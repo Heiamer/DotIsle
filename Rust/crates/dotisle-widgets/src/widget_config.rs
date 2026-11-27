@@ -14,6 +14,14 @@ pub struct Config {
     pub city: String,
     pub target: String,
     pub drive: String,
+    /// 相框小组件的本地图片目录或单张图片路径。
+    pub folder: String,
+    /// 拍立得 / 相框底部手写题字。
+    pub caption: String,
+    /// 可选自定义主题强调色（`#RRGGBB`）。
+    pub accent: String,
+    /// 暂存区 / 快捷启动列表条目。
+    pub items: Vec<String>,
 }
 impl Config {
     pub fn validate(&self, kind: Kind) -> Result<(), String> {
@@ -22,6 +30,13 @@ impl Config {
             || self.text.chars().count() > 500
             || self.city.chars().count() > 100
             || self.target.len() > 2048
+            || self.folder.len() > 2048
+            || self.caption.chars().count() > 120
+            || self.accent.len() > 16
+            || self.items.len() > 16
+            || self.items.iter().any(|item| {
+                item.len() > 1024 || item.chars().any(|c| c == '\0' || c.is_control())
+            })
             || [
                 &self.title,
                 &self.text,
@@ -30,6 +45,9 @@ impl Config {
                 &self.city,
                 &self.target,
                 &self.drive,
+                &self.folder,
+                &self.caption,
+                &self.accent,
             ]
             .iter()
             .any(|v| {
@@ -38,6 +56,12 @@ impl Config {
             })
         {
             return Err("组件内容过长或包含无效字符".into());
+        }
+        if !self.accent.is_empty() {
+            let hex = self.accent.trim().trim_start_matches('#');
+            if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err("自定义强调色格式无效，请使用 #RRGGBB".into());
+            }
         }
         if kind == Kind::Anniversary && !self.date.is_empty() && date_ordinal(&self.date).is_none()
         {

@@ -16,7 +16,7 @@ pub struct Surface{
     pub card_frost:f64,pub card_opacity:f64,pub capsule_frost:f64,pub capsule_opacity:f64,
 }
 /// `amount` is the live expansion progress: 0 collapsed, 1 fully expanded.
-pub struct Paint{pub top:u32,pub bottom:u32,pub reflection:f64,pub frost:f64,pub amount:f64,pub cover_alpha:f64,pub cover_blur:f64,pub tint:f64,pub light_field:f64}
+pub struct Paint{pub top:u32,pub bottom:u32,pub reflection:f64,pub frost:f64,pub amount:f64,pub cover_alpha:f64,pub cover_blur:f64,pub tint:f64,pub light_field:f64,pub liquid_glass:f64}
 impl Surface{
     pub fn expanded(material:Material,cover_background:bool)->Self{
         Self{material,compact:material,cover_background,compact_cover_background:false,cover_overlay:true,reveal:1.,overlay:0.,mini:false,transparent:false,card_frost:0.,card_opacity:0.,capsule_frost:0.,capsule_opacity:0.}
@@ -29,31 +29,34 @@ impl Surface{
         // so both ends stay exact while everything in between is a plain blend.
         let compact_alpha=match self.compact{
             Material::LightField=>if self.mini{164.}else{214.},
+            Material::LiquidGlass=>204.,
             _ if self.transparent=>245.,
             _=>255.,
         };
         let expanded_alpha=match self.material{
             Material::LightField=>228.,
+            Material::LiquidGlass=>220.,
             Material::Acrylic if self.transparent=>245.,
             Material::Acrylic=>255.,
         };
         let alpha=((compact_alpha+(expanded_alpha-compact_alpha)*amount).round()as u32)<<24;
-        // 曜光玻璃接入动态取色系统
+        // 曜光玻璃接入动态取色系统；液态玻璃 Beta 保持独立权重，完全不影响 Acrylic 与 LightField
         let light_field=((if self.compact==Material::LightField{1.-amount}else{0.})+(if self.material==Material::LightField{amount}else{0.})).clamp(0.,1.);
+        let liquid_glass=((if self.compact==Material::LiquidGlass{1.-amount}else{0.})+(if self.material==Material::LiquidGlass{amount}else{0.})).clamp(0.,1.);
         let raw_tint=(if self.cover_background{amount}else{0.})+(if self.compact_cover_background{1.-amount}else{0.});
         let tint=raw_tint;
         let lf_top=cover_color::mix(0x06080c,palette.background,raw_tint*0.48);
         let lf_bottom=cover_color::mix(0x161d30,palette.background,raw_tint*0.82);
         let top=cover_color::mix(cover_color::mix(0x1b1f25,palette.background,tint),lf_top,light_field);
         let bottom=cover_color::mix(cover_color::mix(0x0c0f14,palette.background,tint*0.65),lf_bottom,light_field);
-        let has_glass=|m:Material|m==Material::LightField;
+        let has_glass=|m:Material|m==Material::LightField||m==Material::LiquidGlass;
         let reflection=(if has_glass(self.compact){1.-amount}else{0.})+(if has_glass(self.material){amount}else{0.});
-        // 亚克力柔化铺满表面，曜光玻璃搭配克制凝霜
-        let frost=match self.material{Material::Acrylic=>amount,Material::LightField=>amount*0.36}
+        // 亚克力柔化铺满表面，曜光玻璃搭配克制凝霜；液态玻璃由 WGSL 负责光学模糊，Vello 层保持 0 凝霜遮罩
+        let frost=match self.material{Material::Acrylic=>amount,Material::LightField=>amount*0.36,Material::LiquidGlass=>0.}
             +(if self.compact==Material::Acrylic{1.-amount}else if self.compact==Material::LightField{(1.-amount)*0.22}else{0.});
         // 封面磨砂叠层同时开放给亚克力与曜光玻璃
-        let card=match self.material{Material::Acrylic=>amount,Material::LightField=>amount*0.78};
-        let strip=match self.compact{Material::Acrylic=>1.-amount,Material::LightField=>(1.-amount)*0.72};
+        let card=match self.material{Material::Acrylic=>amount,Material::LightField=>amount*0.78,Material::LiquidGlass=>amount*0.24};
+        let strip=match self.compact{Material::Acrylic=>1.-amount,Material::LightField=>(1.-amount)*0.72,Material::LiquidGlass=>(1.-amount)*0.18};
         let weight=(card+strip).max(1e-6);
         // Artwork is independent from Monet tint. The capsule still obeys its own opt-in.
         let cover_alpha=((if self.cover_overlay{card*self.card_opacity}else{0.})
@@ -61,7 +64,7 @@ impl Surface{
         let strength=((card*self.card_frost+strip*self.capsule_frost)/weight/100.).clamp(0.,1.);
         // Keep useful detail across the whole slider instead of saturating a 192px image early.
         let cover_blur=30.*strength.powf(1.4);
-        Paint{top:alpha|top,bottom:alpha|bottom,reflection,frost,amount,cover_alpha:cover_alpha.clamp(0.,1.),cover_blur,tint,light_field}
+        Paint{top:alpha|top,bottom:alpha|bottom,reflection,frost,amount,cover_alpha:cover_alpha.clamp(0.,1.),cover_blur,tint,light_field,liquid_glass}
     }
 }
 
@@ -151,5 +154,16 @@ impl Surface{
         assert!(red.reflection>0.&&red.frost>0.);
         let neutral=Surface{cover_background:false,cover_overlay:false,..lf};
         assert_eq!(neutral.paint(CoverPalette{background:0xd92626,accent:0xff9999}).top,neutral.paint(CoverPalette{background:0x1b4fd9,accent:0x99ccff}).top);
+    }
+    #[test]fn liquid_glass_beta_is_isolated_from_existing_materials(){
+        let acrylic=Surface::expanded(Material::Acrylic,true).paint(CoverPalette::default());
+        let lf=Surface::expanded(Material::LightField,true).paint(CoverPalette::default());
+        assert_eq!(acrylic.liquid_glass,0.);
+        assert_eq!(lf.liquid_glass,0.);
+        let lg=Surface::expanded(Material::LiquidGlass,false).paint(CoverPalette::default());
+        assert_eq!(lg.liquid_glass,1.);
+        assert_eq!(lg.light_field,0.);
+        assert_eq!(lg.frost,0.);
+        assert!(lg.reflection>0.9);
     }
 }

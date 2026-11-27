@@ -25,10 +25,26 @@ pub enum Kind {
     Wireless,
     Schedule,
     ScreenTime,
+    /// 本地图片 / 拍立得相框小组件。
+    PhotoFrame,
+    /// 临时文件拖放中转站小组件。
+    Dropzone,
+    /// 专业硬件监控（CPU / GPU / 内存 / 实时网速波形）。
+    SystemPro,
+    /// Apple 风格模拟表盘时钟。
+    AnalogClock,
+    /// Apple Watch 风格每日效率三环（专注 / 待办 / 活跃）。
+    ActivityRings,
+    /// macOS 控制中心风格快捷指令矩阵。
+    QuickDock,
+    /// 杂志编辑级留白日签语录。
+    Quote,
+    /// Apple iOS 风格应用文件夹（支持 4 宫格与 9 宫格无缝切换）。
+    AppFolder,
     Plugin,
 }
 impl Kind {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 26] = [
         Self::Clock,
         Self::Calendar,
         Self::Todos,
@@ -47,9 +63,17 @@ impl Kind {
         Self::Wireless,
         Self::Schedule,
         Self::ScreenTime,
+        Self::PhotoFrame,
+        Self::Dropzone,
+        Self::SystemPro,
+        Self::AnalogClock,
+        Self::ActivityRings,
+        Self::QuickDock,
+        Self::Quote,
+        Self::AppFolder,
     ];
     pub fn index(self) -> usize {
-        Self::ALL.iter().position(|k| *k == self).unwrap_or(18)
+        Self::ALL.iter().position(|k| *k == self).unwrap_or(26)
     }
     pub fn label(self) -> &'static str {
         match self {
@@ -71,6 +95,14 @@ impl Kind {
             Self::Wireless => "无线设备电量",
             Self::Schedule => "日程倒计时",
             Self::ScreenTime => "用机时长",
+            Self::PhotoFrame => "拍立得相框",
+            Self::Dropzone => "文件暂存台",
+            Self::SystemPro => "性能探针 Pro",
+            Self::AnalogClock => "模拟表盘",
+            Self::ActivityRings => "效率三环",
+            Self::QuickDock => "快捷控制",
+            Self::Quote => "杂志日签",
+            Self::AppFolder => "应用文件夹",
             Self::Plugin => "插件",
         }
     }
@@ -94,17 +126,31 @@ impl Kind {
             Self::Wireless => "已连接的耳机、鼠标和键盘电量",
             Self::Schedule => "距离下一件重要的事，还有多久",
             Self::ScreenTime => "看看今天与过去一周的用机时间",
+            Self::PhotoFrame => "把喜欢的桌搭图或回忆摆在桌面",
+            Self::Dropzone => "拖放文件集中暂存，随手取用整理",
+            Self::SystemPro => "实时 CPU、GPU、内存与网卡吞吐波形",
+            Self::AnalogClock => "精工表盘刻度与经典橙色秒针",
+            Self::ActivityRings => "专注、待办与活跃度同心进度三环",
+            Self::QuickDock => "控制中心风格的专注、播控与待办快捷磁贴",
+            Self::Quote => "极简杂志大留白排版，点击切换灵感语录",
+            Self::AppFolder => "四宫格或九宫格收纳常用应用，一点即开",
             Self::Plugin => "自定义插件积木",
         }
     }
     pub fn default_size(self) -> Size {
-        if matches!(self, Self::Clock | Self::Calendar) {
+        if matches!(
+            self,
+            Self::Clock | Self::Calendar | Self::PhotoFrame | Self::AnalogClock | Self::ActivityRings | Self::AppFolder
+        ) {
             Size::Small
         } else {
             Size::Medium
         }
     }
 }
+pub const WIDGET_CELL: f64 = 176.0;
+pub const WIDGET_GAP: f64 = 16.0;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum Size {
@@ -118,16 +164,23 @@ impl Size {
     pub fn label(self) -> &'static str {
         match self {
             Self::Small => "小",
-            Self::Medium => "中",
-            Self::Large => "大",
+            Self::Medium => "大",
+            Self::Large => "特大",
+        }
+    }
+    pub fn grid_span(self) -> (usize, usize) {
+        match self {
+            Self::Small => (1, 1),
+            Self::Medium => (2, 1),
+            Self::Large => (2, 2),
         }
     }
     pub fn dimensions(self) -> (f64, f64) {
-        match self {
-            Self::Small => (176., 176.),
-            Self::Medium => (352., 176.),
-            Self::Large => (352., 352.),
-        }
+        let (sx, sy) = self.grid_span();
+        (
+            sx as f64 * WIDGET_CELL + (sx - 1) as f64 * WIDGET_GAP,
+            sy as f64 * WIDGET_CELL + (sy - 1) as f64 * WIDGET_GAP,
+        )
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -174,6 +227,18 @@ pub struct Placement {
     pub hidden: bool,
     #[serde(default = "initial_revision")]
     pub revision: u64,
+    /// 光学材质标识（solid / lumenGlass / acrylic / transparent / polaroid）。
+    #[serde(default)]
+    pub material: String,
+    /// 组件整体背景不透明度（0.05..=1.0）。
+    #[serde(default = "initial_opacity")]
+    pub opacity: f32,
+    /// 智能堆叠分组 ID（空字符串表示独立组件）。
+    #[serde(default)]
+    pub stack_id: String,
+    /// 在堆叠分组中的展示顺序索引。
+    #[serde(default)]
+    pub stack_order: u32,
 }
 impl Placement {
     /// Custom edge-drag size when both axes are usable, otherwise the preset tile size.
@@ -187,6 +252,57 @@ impl Placement {
 }
 fn initial_revision() -> u64 {
     1
+}
+fn initial_opacity() -> f32 {
+    1.0
+}
+fn valid_stack_id(s: &str) -> bool {
+    s.len() <= 96
+        && s.bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.'))
+}
+fn parse_material(v: &Value, key: &str, default: &str) -> Result<String, String> {
+    match v.get(key) {
+        None => Ok(default.to_owned()),
+        Some(val) => {
+            let s = val.as_str().ok_or("组件材质无效")?;
+            if s.len() > 32 || s.chars().any(|c| c == '\0' || c.is_control()) {
+                return Err("组件材质无效".into());
+            }
+            Ok(s.to_owned())
+        }
+    }
+}
+fn parse_opacity(v: &Value, key: &str, default: f32) -> Result<f32, String> {
+    match v.get(key) {
+        None => Ok(default),
+        Some(val) => val
+            .as_f64()
+            .filter(|n| n.is_finite() && (0.0..=1.0).contains(n))
+            .map(|n| n as f32)
+            .ok_or_else(|| "组件透明度无效".into()),
+    }
+}
+fn parse_stack_id(v: &Value, key: &str, default: &str) -> Result<String, String> {
+    match v.get(key) {
+        None => Ok(default.to_owned()),
+        Some(val) => {
+            let s = val.as_str().ok_or("堆叠标识无效")?;
+            if !valid_stack_id(s) {
+                return Err("堆叠标识无效".into());
+            }
+            Ok(s.to_owned())
+        }
+    }
+}
+fn parse_stack_order(v: &Value, key: &str, default: u32) -> Result<u32, String> {
+    match v.get(key) {
+        None => Ok(default),
+        Some(val) => val
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+            .ok_or_else(|| "堆叠顺序无效".into()),
+    }
 }
 fn size_axis(v: &Value, key: &str, default: f64) -> Result<f64, String> {
     match v.get(key) {
@@ -225,6 +341,10 @@ fn valid(p: &Placement) -> bool {
         && (-131072..=131072).contains(&p.x)
         && (-131072..=131072).contains(&p.y)
         && valid_size(p.width, p.height)
+        && p.material.len() <= 32
+        && p.opacity.is_finite()
+        && (0.0..=1.0).contains(&p.opacity)
+        && valid_stack_id(&p.stack_id)
 }
 pub struct Store {
     path: PathBuf,
@@ -300,6 +420,10 @@ impl Store {
             return Err("组件尺寸无效".into());
         }
         let hidden = value.get("hidden").and_then(|v| v.as_bool()).unwrap_or(false);
+        let material = parse_material(value, "material", "")?;
+        let opacity = parse_opacity(value, "opacity", 1.0)?;
+        let stack_id = parse_stack_id(value, "stackId", "")?;
+        let stack_order = parse_stack_order(value, "stackOrder", 0)?;
         let x = coordinate(value, "x", 64 + self.items.len() as i32 * 24)?;
         let y = coordinate(value, "y", 80 + self.items.len() as i32 * 24)?;
         self.serial = self.serial.wrapping_add(1);
@@ -320,6 +444,10 @@ impl Store {
             height,
             hidden,
             revision: 1,
+            material,
+            opacity,
+            stack_id,
+            stack_order,
         });
         if let Err(e) = self.persist() {
             self.items.pop();
@@ -369,6 +497,10 @@ impl Store {
             .get("hidden")
             .and_then(|v| v.as_bool())
             .unwrap_or(old.hidden);
+        let material = parse_material(value, "material", &old.material)?;
+        let opacity = parse_opacity(value, "opacity", old.opacity)?;
+        let stack_id = parse_stack_id(value, "stackId", &old.stack_id)?;
+        let stack_order = parse_stack_order(value, "stackOrder", old.stack_order)?;
         if old.x == x
             && old.y == y
             && old.size == size
@@ -377,6 +509,10 @@ impl Store {
             && old.width == width
             && old.height == height
             && old.hidden == hidden
+            && old.material == material
+            && (old.opacity - opacity).abs() < f32::EPSILON
+            && old.stack_id == stack_id
+            && old.stack_order == stack_order
         {
             return Ok(());
         }
@@ -389,6 +525,10 @@ impl Store {
         p.width = width;
         p.height = height;
         p.hidden = hidden;
+        p.material = material;
+        p.opacity = opacity;
+        p.stack_id = stack_id;
+        p.stack_order = stack_order;
         p.revision = p.revision.saturating_add(1);
         if let Err(e) = self.persist() {
             self.items[index] = old;
@@ -422,6 +562,12 @@ pub struct Metrics {
     pub wireless_devices: Vec<WirelessDevice>,
     pub wireless_status: String,
     pub wireless_updated_at: u64,
+    /// GPU 占用百分比（来自 Allegro PDH 探针）。
+    pub gpu_percent: Option<f64>,
+    /// 网卡下行速率（KB/s）。
+    pub net_rx_kbps: Option<f64>,
+    /// 网卡上行速率（KB/s）。
+    pub net_tx_kbps: Option<f64>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]

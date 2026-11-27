@@ -14,10 +14,10 @@ impl Playback{pub fn idle()->Self{Self::default()}pub fn playing(track:Track,pos
 #[serde(transparent)]pub struct Provider(String);
 impl Provider{pub fn new(id:&str)->Self{Self(id.to_owned())}pub fn value(&self)->&str{&self.0}pub fn eq_ignore_ascii_case(&self,s:&str)->bool{self.0.eq_ignore_ascii_case(s)}}
 impl std::fmt::Display for Provider{fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result{self.0.fmt(f)}}
-pub fn providers()->Vec<Provider>{["Kugou","QQMusic","LRCLIB","Netease","SodaMusic","Kuwo","Migu","AMLL"].map(Provider::new).to_vec()}
+pub fn providers()->Vec<Provider>{["Kugou","QQMusic","LRCLIB","Netease","SodaMusic"].map(Provider::new).to_vec()}
 #[derive(Clone,Copy,Debug,Default,Serialize,Deserialize,PartialEq,Eq)]pub enum Format{#[default]Lrc,Qrc,Krc,Yrc,Ttml,Text}
 #[derive(Clone,Debug,Default,Serialize,Deserialize)]pub struct Word{pub at:u64,pub until:u64,pub text:String}
-#[derive(Clone,Debug,Default,Serialize,Deserialize)]pub struct Cue{pub at:u64,pub until:u64,pub text:String,pub translation:Option<String>,pub words:Vec<Word>}
+#[derive(Clone,Debug,Default,Serialize,Deserialize)]pub struct Cue{pub at:u64,pub until:u64,pub text:String,pub translation:Option<String>,#[serde(default)]pub romanization:Option<String>,pub words:Vec<Word>}
 #[derive(Clone,Debug,Default,Serialize,Deserialize)]pub struct Lyrics{pub lines:Vec<Cue>,pub instrumental:bool,pub timed:bool}
 impl Lyrics{
  pub fn instrumental()->Self{Self{instrumental:true,..Default::default()}}

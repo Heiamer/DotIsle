@@ -24,6 +24,15 @@ var widgetKindLabels = []struct {
 	{"music", "音乐"}, {"system", "系统状态"}, {"note", "便签"}, {"anniversary", "纪念日倒数"},
 	{"weather", "天气"}, {"today", "今日概览"}, {"battery", "电量"}, {"storage", "存储空间"},
 	{"worldClock", "世界时钟"}, {"launcher", "快捷启动"}, {"focusStats", "专注统计"}, {"wireless", "无线设备电量"}, {"schedule", "日程倒计时"}, {"screenTime", "用机时长"},
+	{"analogClock", "模拟表盘"}, {"activityRings", "效率三环"}, {"quickDock", "控制矩阵"}, {"quote", "杂志日签"},
+	{"photoFrame", "桌面相框"}, {"dropzone", "文件暂存台"}, {"systemPro", "性能探针 Pro"}, {"appFolder", "应用文件夹"},
+}
+
+var widgetMaterials = []struct {
+	key, label string
+}{
+	{"lumen", "耀光"},
+	{"acrylic", "亚克力"},
 }
 
 var widgetStyleLabels = [5]string{"默认", "Miuix", "终端", "像素", "画廊"}
@@ -34,8 +43,8 @@ var widgetSizes = []struct {
 	wPx, hPx float64
 }{
 	{"small", "小", 176, 176},
-	{"medium", "中", 352, 176},
-	{"large", "大", 352, 352},
+	{"medium", "大", 368, 176},
+	{"large", "特大", 368, 368},
 }
 
 // widgetSizeOf reads the per-kind size choice (model.widget_sizes); default medium.
@@ -53,6 +62,9 @@ func (a *App) widgetSizeOf(kind string) string {
 
 // widgetsPage mirrors desktop_cards.rs gallery at the same section rhythm.
 func (a *App) widgetsPage(c *ui.Context, x, y, w float32) float32 {
+	if a.AllegroAvailable {
+		return a.allegroGallery(c, x, y, w)
+	}
 	return a.appleWidgetsGallery(c, x, y, w)
 }
 
@@ -92,9 +104,9 @@ func widgetDims(size string) [2]float64 {
 	case "small":
 		return [2]float64{176, 176}
 	case "large":
-		return [2]float64{352, 352}
+		return [2]float64{368, 368}
 	}
-	return [2]float64{352, 176}
+	return [2]float64{368, 176}
 }
 
 // widgetScheme is the fixed presentation of one preview style: color scheme plus
@@ -902,7 +914,7 @@ func wMeter(c *ui.Context, x, y, w, h, progress float32, accent, track uint32) {
 	}
 }
 
-// widgetRows lists the desktop widgets with size chips and remove (gallery tail).
+// widgetRows lists the desktop widgets with size chips, material chips and remove (gallery tail).
 func (a *App) widgetRows(c *ui.Context, p *Palette, x, y, w float32) float32 {
 	s := &p.Scheme
 	raw, _ := a.State["desktopWidgets"].([]any)
@@ -913,21 +925,29 @@ func (a *App) widgetRows(c *ui.Context, p *Palette, x, y, w float32) float32 {
 		}
 		id, _ := widget["id"].(string)
 		kind := stateString(widget, "", "kind")
-		Panel(c, p, x, y, w, 76, s.Container)
+		Panel(c, p, x, y, w, 118, s.Container)
 		Label(c, kindLabel(kind), x+22, y+16, 17, s.OnSurface, true, w-430)
-		Label(c, "拖动调整位置 · 右键编辑、调整尺寸或移除", x+22, y+46, 11, s.OnSurfaceVariant, false, w-430)
-		IconButton(c, p, "编辑桌面组件 "+id, x+w-392, y+16, 40, 44, "edit", false, true, func() { a.openWidgetEditor(id) })
+		Label(c, "拖动调整位置 · 右键呼出 Apple 玻璃菜单", x+22, y+44, 11, s.OnSurfaceVariant, false, w-430)
+		IconButton(c, p, "编辑桌面组件 "+id, x+w-392, y+14, 40, 44, "edit", false, true, func() { a.openWidgetEditor(id) })
 		for i, sz := range widgetSizes {
 			current := stateString(widget, "medium", "size")
-			Chip(c, p, "wr-"+id+sz.key, x+w-340+float32(i)*76, y+18, 68, 38, sz.label,
+			Chip(c, p, "wr-"+id+sz.key, x+w-340+float32(i)*76, y+16, 68, 38, sz.label,
 				current == sz.key, func() {
 					a.command("widgetUpdate", map[string]any{"id": id, "size": sz.key})
 				})
 		}
-		IconButton(c, p, "移除桌面组件 "+id, x+w-62, y+16, 44, 44, "delete", false, true, func() {
+		IconButton(c, p, "移除桌面组件 "+id, x+w-62, y+14, 44, 44, "delete", false, true, func() {
 			a.command("widgetRemove", map[string]any{"id": id})
 		})
-		y += 90
+		Label(c, "光学材质", x+22, y+80, 12, s.OnSurfaceVariant, true, 72)
+		curMat := stateString(widget, "lumen", "material")
+		for i, mat := range widgetMaterials {
+			Chip(c, p, "mat-"+id+mat.key, x+102+float32(i)*86, y+72, 78, 34, mat.label,
+				curMat == mat.key, func() {
+					a.command("widgetUpdate", map[string]any{"id": id, "material": mat.key})
+				})
+		}
+		y += 130
 	}
 	return y
 }

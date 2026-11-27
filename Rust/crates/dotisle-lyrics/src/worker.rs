@@ -50,7 +50,7 @@ impl Worker {
   ctx.check()?;
   let id=NEXT.fetch_add(1,Ordering::Relaxed);
   message["ID"]=json!(id);message["Version"]=json!(1);
-  message["TimeoutMS"]=json!(ctx.deadline.saturating_duration_since(Instant::now()).as_millis().min(12000));
+  message["TimeoutMS"]=json!(ctx.deadline.saturating_duration_since(Instant::now()).as_millis().min(30000));
   let(tx,rx)=mpsc::sync_channel(1);
   self.pending.lock().unwrap().insert(id,tx);
   if self.outgoing.try_send(message).is_err(){self.pending.lock().unwrap().remove(&id);return Err("lyric worker unavailable or busy".into())}
