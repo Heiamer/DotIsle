@@ -15,8 +15,7 @@ pub fn defaults() -> Value {
     defaults["StartupSignatureEnabled"] = json!(true);
     defaults["StartupGreetingEnabled"] = json!(true);
     defaults["VerificationCodeEnabled"] = json!(true);
-    defaults["WeChatMessageHintsEnabled"]=json!(true);
-    defaults["WeChatTaskbarWarningAccepted"]=json!(true);
+    defaults["WeChatMessageHintsEnabled"]=json!(false);
     for key in ["FeishuMessageHintsEnabled","DingTalkMessageHintsEnabled","WeComMessageHintsEnabled"] { defaults[key]=json!(true); }
     defaults["WeatherAlertsEnabled"] = json!(true);
     defaults["ReminderPlugins"] = json!({});
@@ -117,11 +116,8 @@ pub fn load(path: &std::path::Path) -> Value {
             }
         }
     }
-    // 一次性迁移：旧版本默认关闭微信提醒，升级后改为默认开启（之后用户手动关闭仍会保留）。
-    if s["MessageHintsDefaultsVersion"].as_u64().unwrap_or(0) < 1 {
-        s["WeChatMessageHintsEnabled"] = json!(true);
-        s["WeChatTaskbarWarningAccepted"] = json!(true);
-        s["MessageHintsDefaultsVersion"] = json!(1);
+    if s["WeChatTaskbarWarningAccepted"] != true {
+        s["WeChatMessageHintsEnabled"] = json!(false);
     }
 
     if let Some(fields) = s.as_object_mut() {
@@ -1648,7 +1644,7 @@ mod expressive_preferences {
         assert_eq!(s["ControlCenterDynamicColorEnabled"],false);
         s=validate_setting(json!({"key":"ControlCenterDynamicColorEnabled","value":true,"settings":s})).unwrap();
         s=validate_setting(json!({"key":"ControlCenterCustomColor","value":"#A9D8C2","settings":s})).unwrap();
-        assert_eq!(s["WeChatMessageHintsEnabled"],true);
+        assert_eq!(s["WeChatMessageHintsEnabled"],false);
         for key in ["FeishuMessageHintsEnabled","DingTalkMessageHintsEnabled","WeComMessageHintsEnabled"] {
             assert_eq!(s[key],true);
             s=validate_setting(json!({"key":key,"value":false,"settings":s})).unwrap();
@@ -1657,7 +1653,7 @@ mod expressive_preferences {
         let restored=load(&path);
         assert_eq!(restored["ControlCenterDynamicColorEnabled"],true);
         assert_eq!(restored["ControlCenterCustomColor"],"#A9D8C2");
-        assert_eq!(restored["WeChatMessageHintsEnabled"],true);
+        assert_eq!(restored["WeChatMessageHintsEnabled"],false);
         for key in ["FeishuMessageHintsEnabled","DingTalkMessageHintsEnabled","WeComMessageHintsEnabled"] {assert_eq!(restored[key],false);}
         assert!(validate_setting(json!({"key":"ControlCenterCustomColor","value":"green","settings":restored})).is_err());
         std::fs::remove_file(path).unwrap();
