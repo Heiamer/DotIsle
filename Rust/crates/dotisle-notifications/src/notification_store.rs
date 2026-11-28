@@ -47,8 +47,9 @@ impl Store{
             latest=latest.max(key.2);
             if !self.seen.insert(key)||policy.paused{continue}
             let name=app_name(&id);
-            if crate::message_hints::identify(&id,&name).is_some_and(|app|app.content_only())||!policy.permits(&id,&name){continue}
-            if notices.len()<8{if let Some(app)=crate::message_hints::identify(&id,&name){let mut notice=app.notice();notice.icon=crate::app_icon::shell_icon(&id).or_else(||(app==crate::message_hints::App::WeChat).then(crate::app_icon::wechat_icon));notices.push(notice);continue}if let Some(mut notice)=parse(&payload,&id){
+            let message_app=crate::message_hints::identify(&id,&name);
+            if message_app.is_some_and(|app|!accepts_legacy_toast(app))||!policy.permits(&id,&name){continue}
+            if notices.len()<8{if let Some(app)=message_app{let mut notice=app.notice();notice.icon=crate::app_icon::shell_icon(&id);notices.push(notice);continue}if let Some(mut notice)=parse(&payload,&id){
                 if notice.icon.is_none(){if !self.icons.contains_key(&id){if self.icons.len()>=64{self.icons.clear();}let icon=crate::app_icon::shell_icon(&id);self.icons.insert(id.clone(),icon);}notice.icon=self.icons.get(&id).cloned().flatten();}
                 notices.push(notice);
             }}
@@ -59,6 +60,8 @@ impl Store{
         Ok(notices)
     }}
 }
+// WeChat is taskbar-only; Feishu and DingTalk use the WinRT listener.
+fn accepts_legacy_toast(app:crate::message_hints::App)->bool{app.uses_toast()&&!app.content_only()}
 type Row=((i64,i64,i64),String,Vec<u8>);
 enum ReadErr{Busy(String),Fatal(String)}
 unsafe fn read_with_retry(api:&Api,path:&Path,since:i64,policy:&Policy)->Result<Vec<Row>,String>{
@@ -129,7 +132,7 @@ fn decode(bytes:&[u8])->Option<String>{
 fn parse(bytes:&[u8],id:&str)->Option<Notice>{
     if bytes.is_empty()||bytes.len()>262144{return None}
     let name=app_name(id);
-    if crate::message_hints::identify(id,&name).is_some_and(|a|!a.uses_toast()||a.content_only()){return None}
+    if crate::message_hints::identify(id,&name).is_some_and(|a|!accepts_legacy_toast(a)){return None}
     let xml=decode(bytes)?;let document=roxmltree::Document::parse(xml.trim_matches(['\u{feff}','\0'])).ok()?;
     if !document.root_element().has_tag_name("toast"){return None}
     let binding=document.descendants().find(|n|n.has_tag_name("binding")&&n.attribute("template")==Some("ToastGeneric")).or_else(||document.descendants().find(|n|n.has_tag_name("binding")))?;
@@ -170,6 +173,11 @@ fn parse(bytes:&[u8],id:&str)->Option<Notice>{
         for id in ["Tencent.WeChat", "Tencent.Weixin", r"C:\Program Files\Tencent\Weixin.exe", "微信"] {
             assert!(parse(xml,id).is_none(), "{id}");
         }
+    }
+    #[test]fn message_sources_do_not_cross_route_via_legacy_database(){
+        use crate::message_hints::App;
+        for app in [App::WeChat,App::Feishu,App::DingTalk] { assert!(!accepts_legacy_toast(app)); }
+        assert!(accepts_legacy_toast(App::WeCom));
     }
     #[test]fn desktop_toast_apps_do_not_use_legacy_database_payloads(){
         let xml=br#"<toast><visual><binding template="ToastGeneric"><text>Sender</text><text>Actual message</text></binding></visual></toast>"#;

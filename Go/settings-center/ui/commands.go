@@ -49,6 +49,8 @@ func (a *App) applyCommandReply(name string, reply map[string]any, err error) bo
 		return false
 	}
 	switch name {
+	case "aiQuotaSourceTrigger":
+		a.pushToast(stateString(reply, "余额检测方式已保存", "message"))
 	case "updateReview":
 		version, channel := stateString(reply, "", "version"), stateString(reply, "", "channel")
 		if version == "" || (channel != "stable" && channel != "beta") {

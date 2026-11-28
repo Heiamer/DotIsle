@@ -4158,7 +4158,7 @@ impl App {
         let (changed, appeared, question)=self.agent.poll(enabled,self.ai_quota.readings());
         if old_editing && !self.agent.view.editing {self.end_agent_edit(false,true);}
         if !changed {return Ok(());}
-        if appeared {self.ai_quota.refresh_soon();}
+        if appeared {self.ai_quota.refresh_periodic_soon();}
         let surface_ended=old_visible&&!self.agent_visible();
         if surface_ended && self.selected==agent_island::ID {
             if let Some(previous)=self.agent_previous.take(){self.selected=previous;}else{self.selected="music".into();}
@@ -4187,10 +4187,10 @@ impl App {
         if !self.demo {
             let settings = ai_quota::Settings::from_value(&self.settings["AiQuotaMonitor"]);
             let can_show = !self.session_locked && !self.island_suppressed() && self.practice.is_none() && !self.flag("PauseNotifications", false);
-            for alert in self.ai_quota.poll(settings, can_show, &self.settings["AiQuotaSources"], &self.data) {
+            self.tick_agents(settings.enabled && self.practice.is_none() && !self.session_locked, can_show)?;
+            for alert in self.ai_quota.poll(settings, can_show, &self.settings["AiQuotaSources"], &self.data, self.agent.activity()) {
                 if self.wake_for_transient_notice() { self.alerts.enqueue(alert); }
             }
-            self.tick_agents(settings.enabled && self.practice.is_none() && !self.session_locked, can_show)?;
         }
         self.practice_expiry();
         if self.module_updates.tick(){self.dirty=true;}
@@ -5337,6 +5337,27 @@ impl App {
                 self.ai_quota.reset();
                 json!({"success":true,"message":"额度来源已添加"})
             }
+            "aiQuotaSourceTrigger" => {
+                let Some(trigger) = r["value"].get("agent") else {
+                    return json!({"success":false,"message":"缺少余额检测方式"});
+                };
+                let Ok(agent) = serde_json::from_value::<Option<agent_island::Agent>>(trigger.clone()) else {
+                    return json!({"success":false,"message":"不支持该 Agent"});
+                };
+                let id=r["value"]["id"].as_str().unwrap_or("");
+                let mut next=ai_quota::profiles(&self.settings["AiQuotaSources"]);
+                let Some(row)=next.iter_mut().find(|row|row.id==id && row.supports_agent()) else {
+                    return json!({"success":false,"message":"找不到可绑定 Agent 的中转站"});
+                };
+                if row.agent != agent {
+                    row.agent=agent;
+                    let old=std::mem::replace(&mut self.settings["AiQuotaSources"],json!(next));
+                    if let Err(message)=self.save(){self.settings["AiQuotaSources"]=old;return json!({"success":false,"message":message});}
+                    self.ai_quota.reset();
+                    self.dirty |= self.alerts.cancel_prefix(&format!("quota:balance:{id}:"));
+                }
+                json!({"success":true,"message":"余额检测方式已保存"})
+            }
             "aiQuotaSourceRemove" => {
                 let mut next=ai_quota::profiles(&self.settings["AiQuotaSources"]);
                 let id=r["value"]["id"].as_str().unwrap_or("");
@@ -5368,11 +5389,17 @@ impl App {
                     self.settings["AiQuotaMonitor"] = old;
                     return json!({"success":false,"message":message});
                 }
-                if (previous.enabled, previous.five_hour, previous.weekly) != (next.enabled, next.five_hour, next.weekly) {
+                if previous.enabled != next.enabled {
                     self.ai_quota.reset();
                     self.dirty |= self.alerts.cancel_prefix("quota:");
-                } else if previous.relay_unit != next.relay_unit {
-                    self.dirty |= self.alerts.cancel_prefix("quota:balance:");
+                } else {
+                    if (previous.five_hour, previous.weekly) != (next.five_hour, next.weekly) {
+                        self.ai_quota.reset_quota_thresholds();
+                        self.dirty |= self.alerts.cancel_prefix("quota:");
+                    }
+                    if previous.relay_unit != next.relay_unit {
+                        self.dirty |= self.alerts.cancel_prefix("quota:balance:");
+                    }
                 }
                 json!({"success":true,"message":"额度提醒设置已保存"})
             }

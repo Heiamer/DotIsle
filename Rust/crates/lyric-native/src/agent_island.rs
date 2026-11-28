@@ -16,18 +16,21 @@ pub const SEND: i32 = 1704;
 pub const OPTION: i32 = 1720;
 pub const OPTIONS: usize = 4;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Agent {
     Codex,
     Claude,
     ZCode,
     Cursor,
+    #[serde(rename = "dsh")]
     Harness,
 }
 const AGENT_COUNT: usize = Agent::ALL.len();
+pub type Activity = [bool; AGENT_COUNT];
 impl Agent {
     pub const ALL: [Self; 5] = [Self::Codex, Self::Claude, Self::ZCode, Self::Cursor, Self::Harness];
-    fn index(self) -> usize {
+    pub(crate) fn index(self) -> usize {
         self as usize
     }
     pub fn name(self) -> &'static str {
@@ -297,12 +300,17 @@ pub fn hit(v: &View, r: Rect, x: f64, y: f64) -> i32 {
 #[derive(Default)]
 pub struct Monitor {
     pub view: View,
-    process_rx: Option<mpsc::Receiver<[bool; AGENT_COUNT]>>,
+    process_rx: Option<mpsc::Receiver<Option<Activity>>>,
     last: Option<Instant>,
-    active: [bool; AGENT_COUNT],
+    active: Activity,
+    activity_known: bool,
     pub bridge: crate::agent_desktop::Bridge,
 }
 impl Monitor {
+    pub fn activity(&self) -> Option<Activity> {
+        self.activity_known.then_some(self.active)
+    }
+
     pub fn poll(&mut self, enabled: bool, readings: &[Reading]) -> (bool, bool, bool) {
         if !enabled {
             let changed = !self.view.tiles.is_empty() || self.view.prompt.is_some();
@@ -311,12 +319,13 @@ impl Monitor {
         }
         if let Some(rx) = self.process_rx.as_ref() {
             match rx.try_recv() {
-                Ok(active) => {
-                    self.active = active;
+                Ok(activity) => {
+                    if let Some(active) = activity { self.active = active; }
+                    self.activity_known = activity.is_some();
                     self.process_rx = None;
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    self.active = [false; AGENT_COUNT];
+                    self.activity_known = false;
                     self.process_rx = None;
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
@@ -373,7 +382,7 @@ impl Monitor {
     }
 }
 
-fn processes() -> [bool; AGENT_COUNT] {
+fn processes() -> Option<Activity> {
     use windows::Win32::{
         Foundation::CloseHandle,
         System::{
@@ -385,17 +394,17 @@ fn processes() -> [bool; AGENT_COUNT] {
     let mut result = [false; AGENT_COUNT];
     unsafe {
         let mut own = 0;
-        if ProcessIdToSessionId(GetCurrentProcessId(), &mut own).is_err() {
-            return result;
-        }
-        let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
-            return result;
-        };
+        ProcessIdToSessionId(GetCurrentProcessId(), &mut own).ok()?;
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()?;
         let mut p = PROCESSENTRY32W {
             dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
             ..Default::default()
         };
-        if Process32FirstW(snapshot, &mut p).is_ok() {
+        if Process32FirstW(snapshot, &mut p).is_err() {
+            let _ = CloseHandle(snapshot);
+            return None;
+        }
+        {
             loop {
                 let n = p
                     .szExeFile
@@ -428,7 +437,7 @@ fn processes() -> [bool; AGENT_COUNT] {
         }
         let _ = CloseHandle(snapshot);
     }
-    result
+    Some(result)
 }
 
 #[cfg(test)]

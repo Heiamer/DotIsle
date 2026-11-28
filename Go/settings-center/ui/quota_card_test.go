@@ -11,6 +11,40 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+func TestSavedRelayTriggerCanChangeWithoutCredentials(t *testing.T) {
+	RegisterFonts()
+	a := newTestApp(t)
+	a.State["aiQuota"] = map[string]any{
+		"catalog":  []any{map[string]any{"id": "sub2api", "name": "Sub2API 中转站", "mode": "relay"}},
+		"profiles": []any{map[string]any{"id": "relay", "name": "工作中转站（日常 Codex 与 Claude 开发环境）", "provider": "sub2api", "agent": "codex"}},
+	}
+	a.quotaSources.open = true
+	var kind string
+	var params map[string]any
+	a.onCommand = func(name string, data any) { kind, params = name, data.(map[string]any) }
+	visual := ui.NewTester(a.View, 1200, 800)
+	if err := visual.Click("修改检测方式 工作中转站（日常 Codex 与 Claude 开发环境）"); err != nil {
+		t.Fatal(err)
+	}
+	visual.Frame()
+	if a.quotaSources.trigger != "codex" {
+		t.Fatal("existing binding was not loaded")
+	}
+	if _, ok := visual.Find("额度 API 密钥"); ok {
+		t.Fatal("editing a trigger must not expose credentials")
+	}
+	if err := visual.Click("余额检测：定时检测"); err != nil {
+		t.Fatal(err)
+	}
+	visual.Frame()
+	if err := visual.Click("保存余额检测方式"); err != nil {
+		t.Fatal(err)
+	}
+	if kind != "aiQuotaSourceTrigger" || params["id"] != "relay" || params["agent"] != nil || len(params) != 2 {
+		t.Fatalf("wrong trigger command: %s %+v", kind, params)
+	}
+}
+
 func TestQuotaCardInOverviewAndSources(t *testing.T) {
 	RegisterFonts()
 	a := newTestApp(t)
@@ -83,6 +117,13 @@ func TestQuotaCardInOverviewAndSources(t *testing.T) {
 	}
 	if _, ok := tt.Find("额度 API 密钥"); !ok {
 		t.Fatal("missing protected credential input")
+	}
+	if err := tt.Click("余额检测：DeepSeek Harness"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.quotaSources.trigger != "dsh" {
+		t.Fatal("DeepSeek Harness relay trigger not selected")
 	}
 	save("quota-relay-setup")
 	if err := tt.Click("返回来源列表"); err != nil {

@@ -23,7 +23,43 @@ type quotaSourcePanel struct {
 	cancel                                                             context.CancelFunc
 	open, busy                                                         bool
 	page                                                               int
+	editingTrigger, trigger                                            string
 	selected, mode, title, name, site, accessKey, secret, code, status string
+}
+
+var quotaAgentOptions = [...]struct{ id, name string }{
+	{"", "定时检测"}, {"codex", "Codex"}, {"claude", "Claude"},
+	{"zcode", "ZCode"}, {"cursor", "Cursor"}, {"dsh", "DeepSeek Harness"},
+}
+
+func quotaAgentName(id string) string {
+	for _, option := range quotaAgentOptions {
+		if option.id == id {
+			return option.name
+		}
+	}
+	return quotaAgentOptions[0].name
+}
+
+func quotaRelaySource(provider, mode string) bool { return mode == "relay" || provider == "openrouter" }
+
+func quotaTriggerValue(id string) any {
+	if id == "" {
+		return nil
+	}
+	return id
+}
+
+func (a *App) quotaAgentPicker(c *ui.Context, x, y, w float32) {
+	v, p := &a.quotaSources, &a.Palette
+	Label(c, "余额检测方式", x, y, 14, p.Scheme.OnSurface, true, w)
+	Label(c, "绑定后仅在该 Agent 启动时自动检测，也可手动刷新。", x, y+23, 12, p.Scheme.OnSurfaceVariant, false, w)
+	const gap = 8
+	cell := (w - 2*gap) / 3
+	for i, option := range quotaAgentOptions {
+		Button(c, p, "余额检测："+option.name, x+float32(i%3)*(cell+gap), y+48+40*float32(i/3), cell, 34,
+			option.name, "", v.trigger != option.id, !v.busy, func() { v.trigger = option.id; a.Refresh() })
+	}
 }
 
 func storeQuotaKey(dir, id, provider, site, token string) error {
@@ -106,6 +142,7 @@ func (a *App) addQuotaSource() {
 		}
 		secret = access + ":" + secret
 	}
+	trigger := v.trigger
 	data := a.Data
 	v.busy = true
 	v.secret = ""
@@ -162,7 +199,11 @@ func (a *App) addQuotaSource() {
 			}
 		}
 		if status == "额度来源已添加。" {
-			reply, err := island.Request("aiQuotaSourceAdd", map[string]any{"id": id, "provider": kind, "name": title, "site": site})
+			request := map[string]any{"id": id, "provider": kind, "name": title, "site": site}
+			if trigger != "" {
+				request["agent"] = trigger
+			}
+			reply, err := island.Request("aiQuotaSourceAdd", request)
 			if err != nil {
 				status = "控制中心没有收到保存确认，请刷新后检查来源。"
 			} else if reply["success"] != true {
@@ -180,6 +221,7 @@ func (a *App) addQuotaSource() {
 			v.status = status
 			if ok {
 				v.selected = ""
+				v.trigger = ""
 				v.name = ""
 				v.site = ""
 				v.code = ""
@@ -199,8 +241,10 @@ func (a *App) quotaSourcesDialog(c *ui.Context) {
 	open := true
 	const w float32 = 660
 	h := float32(514)
-	if v.mode == "custom" && v.selected != "" {
+	if v.selected != "" && (v.mode == "custom" || quotaRelaySource(v.selected, v.mode)) {
 		h = 600
+	} else if v.editingTrigger != "" {
+		h = 366
 	}
 	ui.DialogBase(c, &open, func(backdrop, panel ui.Element) {
 		backdrop.Background(AlphaCol(0, .42))
@@ -209,9 +253,24 @@ func (a *App) quotaSourcesDialog(c *ui.Context) {
 		panel.Children(func() {
 			Label(c, "AI 额度来源", 24, 22, 21, s.OnSurface, true, w-110)
 			IconButton(c, p, "关闭额度来源", w-67, 14, 44, 44, "close", false, !v.busy, func() { open = false })
+			if v.editingTrigger != "" {
+				Button(c, p, "返回来源列表", 24, 72, 116, 34, "返回列表", "", false, true, func() {
+					v.editingTrigger, v.trigger = "", ""
+					a.Refresh()
+				})
+				Label(c, v.title, 24, 124, 17, s.OnSurface, true, w-48)
+				a.quotaAgentPicker(c, 24, 163, w-48)
+				Button(c, p, "保存余额检测方式", w-168, h-58, 144, 36, "保存检测方式", "", true, a.Connected, func() {
+					a.command("aiQuotaSourceTrigger", map[string]any{"id": v.editingTrigger, "agent": quotaTriggerValue(v.trigger)})
+					v.editingTrigger, v.trigger = "", ""
+					a.Refresh()
+				})
+				return
+			}
 			if v.selected != "" {
 				Button(c, p, "返回来源列表", 24, 72, 116, 34, "返回列表", "", false, !v.busy, func() {
 					v.selected = ""
+					v.trigger = ""
 					v.secret = ""
 					v.accessKey = ""
 					v.code = ""
@@ -262,7 +321,10 @@ func (a *App) quotaSourcesDialog(c *ui.Context) {
 					fieldStyle(&field, p)
 					field.Disabled(v.busy)
 				}
-				Label(c, v.status, 24, 414, 12, s.OnSurfaceVariant, false, w-48)
+				if quotaRelaySource(v.selected, v.mode) {
+					a.quotaAgentPicker(c, 24, 402, w-48)
+				}
+				Label(c, v.status, 24, h-52, 12, s.OnSurfaceVariant, false, w-198)
 				if v.cancel != nil {
 					Button(c, p, "取消官网授权", w-160, h-58, 136, 36, "取消授权", "", false, true, func() {
 						if v.cancel != nil {
@@ -283,30 +345,51 @@ func (a *App) quotaSourcesDialog(c *ui.Context) {
 			} else {
 				Label(c, "全部来源目录 · 选择渠道配置；只读取已启用并授权的来源。", 24, 61, 12, s.OnSurfaceVariant, false, w-48)
 			}
-			type item struct{ id, title, kind string }
+			type item struct {
+				id, title, kind, agent string
+				relay                  bool
+			}
 			rows := make([]item, 0, len(profiles)+len(catalog))
 			names := make(map[string]string, len(catalog))
+			modes := make(map[string]string, len(catalog))
 			for _, raw := range catalog {
 				row, _ := raw.(map[string]any)
-				names[stateString(row, "", "id")] = stateString(row, "", "name")
+				id := stateString(row, "", "id")
+				names[id] = stateString(row, "", "name")
+				modes[id] = stateString(row, "", "mode")
 			}
 			for _, raw := range profiles {
 				row, _ := raw.(map[string]any)
 				key := stateString(row, "", "provider")
-				rows = append(rows, item{stateString(row, "", "id"), stateString(row, names[key], "name"), "saved"})
+				rows = append(rows, item{id: stateString(row, "", "id"), title: stateString(row, names[key], "name"), kind: "saved", agent: stateString(row, "", "agent"), relay: quotaRelaySource(key, modes[key])})
 			}
 			for _, raw := range catalog {
 				row, _ := raw.(map[string]any)
-				rows = append(rows, item{stateString(row, "", "id"), stateString(row, "额度来源", "name"), stateString(row, "pending", "mode")})
+				rows = append(rows, item{id: stateString(row, "", "id"), title: stateString(row, "额度来源", "name"), kind: stateString(row, "pending", "mode")})
 			}
 			const perPage = 7
 			lastPage := max(len(rows)-1, 0) / perPage
 			page := min(max(v.page, 0), lastPage)
 			for i, entry := range rows[min(page*perPage, len(rows)):min((page+1)*perPage, len(rows))] {
 				y := float32(102 + i*49)
-				Label(c, entry.title, 24, y+9, 14, s.OnSurface, true, w-194)
+				if entry.relay {
+					Label(c, entry.title, 24, y-1, 14, s.OnSurface, true, w-297)
+					summary := quotaAgentName(entry.agent)
+					if entry.agent != "" {
+						summary += " 启动时检测"
+					}
+					Label(c, summary, 24, y+20, 12, s.OnSurfaceVariant, false, w-297)
+				} else {
+					Label(c, entry.title, 24, y+9, 14, s.OnSurface, true, w-194)
+				}
 				switch entry.kind {
 				case "saved":
+					if entry.relay {
+						Button(c, p, "修改检测方式 "+entry.title, w-254, y, 110, 35, "检测方式", "", false, a.Connected, func() {
+							v.editingTrigger, v.trigger, v.title = entry.id, entry.agent, entry.title
+							a.Refresh()
+						})
+					}
 					Button(c, p, "移除已配置来源 "+entry.title, w-136, y, 112, 35, "移除来源", "", false, a.Connected, func() { a.command("aiQuotaSourceRemove", map[string]any{"id": entry.id}) })
 				case "local":
 					Label(c, "内置本机读取", w-144, y+9, 12, s.OnSurfaceVariant, false, 120)
@@ -315,6 +398,7 @@ func (a *App) quotaSourcesDialog(c *ui.Context) {
 				default:
 					Button(c, p, "配置 "+entry.title, w-136, y, 112, 35, "配置", "", false, a.Connected, func() {
 						v.selected = entry.id
+						v.trigger = ""
 						v.mode = entry.kind
 						v.title = entry.title
 						v.name = ""

@@ -43,7 +43,7 @@ impl Listener {
                 if p.enabled!=last_enabled || (last_paused&&!p.paused){store.reset();}
                 last_enabled=p.enabled;last_paused=p.paused;
                 let mut state=json!({"enabled":p.enabled,"paused":p.paused,"access":"disabled","source":"database","message":"通知提醒已关闭","apps":apps_cache});
-                // 消息提示（含微信 toast 兜底）不受通知总开关控制，只受应用规则与暂停控制。
+                // Legacy message hints (WeCom) remain independent of the general notification switch.
                 if p.enabled||!p.message_apps.is_empty() {
                     match store.poll(&p){
                         Ok(notices)=>{if p.enabled{state["access"]=json!("compatible");state["message"]=json!(if p.paused{"通知已暂停，恢复后只接收新消息"}else if p.blacklist_enabled{"通知接收已连接，屏蔽黑名单中的应用"}else if p.whitelist_enabled{"通知接收已连接，按白名单提醒新通知"}else{"通知接收已连接，提醒各应用的新通知"});}

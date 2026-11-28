@@ -2,6 +2,7 @@
 //! Derived from BrimDeck LogReader.cs (Codex), ClaudeUsageHistory.cs and DataLocations.cs.
 //! Apache-2.0, see licenses/BrimDeck-Apache-2.0.txt and BrimDeck-NOTICE.txt.
 //! Modified: Rust port; read-only local usage only, freshness/file bounds and threshold alerts.
+use crate::agent_island::Activity;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -425,9 +426,32 @@ fn samples() -> Vec<Reading> {
     out
 }
 #[derive(Default)]
+struct RefreshSchedule {
+    active: Activity,
+    started: Activity,
+    last_periodic: Option<Instant>,
+    manual: bool,
+}
+impl RefreshSchedule {
+    fn observe(&mut self, activity: Option<Activity>) {
+        if let Some(activity) = activity {
+            for (i, running) in activity.into_iter().enumerate() {
+                // A failed scan does not imply a stop. Discard a queued launch
+                // only when a successful scan confirms the process has exited.
+                self.started[i] = running && (self.started[i] || !self.active[i]);
+                self.active[i] = running;
+            }
+        }
+    }
+    fn includes(&self, row: &sources::Profile, periodic: bool, observed: bool) -> bool {
+        self.manual || row.agent.map_or(periodic, |agent| observed && self.started[agent.index()])
+    }
+}
+
+#[derive(Default)]
 pub struct Monitor {
     rx: Option<mpsc::Receiver<Vec<Reading>>>,
-    last: Option<Instant>,
+    schedule: RefreshSchedule,
     readings: Vec<Reading>,
     cancel: Option<Arc<AtomicBool>>,
     announced: std::collections::HashMap<String, [bool; 2]>,
@@ -445,15 +469,31 @@ impl Monitor {
         &self.readings
     }
     pub fn refresh_soon(&mut self) {
-        if self.rx.is_none() {
-            self.last = None;
-        }
+        self.schedule.manual = true;
+    }
+    pub fn refresh_periodic_soon(&mut self) {
+        self.schedule.last_periodic = None;
+    }
+    pub fn reset_quota_thresholds(&mut self) {
+        self.announced.clear();
     }
     pub fn reset(&mut self) {
         *self = Self::default();
     }
     pub fn state(&self, s: Settings, registered: &Value) -> Value {
-        json!({"settings":s,"readings":self.readings,"pending":self.rx.is_some(),"nativeSources":true,"catalog":sources::catalog(),"profiles":profiles(registered)})
+        let rows = profiles(registered);
+        let mut readings = self.readings.clone();
+        if s.enabled {
+            for row in &rows {
+                if let Some(agent) = row.agent.filter(|_| !readings.iter().any(|r| r.id == row.id)) {
+                    let mut reading = Reading::blank(&row.id, &row.provider, row.display_name(), now());
+                    reading.status = if self.schedule.active[agent.index()] { "等待余额检测".into() }
+                        else { format!("等待 {} 启动", agent.name()) };
+                    readings.push(reading);
+                }
+            }
+        }
+        json!({"settings":s,"readings":readings,"pending":self.rx.is_some(),"nativeSources":true,"catalog":sources::catalog(),"profiles":rows})
     }
     pub fn poll(
         &mut self,
@@ -461,55 +501,70 @@ impl Monitor {
         can_show: bool,
         registered: &Value,
         data: &Path,
+        activity: Option<Activity>,
     ) -> Vec<crate::capsule_alert::Alert> {
         if !settings.enabled {
             return Vec::new();
         }
+        self.schedule.observe(activity);
         if let Some(rx) = &self.rx {
             match rx.try_recv() {
                 Ok(values) => {
                     self.rx = None;
                     self.cancel = None;
-                    self.readings = values;
+                    for reading in values {
+                        if let Some(slot) = self.readings.iter_mut().find(|row| row.id == reading.id) {
+                            *slot = reading;
+                        } else {
+                            self.readings.push(reading);
+                        }
+                    }
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.rx = None;
-                    self.readings.clear();
+                    self.cancel = None;
                 }
             }
         }
-        if self.rx.is_none()
-            && self
-                .last
-                .is_none_or(|t| t.elapsed() >= Duration::from_secs(60))
-        {
-            self.last = Some(Instant::now());
-            let (tx, rx) = mpsc::channel();
-            let rows = profiles(registered);
-            let data = data.to_path_buf();
-            let cancel = Arc::new(AtomicBool::new(false));
-            self.cancel = Some(cancel.clone());
-            if std::thread::Builder::new()
-                .name("quota-native".into())
-                .spawn(move || {
-                    let mut values = samples();
-                    std::thread::scope(|scope| {
-                        let workers = rows
-                            .iter()
-                            .map(|row| {
-                                let data = &data;
-                                let cancel = cancel.clone();
-                                scope.spawn(move || sources::read(row, data, now(), cancel))
-                            })
-                            .collect::<Vec<_>>();
-                        values.extend(workers.into_iter().filter_map(|worker| worker.join().ok()));
-                    });
-                    let _ = tx.send(values);
-                })
-                .is_ok()
-            {
-                self.rx = Some(rx);
+        let periodic = self.schedule.last_periodic.is_none_or(|t| t.elapsed() >= Duration::from_secs(60));
+        if self.rx.is_none() && (periodic || self.schedule.manual || (activity.is_some() && self.schedule.started.contains(&true))) {
+            let local = periodic || self.schedule.manual;
+            let rows = profiles(registered).into_iter()
+                .filter(|row| self.schedule.includes(row, periodic, activity.is_some()))
+                .collect::<Vec<_>>();
+            if local || !rows.is_empty() {
+                let (tx, rx) = mpsc::channel();
+                let data = data.to_path_buf();
+                let cancel = Arc::new(AtomicBool::new(false));
+                self.cancel = Some(cancel.clone());
+                if std::thread::Builder::new()
+                    .name("quota-native".into())
+                    .spawn(move || {
+                        let mut values = if local { samples() } else { Vec::new() };
+                        std::thread::scope(|scope| {
+                            let workers = rows
+                                .iter()
+                                .map(|row| {
+                                    let data = &data;
+                                    let cancel = cancel.clone();
+                                    scope.spawn(move || sources::read(row, data, now(), cancel))
+                                })
+                                .collect::<Vec<_>>();
+                            values.extend(workers.into_iter().filter_map(|worker| worker.join().ok()));
+                        });
+                        let _ = tx.send(values);
+                    })
+                    .is_ok()
+                {
+                    self.rx = Some(rx);
+                    if local { self.schedule.last_periodic = Some(Instant::now()); }
+                    self.schedule.manual = false;
+                    if activity.is_some() { self.schedule.started.fill(false); }
+                }
+            } else if activity.is_some() {
+                // No bound source matched this launch. Do not retry every frame.
+                self.schedule.started.fill(false);
             }
         }
         let mut out = Vec::new();
@@ -586,6 +641,60 @@ fn threshold_edges(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_island::Agent;
+
+    #[test]
+    fn relay_agent_start_is_scoped_to_its_binding_and_never_on_periodic_ticks() {
+        let mut schedule = RefreshSchedule::default();
+        let profile = |agent| sources::Profile {
+            id: "0123456789abcdef0123456789abcdef".into(), provider: "sub2api".into(),
+            site: "https://relay.example".into(), name: String::new(), agent,
+        };
+        let bound = profile(Some(Agent::Harness));
+        let other = profile(Some(Agent::Cursor));
+        let periodic = profile(None);
+        let mut active = Activity::default();
+        schedule.observe(Some(active));
+        assert!(schedule.includes(&periodic, true, true));
+        assert!(!schedule.includes(&bound, true, true));
+        active[Agent::Harness.index()] = true;
+        schedule.observe(Some(active));
+        assert!(schedule.includes(&bound, false, true));
+        assert!(!schedule.includes(&other, true, true));
+        assert!(!schedule.includes(&periodic, false, true));
+        schedule.observe(None);
+        assert!(!schedule.includes(&bound, false, false));
+        schedule.observe(Some(active)); // Preserve the edge while another batch is busy.
+        assert!(schedule.includes(&bound, false, true));
+        schedule.started.fill(false);
+        schedule.observe(Some(active));
+        assert!(!schedule.includes(&bound, true, true));
+        active.fill(false);
+        schedule.observe(Some(active));
+        active[Agent::Harness.index()] = true;
+        schedule.observe(Some(active));
+        assert!(schedule.includes(&bound, false, true));
+        active.fill(false);
+        schedule.observe(Some(active));
+        assert!(!schedule.includes(&bound, false, true));
+        schedule.manual = true;
+        assert!(schedule.includes(&bound, false, false));
+    }
+
+    #[test]
+    fn relay_agent_registration_is_backward_compatible_and_only_for_balance_sources() {
+        let mut v = json!({"id":"0123456789abcdef0123456789abcdef", "provider":"sub2api", "site":"https://relay.example"});
+        let row: sources::Profile = serde_json::from_value(v.clone()).unwrap();
+        assert!(row.valid() && row.agent.is_none());
+        v["agent"] = json!("dsh");
+        let row: sources::Profile = serde_json::from_value(v.clone()).unwrap();
+        assert!(row.valid() && row.agent == Some(Agent::Harness));
+        v["provider"] = json!("deepseek");
+        v["site"] = json!("");
+        assert!(!serde_json::from_value::<sources::Profile>(v.clone()).unwrap().valid());
+        v["agent"] = json!("antigravity");
+        assert!(serde_json::from_value::<sources::Profile>(v).is_err());
+    }
     #[test]
     fn relay_unit_defaults_to_usd_and_formats_the_selected_unit() {
         assert_eq!(Settings::from_value(&json!({"enabled":true,"weekly":12})).relay_unit, RelayUnit::Usd);

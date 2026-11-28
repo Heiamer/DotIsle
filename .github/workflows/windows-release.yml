@@ -176,12 +176,14 @@ jobs:
         run: |
           python build/verify_release_source.py --version $env:VERSION --report validation/source.json
           if($LASTEXITCODE -ne 0){throw 'Release source checks failed'}
-          foreach($filter in @('desktop_toast::tests','desktop_toast_apps_do_not_use_legacy_database_payloads')){
+          foreach($filter in @('desktop_toast::tests','desktop_toast_apps_do_not_use_legacy_database_payloads','message_sources_do_not_cross_route_via_legacy_database')){
             powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 test --release --locked --package dotisle-notifications $filter
             if($LASTEXITCODE -ne 0){throw "Notification regression failed: $filter"}
           }
           powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 test --release --locked --package lyric-native zcode
           if($LASTEXITCODE -ne 0){throw 'ZCode regression failed'}
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 test --release --locked --package lyric-native relay_agent_
+          if($LASTEXITCODE -ne 0){throw 'Relay Agent activation regression failed'}
 
       - name: Select public downloads
         run: |

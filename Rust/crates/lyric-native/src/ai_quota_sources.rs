@@ -105,8 +105,16 @@ pub struct Profile {
     pub site: String,
     #[serde(default)]
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<crate::agent_island::Agent>,
 }
 impl Profile {
+    pub fn supports_agent(&self) -> bool {
+        matches!(self.provider.as_str(), "newapi" | "sub2api" | "openrouter")
+    }
+    pub(super) fn display_name(&self) -> &str {
+        if self.name.is_empty() { provider(&self.provider).map_or(&self.provider, |row| row.name) } else { &self.name }
+    }
     pub fn valid(&self) -> bool {
         self.id.len() == 32
             && self
@@ -115,6 +123,7 @@ impl Profile {
                 .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
             && self.name.chars().count() <= 50
             && !self.name.chars().any(char::is_control)
+            && (self.agent.is_none() || self.supports_agent())
             && provider(&self.provider).is_some_and(|row| match row.implementation {
                 "relay" => relay_base(&self.site).is_some(),
                 "custom" => custom::accepts_site(&self.site),
