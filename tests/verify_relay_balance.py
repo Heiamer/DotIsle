@@ -1,4 +1,4 @@
-"""Verify the shipped native USD and CNY balance notifications against a private relay fixture."""
+"""Verify the shipped native USD, CNY and points balance notifications against a private relay fixture."""
 import argparse
 import ctypes as c
 from ctypes import wintypes as w
@@ -128,8 +128,19 @@ def run(runtime, report):
             wait(lambda s: not s['capsuleAlertVisible'], 14)
             assert not balance_alert(refresh('RMB', 0))
 
+            assert configure(True, 'POINTS')['success']
+            wait(lambda s: quota(s)['relayCurrency'] == 'POINTS')
+            assert not balance_alert(refresh('积分', 1))
+            for unit in ('USD', 'CNY', None, 'credits', 'TOKENS'):
+                assert not balance_alert(refresh(unit, .47))
+            refresh('积分', .44)
+            low = wait(lambda s: s.get('testAlertKey') == key('POINTS') and s['islandVisible'])
+            assert low['testAlertRect']['h'] == 112
+            wait(lambda s: not s['capsuleAlertVisible'], 14)
+            assert not balance_alert(refresh('POINTS', 0))
+
             assert token not in json.dumps(app.request('state'))
-            assert configure(False)['success'], 'legacy client can turn off without clearing CNY'
+            assert configure(False)['success'], 'legacy client can turn off without clearing the choice'
             before = account['calls']
             assert app.request('aiQuotaRefresh')['success']
             time.sleep(.6)
@@ -138,12 +149,12 @@ def run(runtime, report):
             app.process.wait(timeout=10)
             app.stop()
             state = app.start(preserve_settings=True)
-            assert quota(state) == dict(enabled=False, fiveHour=20, weekly=10, relayCurrency='CNY')
+            assert quota(state) == dict(enabled=False, fiveHour=20, weekly=10, relayCurrency='POINTS')
             assert account['calls'] == before
             report.write_text(json.dumps(dict(success=True, checks=[
-                'Plugin off never reads the relay', 'USD is the default and CNY persists through restart',
-                'Both units require strict less-than 1; opposite and unknown units, points and tokens are silent',
-                'USD 0.72 and CNY 0.68 each automatically open the native island',
+                'Plugin off never reads the relay', 'USD is the default and points selection persists through restart',
+                'All three units require strict less-than 1; other units and tokens do not trigger',
+                'USD 0.72, CNY 0.68 and 0.44 points each automatically open the native island',
                 'Points and unknown units remain visible without a currency symbol',
                 'Repeated low balances are silent and secrets do not appear in state'], relayCalls=before), indent=2), encoding='utf-8')
         finally:
