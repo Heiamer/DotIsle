@@ -6,7 +6,7 @@ from verify_pomodoro import Runtime
 
 def run(a):
     a.report.parent.mkdir(parents=True, exist_ok=True)
-    root = a.report.parent / ('message-fixture-' + uuid.uuid4().hex)
+    root = a.report.parent.resolve() / ('message-fixture-' + uuid.uuid4().hex)
     root.mkdir()
     database = root / 'notifications.db'
     with sqlite3.connect(database) as db:
