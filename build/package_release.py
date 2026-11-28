@@ -26,7 +26,7 @@ def archive(directory,path,prefix,excluded=()):
 def copy_runtime_assets(source, target):
     # Keep archival branding and repository metadata in the source archive only.
     source = source.resolve()
-    omitted = {'ShaderCache', '.gitattributes', 'LyricIsland-v2.ico', 'LyricIsland-v2.png'}
+    omitted = {'ShaderCache', 'Allegro', '.gitattributes', 'LyricIsland-v2.ico', 'LyricIsland-v2.png'}
     def ignore(directory, names):
         relative = Path(directory).relative_to(source)
         if relative == Path('.'):
