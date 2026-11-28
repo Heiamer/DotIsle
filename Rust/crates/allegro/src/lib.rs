@@ -6,7 +6,6 @@ pub mod efficiency;
 pub mod layout_pack;
 pub mod snap;
 pub mod stack;
-pub mod stage;
 pub mod telemetry;
 pub mod theme;
 pub mod wallpaper;
@@ -301,82 +300,5 @@ mod tests {
         }
     }
 
-    #[test]
-    fn stage_spotlight_math_slash_clipboard_and_spaces_work() {
-        assert_eq!(stage::eval_quick_math("128*36"), Some(4608.0));
-        assert_eq!(stage::eval_quick_math("=(100 + 25) / 5"), Some(25.0));
-        assert_eq!(stage::eval_quick_math("42"), None);
-        assert_eq!(stage::format_math_value(25.0), "25");
 
-        let mut idx = stage::AppIndex::default();
-        idx.ensure_loaded();
-        let math_res = stage::resolve_stage_results("12+30", &idx);
-        assert!(matches!(math_res.first().map(|r| &r.kind), Some(stage::StageResultKind::MathCopy(s)) if s == "42"));
-
-        let slash_res = stage::resolve_stage_results("/focus 45", &idx);
-        assert!(matches!(
-            slash_res.first().map(|r| &r.kind),
-            Some(stage::StageResultKind::RunCommand(stage::StageSlashCmd::StartFocus(45)))
-        ));
-
-        let app_res = stage::resolve_stage_results("终端", &idx);
-        assert!(!app_res.is_empty());
-
-        let mut cb = stage::ClipboardHistory::default();
-        for i in 0..12 {
-            cb.push_text(&format!("第 {i} 条片段"));
-        }
-        assert_eq!(cb.items.len(), 8);
-        assert_eq!(cb.items[0].text, "第 11 条片段");
-        cb.push_text("第 10 条片段");
-        assert_eq!(cb.items[0].text, "第 10 条片段");
-
-        let mut wall = wallpaper::WallpaperCache::new();
-        let mut buf = vec![0u8; 64 * 64 * 4];
-        for px in buf.chunks_exact_mut(4) {
-            px.copy_from_slice(&[180, 195, 220, 255]);
-        }
-        wall.set_synthetic_wallpaper(64, 64, buf);
-        let frost = wall
-            .crop_sidebar_frost("m1", (1920., 1080.), snap::Rect2D::new(1500., 12., 400., 1056.))
-            .expect("sidebar silk frost");
-        assert!(frost.image.width >= 48 && frost.image.height >= 96);
-    }
-
-    #[test]
-    fn sidebar_block_layout_enforces_apple_ratios_and_packs_cleanly() {
-        // 验证 Apple 标准区块尺寸比例：大=2小+间距，特大=2×2（4小）
-        assert_eq!(Size::Small.dimensions(), (176.0, 176.0));
-        assert_eq!(Size::Medium.dimensions(), (368.0, 176.0));
-        assert_eq!(Size::Large.dimensions(), (368.0, 368.0));
-
-        let widgets = stage::default_sidebar_widgets();
-        let (slots, total_h) = stage::pack_sidebar_blocks(&widgets, 20.0, 100.0, 176.0, 16.0);
-        assert_eq!(slots.len(), widgets.len());
-        assert!(total_h > 368.0);
-
-        // 校验每张卡片尺寸严格符合 1×1 / 2×1 / 2×2，且所有区块互不重叠
-        for (slot, p) in slots.iter().zip(widgets.iter()) {
-            let (ew, eh) = p.size.dimensions();
-            assert!((slot.rect.w - ew).abs() < 0.01);
-            assert!((slot.rect.h - eh).abs() < 0.01);
-            assert!(slot.col + slot.span_x <= stage::SIDEBAR_COLS);
-        }
-        for i in 0..slots.len() {
-            for j in (i + 1)..slots.len() {
-                assert_eq!(slots[i].rect.intersection_area(slots[j].rect), 0.0);
-            }
-        }
-
-        // 校验 1×1 + 2×1 + 1×1 会自动填补第一行第 2 列的空位，无空洞浪费
-        let mut st = stage::StageState::default();
-        st.sidebar_loaded = true;
-        st.add_sidebar_widget(Kind::Clock, Size::Small, "");
-        st.add_sidebar_widget(Kind::Weather, Size::Medium, "");
-        st.add_sidebar_widget(Kind::Calendar, Size::Small, "");
-        let (packed, _) = stage::pack_sidebar_blocks(&st.sidebar_widgets, 0.0, 0.0, 176.0, 16.0);
-        assert_eq!((packed[0].col, packed[0].row), (0, 0));
-        assert_eq!((packed[1].col, packed[1].row), (0, 1));
-        assert_eq!((packed[2].col, packed[2].row), (1, 0));
-    }
 }

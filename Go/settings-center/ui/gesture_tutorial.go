@@ -27,7 +27,7 @@ var practicePrompts = map[string]practiceCopy{
 	"clickCollapse": {"点击卡片空白处，收起", "在展开的练习卡片上点击空白处，让它变回胶囊。"},
 	"hoverCollapse": {"移开指针，收起卡片", "把指针移到卡片外，等它自动收回胶囊。"},
 	"swipe":         {"左右拖动，切换活动", "按住练习胶囊，向左或向右拖一段再松手。看到另一张练习卡片就成功了。"},
-	"hide":          {"向上拖动，暂时隐藏", "按住练习胶囊向上拖，松手让它隐藏。下一步会带你找回来。"},
+	"hide":          {"右键点击，暂时隐藏", "在练习胶囊或展开卡片上点右键。下一步会按当前显示方式带你找回来。"},
 	"recover":       {"从任务栏托盘找回点屿", "在任务栏右下角找到点屿图标（也可能在 ︿ 里），右键选择「显示 / 隐藏灵动岛」。"},
 	"done":          {"实操完成，可以开始使用了", "你已完成当前启用手势的练习。结束后，灵动岛会恢复练习前的状态。"},
 }
@@ -137,12 +137,6 @@ func (a *App) gestureTutorialView(c *ui.Context, w, h float32) {
 	pw, ph := min(float32(560), w-32), float32(292)
 	copy := practicePrompts[t.step]
 	switch t.step {
-	case "hide":
-		if a.leafString("HideTrigger", "RightClick") == "SwipeUp" {
-			copy = practiceCopy{"向上拖动，暂时隐藏", "按住练习胶囊向上拖到屏幕顶部再松手；下一步会按当前显示方式带你找回来。"}
-		} else {
-			copy = practiceCopy{"右键点击，暂时隐藏", "在练习胶囊或展开卡片上点右键。隐藏后，下一步会按当前显示方式带你找回来。"}
-		}
 	case "recover":
 		switch a.leafString("HiddenDisplay", "Strip") {
 		case "None":

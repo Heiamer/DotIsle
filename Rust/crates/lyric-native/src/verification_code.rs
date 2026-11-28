@@ -851,7 +851,7 @@ pub fn copy(code:&str,hwnd:windows::Win32::Foundation::HWND)->Result<(),String>{
     #[test]fn mini_and_classic_reveal_fixed_content_without_squeezing_text(){
         for base in [Rect::new(114.,24.,260.,40.),Rect::new(194.,24.,100.,18.)]{
             let mut hub=crate::capsule_alert::Hub::default();hub.enqueue(crate::capsule_alert::Alert::verification("test","测试应用","12345678".into()));
-            assert!(hub.begin(base,base.h/2.,488.,24.,0.,true));
+            assert!(hub.begin(base,base.h/2.,Rect::new(0.,0.,488.,332.),24.,0.,true));
             let expected=layout(Rect::new(52.,24.,WIDTH,HEIGHT),488.);
             for i in 0..120{let now=i as f64/120.;let(shell,_,mix)=hub.banner.presentation(now);let g=layout(shell,488.);
                 assert!((g.source.x-expected.source.x).abs()<0.001);assert_eq!(g.source.y,expected.source.y);assert_eq!(g.digits,expected.digits);assert_eq!(g.action,expected.action);

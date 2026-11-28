@@ -48,42 +48,6 @@ pub enum Action {
     EditModeToggle,
     /// 编辑模式下自动将所有卡片齐整排布到最近网格槽位。
     EditModeAutoAlign,
-    /// 侧边栏搜索框：复制第 N 条剪贴板历史到系统剪贴板。
-    StageClipboardCopy(usize),
-    /// 侧边栏搜索框：启动选中的应用或入口。
-    StageRunApp(String),
-    /// 侧边栏搜索框：复制计算结果等纯文本并轻提示。
-    StageCopyText(String),
-    /// 侧边栏搜索框：执行斜杠命令。
-    StageSlash(allegro::stage::StageSlashCmd),
-    /// 右侧侧边栏：聚焦顶部搜索框以激活键盘与中文 IME 输入。
-    SidebarFocusSearch,
-    /// 右侧侧边栏：切换「编辑区块」状态（完全独立于桌面）。
-    SidebarToggleEdit,
-    /// 右侧侧边栏：切换顶部 `+` 独立组件添加抽屉。
-    SidebarToggleAdd,
-    /// 右侧侧边栏：向独立侧边栏添加指定类型与区块尺寸的小组件。
-    SidebarAddWidget(desktop_widgets::Kind, desktop_widgets::Size, String),
-    /// 右侧侧边栏：移除独立侧边栏中的指定组件。
-    SidebarRemoveWidget(String),
-    /// 右侧侧边栏：设置独立侧边栏组件尺寸（小 1×1 / 大 2×1 / 特大 2×2）。
-    SidebarSetSize(String, desktop_widgets::Size),
-    /// 右侧侧边栏：循环切换独立侧边栏组件尺寸（1×1 -> 2×1 -> 2×2）。
-    SidebarCycleSize(String),
-    /// 右侧侧边栏：切换独立侧边栏组件材质（耀光 / 亚克力）。
-    SidebarSetMaterial(String, String),
-    /// 右侧侧边栏：上移/下移调整独立区块排布顺序。
-    SidebarMove(String, i32),
-    /// 右侧侧边栏：应用文件夹内启动第 N 个应用。
-    SidebarAppFolderLaunch(String, usize),
-    /// 右侧侧边栏：应用文件夹切换 4 / 9 宫格。
-    SidebarAppFolderToggleGrid(String),
-    /// 右侧侧边栏：便签复选框原地勾选。
-    SidebarNoteToggleCheck(String, usize),
-    /// 右侧侧边栏：日签切换下一句语录。
-    SidebarQuoteNext(String),
-    /// 收起右侧侧边栏。
-    SidebarClose,
     Timer(String, &'static str), QuickFocus, Media(&'static str),
 }
 #[derive(Default)]
@@ -328,16 +292,7 @@ impl Model {
             |Action::StackNext(_)|Action::StackPrev(_)|Action::StackUnpack(_)
             |Action::DropzoneOpen(_,_)|Action::DropzoneClear(_)|Action::PhotoNext(_)|Action::QuoteNext(_)
             |Action::AppFolderLaunch(_,_)|Action::AppFolderToggleGrid(_)
-            |Action::EditModeToggle|Action::EditModeAutoAlign
-            |Action::StageClipboardCopy(_)|Action::StageRunApp(_)|Action::StageCopyText(_)
-            |Action::StageSlash(_)
-            |Action::SidebarFocusSearch|Action::SidebarToggleEdit|Action::SidebarToggleAdd
-            |Action::SidebarAddWidget(_,_,_)|Action::SidebarRemoveWidget(_)
-            |Action::SidebarSetSize(_,_)|Action::SidebarCycleSize(_)|Action::SidebarSetMaterial(_,_)
-            |Action::SidebarMove(_,_)|Action::SidebarAppFolderLaunch(_,_)
-            |Action::SidebarAppFolderToggleGrid(_)|Action::SidebarNoteToggleCheck(_,_)
-            |Action::SidebarQuoteNext(_)
-            |Action::SidebarClose=>{},
+            |Action::EditModeToggle|Action::EditModeAutoAlign=>{},
             Action::ToggleTodo(id)=>{
                 let done=self.todos.items.iter().find(|t|t.id==id).is_some_and(|t|t.done(&todos::Now::local()));
                 self.native_command("todoComplete",json!({"id":id,"completed":!done}));

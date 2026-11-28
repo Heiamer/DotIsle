@@ -1,0 +1,39 @@
+BrimDeck — upstream repository: https://github.com/MoFeng2223/BrimDeck
+Upstream revision: d3215210e2f337c93784e862bea9830754030819
+Upstream license: Apache License, Version 2.0 (BrimDeck-Apache-2.0.txt).
+
+DotIsle changes in Rust/crates/lyric-native/src/:
+- ai_quota.rs: Codex parsing and Claude cache/profile discovery adapted from
+  src/BrimDeck.Core/{LogReader,ClaudeUsageHistory,DataLocations}.cs.
+- ai_quota_sources.rs: quota source catalog and read-only adapters adapted from
+  src/BrimDeck.Core/{ProviderCatalog,ProviderScripts,DshUsage,UsageService}.cs.
+- ai_quota_account.rs: native account/key flows, window and balance parsing,
+  and supported local auth-file readers adapted from src/BrimDeck.Core/
+  {ScriptProvider,CommandCodeUsage,OpenCodeUsage,KimiUsage,MiMoUsage}.cs.
+- ai_quota_zcode.rs: ZCode authenticated credential decoding and quota parsing
+  adapted from src/BrimDeck.Core/{ZCodeUsage,UsageService}.cs.
+- ai_quota_desktop.rs: local Kimi, CodeAgent and Grok Bot adapters adapted from
+  KimiUsage, CodeAgentUsage, GrokBotUsage, UsageService, GrokBotDesktopReader
+  and ChromiumSecrets. Cursor uses DesktopSources, LogReader, UsageService
+  and ChromiumSecrets as references.
+- ai_quota_desktop_credits.rs: desktop credits adapted from QoderUsage.cs,
+  QwenWorkUsage.cs and TraeUsage.cs.
+- ai_quota_browser.rs: read-only WorkBuddy, Qianwen, Doubao, Dola and MiMo
+  readers adapted from WorkBuddyUsage.cs, QianwenUsage.cs, DoubaoQuotaUsage.cs
+  and MiMoUsage.cs.
+- ai_quota_ark.rs: quota and balance API modeling from VolcengineArkUsage.cs.
+- ai_quota_custom.rs: a restricted Windows host for the fetchUsage(ctx)
+  contract described by ScriptProvider.cs, not the upstream engine.
+
+DotIsle changes in Go/settings-center/ui/:
+- quota_browser_login.go: explicit provider sign-in flows adapted from
+  WorkBuddyUsage.cs and QianwenUsage.cs.
+- quota_cookie_login.go: isolated sign-in flows based on the MiMo and Doubao
+  account connectors; no existing everyday browser profile is read.
+
+Modified: translated to Rust; bounded input and expiration checks; added DPAPI
+configuration, strict host selection without credential-bearing redirects,
+remaining quota notifications and native Go control center cards. No upstream
+executables, .NET runtime or Antigravity adapter are distributed. This file is
+DotIsle's attribution and change notice; no upstream NOTICE file was present at
+the pinned revision.

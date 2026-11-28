@@ -1,4 +1,4 @@
-"""Synthetic Feishu/DingTalk toast -> production reader -> island; WeChat Windows toasts are ignored."""
+"""Legacy database must not deliver Feishu, DingTalk or WeChat notification bodies."""
 import argparse, json, os, sqlite3, subprocess, time, uuid
 from pathlib import Path
 from verify_pomodoro import Runtime
@@ -13,7 +13,7 @@ def run(a):
         db.executescript('CREATE TABLE NotificationHandler(RecordId INTEGER,PrimaryId TEXT);'
                         'CREATE TABLE Notification(Id INTEGER,HandlerId INTEGER,ArrivalTime INTEGER,Type TEXT,[Order] INTEGER,Payload BLOB);'
                         "INSERT INTO NotificationHandler VALUES(1,'com.bytedance.Feishu'),(2,'DingTalk'),(3,'Tencent.WeChat');")
-    os.environ['LYRICISLAND_NOTIFICATION_DB'] = str(database.resolve())
+    (root / 'empty-toast-snapshot.json').write_text('[]', encoding='utf-8')
     app = Runtime(a.binary_dir, root / 'data')
     report = dict(success=False, synthetic=True, actualChatRead=False, checks=[])
     serial = 0
@@ -49,7 +49,7 @@ def run(a):
                         StartupSignatureEnabled=False, StartupGreetingEnabled=False,
                         VerificationCodeEnabled=False, Animation=False)
         path.write_text(json.dumps(settings),encoding='utf-8')
-        app.start(preserve_settings=True)
+        app.launch(env={'LYRICISLAND_NOTIFICATION_DB':str(database), 'LYRICISLAND_DESKTOP_TOAST_FIXTURE':str(root / 'empty-toast-snapshot.json')})
         wait(lambda s:s['notificationState']['access']=='compatible')
         assert app.request('state')['settings']['WeChatMessageHintsEnabled'] is False, 'Old opt-in carried over'
         assert app.request('update', {'key':'WeChatMessageHintsEnabled', 'value':True})['success'] is False
@@ -91,19 +91,14 @@ def run(a):
                 if proc.poll() is None:
                     proc.terminate()
                     proc.wait(timeout=5)
-        for handler, app_id in ((1,'Feishu'),(2,'DingTalk')):
-            before = len(history())
-            for body in ('合成通知正文甲','另一条合成通知正文乙'):
-                insert(handler, body)
-                expected = before + 1
-                state = wait(lambda s:len(s['notificationHistory'])==expected)
-                assert any(item.get('appId')==app_id or item.get('app_id')==app_id for item in state['notificationHistory']), 'Canonical app identity missing'
-                assert any(item.get('title')=='合成发件人' and item.get('body')==body for item in state['notificationHistory']), 'Sender or body was replaced by a placeholder'
-                before += 1
-            insert(handler, '')
-            time.sleep(2.3)
-            assert len(history()) == before, 'Empty placeholder was shown'
-            report['checks'].append(app_id+': sender and body preserved, two messages within cooldown retained, empty notice discarded')
+        before = len(history())
+        for handler in (1, 2):
+            insert(handler, '旧数据库不得显示此消息')
+        time.sleep(1.5)
+        assert len(history()) == before
+        assert app.request('state')['notificationContent'] is None
+        assert app.request('state')['testMessageAlert'] is None
+        report['checks'].append('Feishu and DingTalk are excluded from the legacy database receiver')
         assert app.request('update',{'key':'PauseNotifications','value':True})['success']
         wait(lambda s:s['notificationState']['paused'])
         before = len(history())

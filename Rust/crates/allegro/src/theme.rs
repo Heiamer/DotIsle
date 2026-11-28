@@ -7,7 +7,7 @@ use vello::{
     Scene,
 };
 
-/// 桌面与侧边栏小组件可选的两种透明亚克力光学挡位。
+/// 桌面小组件可选的两种透明亚克力光学挡位。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum WidgetMaterial {
@@ -267,7 +267,7 @@ pub fn paint_shell(
 
     let is_soft = appearance.material == WidgetMaterial::Lumen;
     if is_sheer {
-        // 侧边栏内透光容器：透出后方透明亚克力壁纸磨砂层
+        // 透光容器：透出后方透明亚克力壁纸磨砂层
         let top_a = if dark {
             if is_soft { 0.56 } else { 0.42 }
         } else {

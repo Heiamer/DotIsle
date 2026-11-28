@@ -29,39 +29,31 @@ const (
 // App is the whole control center state; the view reads it, click handlers and
 // the island pump mutate it on the main thread through Window.Update.
 type App struct {
-	allegroPreviewPending map[string]bool
-	allegroRecording      bool
-	allegroRecordingEdit  bool
-	allegroCaptureError   string
-	AllegroAvailable      bool
-	allegro               *allegroController
-	allegroSettings       allegroSettings
-	allegroDesktop        allegroBoard
-	allegroSidebar        allegroBoard
-	allegroTutorial       int
-	allegroTutorialOpen   bool
-	allegroError          string
-	allegroPreviews       map[string]*ui.Bitmap
-	Prefs                 prefs.Preferences
-	Data                  string
-	State                 map[string]any
-	packetAt              time.Time
-	Connected             bool
-	ConnErr               string
-	Page                  int
-	SettingsTab           uint8
-	settingsPanel         settingsPanelState
-	IslandTab             uint8
-	Scroll                [7]ui.ScrollState
-	contentH              [7]float32 // measured page content height, drives the scroll bounds
-	Palette               Palette
-	Win                   *mygo.Window
-	ShowCenter            func() // Restores the resident window or recreates it after idle release.
-	asyncRequests         atomic.Int32
-	overview              overviewState
-	layout                prefs.CenterLayout
-	layoutLoaded          bool
-	navigationOpen        bool
+	mailOtpEnabled atomic.Bool
+	mail           mailState
+	mailOpen       bool
+	quotaFields    quotaFields
+	quotaSources   quotaSourcePanel
+	Prefs          prefs.Preferences
+	Data           string
+	State          map[string]any
+	packetAt       time.Time
+	Connected      bool
+	ConnErr        string
+	Page           int
+	SettingsTab    uint8
+	settingsPanel  settingsPanelState
+	IslandTab      uint8
+	Scroll         [7]ui.ScrollState
+	contentH       [7]float32 // measured page content height, drives the scroll bounds
+	Palette        Palette
+	Win            *mygo.Window
+	ShowCenter     func() // Restores the resident window or recreates it after idle release.
+	asyncRequests  atomic.Int32
+	overview       overviewState
+	layout         prefs.CenterLayout
+	layoutLoaded   bool
+	navigationOpen bool
 
 	todoDialog  bool
 	editTodoID  string
@@ -80,7 +72,7 @@ type App struct {
 	widgetEditor     *widgetEditorState
 	overviewEditor   *overviewEditorState
 	widgetExamples   *App
-	reminderFields   [2]leafEditField
+	reminderFields   [4]leafEditField
 
 	// Open color picker dialog and the toast message (fresh for a few seconds).
 	picker         *pickerState
@@ -244,7 +236,6 @@ func (a *App) applyPendingPage() {
 func (a *App) ApplyPacket(state map[string]any, connected bool, connErr string) {
 	if state != nil {
 		a.State = state
-		a.publishAllegroLive(state)
 		// native_sync.rs routes pendingPage on every snapshot; without this call the
 		// island's "open this page" request (main.rs:1152, published as pendingPage and
 		// cleared after the reply) never navigates, so the tray/CLI wake-up was a no-op.
@@ -255,6 +246,7 @@ func (a *App) ApplyPacket(state map[string]any, connected bool, connErr string) 
 		a.syncGesturePractice(state)
 	}
 	a.Connected = connected
+	a.mailOtpEnabled.Store(connected && a.settings()["VerificationCodeEnabled"] != false && a.settings()["PauseNotifications"] != true && a.State["sessionLocked"] != true)
 	a.ConnErr = connErr
 	a.packetAt = time.Now()
 	a.Refresh()

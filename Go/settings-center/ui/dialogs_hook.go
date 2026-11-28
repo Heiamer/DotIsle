@@ -86,12 +86,12 @@ func (a *App) dialogViews(c *ui.Context, w, h float32) {
 		a.updateNotesView(c, w, h)
 		return
 	}
-	if a.AllegroAvailable && a.centerVisible && a.Connected && a.gestureTutorial == nil && !a.allegroSettings.OnboardingDone && !a.cityPromptAsked && !a.signaturePending && a.signatureStart.IsZero() && !a.allegroTutorialOpen {
-		a.allegroTutorialOpen = true
-		a.allegroTutorial = 0
+	if a.quotaSources.open {
+		a.quotaSourcesDialog(c)
+		return
 	}
-	if a.allegroTutorialOpen {
-		a.allegroTutorialView(c, w, h)
+	if a.mailOpen {
+		a.mailDialog(c)
 		return
 	}
 	a.maybePromptCity()

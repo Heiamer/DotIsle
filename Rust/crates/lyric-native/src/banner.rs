@@ -41,10 +41,15 @@ impl Banner {
     const CLOSE_SPRING:[(f64,f64);6]=[(22.5,0.92),(22.5,0.92),(22.5,0.92),(22.5,0.92),(22.5,0.96),(24.0,1.0)];
     /// An island-body activity with independently sized, unscaled typography.
     pub fn show_capsule(&mut self,notice:Notice,base:Rect,radius:f64,host:f64,y:f64,width:f64,height:f64,now:f64,animate:bool){
+        let width = width.min(host - 48.).max(140.);
+        let height = height.clamp(40., 112.);
+        self.show_fitted_capsule(notice, base, radius, Rect::new((host-width)/2., y, width, height), now, animate);
+    }
+    /// The caller fits dedicated cards in the host; do not reapply the ordinary notice height cap.
+    pub fn show_fitted_capsule(&mut self,notice:Notice,base:Rect,radius:f64,target:Rect,now:f64,animate:bool){
         if self.notice.is_none(){for(s,v)in self.motion.iter_mut().zip([base.x,base.y,base.w,base.h,radius,0.]){s.snap(v,now);}}
         self.notice=Some(notice);self.open=true;self.retiring=false;self.changed=now;self.deadline=now+5.;self.compact=true;
-        let width=width.min(host-48.).max(140.);let height=height.clamp(40.,112.);
-        for(i,(s,v))in self.motion.iter_mut().zip([(host-width)/2.,y,width,height,(height/2.).min(28.),1.]).enumerate(){
+        for(i,(s,v))in self.motion.iter_mut().zip([target.x,target.y,target.w,target.h,(target.h/2.).min(28.),1.]).enumerate(){
             if animate||i==5{let(w,z)=Self::OPEN_SPRING[i];s.retarget_with(v,now,w,z)}else{s.snap(v,now)}
         }
     }

@@ -13,7 +13,7 @@ pub unsafe fn run(app:&mut App,directory:&Path)->std::result::Result<(),Box<dyn 
             let event=devices::Event::new("{fixture-container}".into(),devices::Kind::Headphones,true,"示例耳机".into());
             app.enqueue_device(&event);
             let base=Rect::new(150.,24.,if mini{100.}else{260.},if mini{18.}else{40.});
-            app.alerts.begin(base,base.h/2.,app.layout.host.w,24.,0.,false);
+            app.alerts.begin(base,base.h/2.,app.layout.host,24.,0.,false);
             let scale=dpi/96.;
             let mut renderer=Renderer::new(app.visual_hwnd,(app.layout.host.w*scale)as u32,(app.layout.host.h*scale)as u32,dpi as f32,&app.base.join("Assets/Fonts/NotoSansSC.ttf"))?;
             for(level,stamp,name)in [(None,2,"unknown"),(Some(60),3,"known"),(Some(59),4,"updated")]{
@@ -59,7 +59,7 @@ pub unsafe fn run(app:&mut App,directory:&Path)->std::result::Result<(),Box<dyn 
             let event=devices::Event::new(device.container_id.clone().unwrap_or(device.id.clone()),devices::Kind::Headphones,true,device.name.clone());
             app.enqueue_device(&event);
             let base=Rect::new(150.,24.,if mini{100.}else{260.},if mini{18.}else{40.});
-            app.alerts.begin(base,base.h/2.,app.layout.host.w,24.,0.,false);
+            app.alerts.begin(base,base.h/2.,app.layout.host,24.,0.,false);
             let alert=app.alerts.active.as_ref().ok_or("live alert missing")?;
             let expected=format!("{}%",device.battery_percent.unwrap());
             if alert.trailing!=expected||!alert.title.contains(&device.name){return Err("live device association mismatch".into())}

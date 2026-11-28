@@ -21,6 +21,14 @@ impl Surface{
     pub fn expanded(material:Material,cover_background:bool)->Self{
         Self{material,compact:material,cover_background,compact_cover_background:false,cover_overlay:true,reveal:1.,overlay:0.,mini:false,transparent:false,card_frost:0.,card_opacity:0.,capsule_frost:0.,capsule_opacity:0.}
     }
+    /// Only the part of the material blend that is glass can contribute body dye.
+    pub fn liquid_glass_dye_mix(self, amount: f64) -> f32 {
+        let compact = if self.compact == Material::LiquidGlass { 1. - amount } else { 0. };
+        let expanded = if self.material == Material::LiquidGlass { amount } else { 0. };
+        let dyed = (if self.compact_cover_background { compact } else { 0. })
+            + (if self.cover_background { expanded } else { 0. });
+        (dyed / (compact + expanded).max(f64::EPSILON)) as f32
+    }
     pub fn paint(self,palette:CoverPalette)->Paint{
         // A transient hint can appear while the music card is collapsed. Its own reveal,
         // rather than the music card's reveal, must bring in the selected expanded material.
@@ -154,6 +162,24 @@ impl Surface{
         assert!(red.reflection>0.&&red.frost>0.);
         let neutral=Surface{cover_background:false,cover_overlay:false,..lf};
         assert_eq!(neutral.paint(CoverPalette{background:0xd92626,accent:0xff9999}).top,neutral.paint(CoverPalette{background:0x1b4fd9,accent:0x99ccff}).top);
+    }
+    #[test]
+    fn glass_body_dye_obeys_the_independent_compact_and_expanded_switches() {
+        let card = Surface::expanded(Material::LiquidGlass, true);
+        for mini in [false, true] {
+            let expanded_only = Surface { mini, ..card };
+            assert_eq!(expanded_only.liquid_glass_dye_mix(0.), 0.);
+            assert_eq!(expanded_only.liquid_glass_dye_mix(1.), 1.);
+            assert_eq!(expanded_only.liquid_glass_dye_mix(0.25), 0.25);
+            let compact_only = Surface { cover_background: false, compact_cover_background: true, ..expanded_only };
+            assert_eq!(compact_only.liquid_glass_dye_mix(0.), 1.);
+            assert_eq!(compact_only.liquid_glass_dye_mix(1.), 0.);
+            assert_eq!(compact_only.liquid_glass_dye_mix(0.25), 0.75);
+        }
+        let acrylic_card = Surface { material: Material::Acrylic, ..card };
+        assert_eq!(acrylic_card.liquid_glass_dye_mix(0.5), 0.);
+        let acrylic_cap = Surface { compact: Material::Acrylic, ..card };
+        assert_eq!(acrylic_cap.liquid_glass_dye_mix(0.5), 1.);
     }
     #[test]fn liquid_glass_beta_is_isolated_from_existing_materials(){
         let acrylic=Surface::expanded(Material::Acrylic,true).paint(CoverPalette::default());

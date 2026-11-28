@@ -13,8 +13,8 @@ pub struct GlassShape {
     pub params0: [f32; 4],
     /// `[blur_01, tint_alpha, glass_mix, 0.0]`。
     pub params1: [f32; 4],
-    /// `[tint_r, tint_g, tint_b, 0.0]`（0.0..=1.0 线性/sRGB 着色基调）。
-    pub tint_rgb: [f32; 4],
+    /// `[seed_r, seed_g, seed_b, body_dye_weight]` in the backdrop texture color space.
+    pub body_dye: [f32; 4],
 }
 
 impl GlassShape {
@@ -31,11 +31,10 @@ impl GlassShape {
         blur_01: f32,
         tint_01: f32,
         glass_mix: f32,
-        tint_rgb: [f32; 3],
     ) -> Self {
         let t = tint_01.clamp(0.0, 1.0);
-        // 极致清透非线性曲线：0% 完全零灰罩，新默认 6% 近乎无色水晶，旧默认 42% 亦保持高度清透
-        let tint_alpha = (t.powf(1.6) * 0.35).clamp(0.0, 0.38);
+        // Keep zero neutral; make the tint perceptible at ordinary slider settings.
+        let tint_alpha = (t.powf(1.05) * 0.44).clamp(0.0, 0.44);
         Self {
             rect: [x, y, w.max(1.0), h.max(1.0)],
             params0: [
@@ -50,13 +49,22 @@ impl GlassShape {
                 glass_mix.clamp(0.0, 1.0),
                 0.0,
             ],
-            tint_rgb: [
-                tint_rgb[0].clamp(0.0, 1.0),
-                tint_rgb[1].clamp(0.0, 1.0),
-                tint_rgb[2].clamp(0.0, 1.0),
-                0.0,
-            ],
+            body_dye: [0.0; 4],
         }
+    }
+
+    /// Dye the transmitted light across the full pane, independently of the neutral tint.
+    pub fn with_body_dye(mut self, seed: u32, depth: f32, enabled_mix: f32) -> Self {
+        let t = depth.clamp(0.0, 1.0);
+        // Responsive at the default 6%, smooth down to zero, and never fully opaque.
+        let weight = 0.74 * t / (t + 0.065 * (1.0 - t)) * enabled_mix.clamp(0.0, 1.0);
+        self.body_dye = [
+            ((seed >> 16) & 255) as f32 / 255.0,
+            ((seed >> 8) & 255) as f32 / 255.0,
+            (seed & 255) as f32 / 255.0,
+            weight,
+        ];
+        self
     }
 }
 
@@ -70,7 +78,7 @@ pub fn encode_uniforms(width: u32, height: u32, shapes: &[GlassShape]) -> Vec<u8
     out.extend_from_slice(&0.0f32.to_le_bytes());
     for i in 0..MAX_GLASS_SHAPES {
         let s = shapes.get(i).copied().unwrap_or_default();
-        for arr in [s.rect, s.params0, s.params1, s.tint_rgb] {
+        for arr in [s.rect, s.params0, s.params1, s.body_dye] {
             for v in arr {
                 out.extend_from_slice(&v.to_le_bytes());
             }
@@ -84,7 +92,7 @@ struct GlassShape {
     rect: vec4<f32>,
     params0: vec4<f32>,
     params1: vec4<f32>,
-    tint_rgb: vec4<f32>,
+    body_dye: vec4<f32>,
 };
 
 struct Uniforms {
@@ -240,27 +248,48 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             refracted = vec3<f32>(r_ch, col_g.g, b_ch);
         }
 
-        // 通透色彩还原 + 亮色背景压低暗灰着色以彻底消除浑浊灰感
-        let luma = dot(refracted, vec3<f32>(0.2126, 0.7152, 0.0722));
+        let luma_weights = vec3<f32>(0.2126, 0.7152, 0.0722);
+        let luma = dot(refracted, luma_weights);
         let vivid = clamp(mix(vec3<f32>(luma), refracted, 1.22), vec3<f32>(0.0), vec3<f32>(1.0));
         let light_bg = smoothstep(0.45, 0.88, luma);
-        let tint_w = tint_alpha * mix(1.0, 0.25, light_bg);
-        var tinted = mix(vivid, sh.tint_rgb.rgb, tint_w);
-        // 极轻的水晶透光提亮与微冷玻璃反光
-        tinted = clamp(tinted + vec3<f32>(0.014, 0.018, 0.026) * (1.0 - light_bg * 0.70), vec3<f32>(0.0), vec3<f32>(1.0));
+        let dye_weight = sh.body_dye.a;
+        let neutral = mix(vec3<f32>(0.05, 0.07, 0.12), vec3<f32>(0.88, 0.92, 0.98), light_bg);
+        let neutral_weight = tint_alpha * mix(1.0, 0.25, light_bg) * (1.0 - dye_weight);
+        var tinted = mix(vivid, neutral, neutral_weight);
+
+        // Keep the pane visible even on an almost-white or almost-black background.
+        // This offsets the transmitted light instead of covering the backdrop with a flat fill.
+        let lightness_offset = mix(0.093, -0.108, smoothstep(0.18, 0.88, luma));
+        let pane_gradient = -0.019 * rel.y / max(half.y, 1.0);
+        tinted = clamp(tinted + vec3<f32>(lightness_offset + pane_gradient), vec3<f32>(0.0), vec3<f32>(1.0));
+        if dye_weight > 0.0 {
+            let seed = sh.body_dye.rgb;
+            let seed_luma = dot(seed, luma_weights);
+            let local_luma = dot(tinted, luma_weights);
+            let dye_luma = mix(local_luma, clamp(local_luma, 0.24, 0.77), 0.62)
+                + (seed_luma - 0.5) * 0.12;
+            let dye = clamp(vec3<f32>(dye_luma) + (seed - vec3<f32>(seed_luma)) * mix(0.86, 0.80, light_bg),
+                vec3<f32>(0.0), vec3<f32>(1.0));
+            // This is transmitted body color, not a highlight. Do not attenuate on light backgrounds.
+            tinted = mix(tinted, dye, dye_weight);
+        }
+        // A wider contrast band separates the pane from mid-tone or busy backgrounds as well.
+        let contour = (1.0 - smoothstep(0.0, 0.52, edge_t)) * 0.17;
+        let contour_ink = mix(0.78, 0.24, smoothstep(0.35, 0.60, luma));
+        tinted = mix(tinted, vec3<f32>(contour_ink), contour);
 
         // 双角对角线菲涅尔镜面反光带 + 1.2px 定向晶亮高光棱边 + 亮底外缘极细冷调轮廓线
         let light_dir = normalize(vec2<f32>(-0.50, -0.86));
         let fresnel = 0.30 + 0.70 * pow(abs(dot(grad, light_dir)), 1.55);
-        let top_sheen = smoothstep(0.48, -0.95, rel.y / max(half.y, 1.0)) * pow(1.0 - edge_t, 2.3) * (0.11 * (1.0 - 0.55 * light_bg));
+        let top_sheen = (1.0 - smoothstep(-0.95, 0.48, rel.y / max(half.y, 1.0))) * pow(1.0 - edge_t, 2.3) * (0.11 * (1.0 - 0.55 * light_bg));
         let inner_sheen = pow(1.0 - edge_t, 3.6) * (0.16 * (1.0 - 0.50 * light_bg)) * fresnel + top_sheen;
         let rim = smoothstep(-1.80, -0.25, d) * (1.0 - smoothstep(-0.20, 0.55, d));
         let rim_color = mix(vec3<f32>(0.84, 0.93, 1.0), vec3<f32>(1.0, 1.0, 1.0), fresnel);
         let outer_hairline = smoothstep(-1.10, -0.20, d) * (1.0 - smoothstep(-0.08, 0.40, d));
 
-        tinted = tinted * (1.0 - outer_hairline * light_bg * 0.15)
+        tinted = tinted * (1.0 - outer_hairline * light_bg * 0.27)
             + vec3<f32>(inner_sheen)
-            + rim_color * (rim * (0.42 + 0.48 * fresnel) * (1.0 - 0.30 * light_bg));
+            + rim_color * (rim * (0.54 + 0.40 * fresnel) * (1.0 - 0.40 * light_bg));
         tinted = clamp(tinted, vec3<f32>(0.0), vec3<f32>(1.0));
 
         let layer_a = cov * alpha_eff;
@@ -638,7 +667,6 @@ mod tests {
             0.35,
             0.4,
             1.0,
-            [0.05, 0.06, 0.1],
         );
         let bytes = encode_uniforms(640, 240, &[s]);
         assert_eq!(bytes.len(), 16 + MAX_GLASS_SHAPES * 64);
@@ -648,7 +676,22 @@ mod tests {
     }
 
     #[test]
-    fn tint_alpha_stays_crystal_clear_at_low_and_default_values() {
+    fn glass_body_dye_encodes_seed_and_obeys_slider_and_form_weight() {
+        let glass = GlassShape::new(0., 0., 120., 40., 20., 1., 0.76, 0.46, 0.08, 0.06, 1.);
+        let make = |depth, enabled_mix| glass.with_body_dye(0xff0080, depth, enabled_mix);
+        let normal = make(0.06, 1.);
+        assert_eq!(&normal.body_dye[..3], &[1., 0., 128. / 255.]);
+        assert_eq!(make(0., 1.).body_dye[3], 0.);
+        assert_eq!(make(0.06, 0.).body_dye[3], 0.);
+        assert_eq!(make(0.06, 0.5).body_dye[3], normal.body_dye[3] * 0.5);
+        assert!((0.35..0.38).contains(&normal.body_dye[3]));
+        assert!(make(1., 1.).body_dye[3] > normal.body_dye[3]);
+        let bytes = encode_uniforms(120, 40, &[normal]);
+        assert_eq!(f32::from_le_bytes(bytes[76..80].try_into().unwrap()), normal.body_dye[3]);
+    }
+
+    #[test]
+    fn glass_tint_is_monotonic_and_zero_can_be_explicitly_neutral() {
         let make = |tint_01: f32| {
             GlassShape::new(
                 0.0,
@@ -662,13 +705,12 @@ mod tests {
                 0.12,
                 tint_01,
                 1.0,
-                [0.035, 0.045, 0.075],
             )
             .params1[1]
         };
         assert_eq!(make(0.0), 0.0);
-        assert!(make(0.06) < 0.01);
-        assert!(make(0.42) < 0.10);
-        assert!(make(1.0) <= 0.38);
+        assert!((0.018..0.034).contains(&make(0.06)));
+        assert!((0.15..0.22).contains(&make(0.42)));
+        assert!(make(1.0) <= 0.44);
     }
 }

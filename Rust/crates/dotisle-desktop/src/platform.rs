@@ -6,7 +6,6 @@ fn native_handle(w:&winit::window::Window)->isize{match w.window_handle().unwrap
  fn SetWindowLongPtrW(hwnd:isize,index:i32,value:isize)->isize;
  fn GetWindowLongPtrW(hwnd:isize,index:i32)->isize;
  fn GetWindow(hwnd:isize,cmd:u32)->isize;
- fn IsWindow(hwnd:isize)->i32;
  fn IsWindowVisible(hwnd:isize)->i32;
  fn GetClassNameW(hwnd:isize,name:*mut u16,count:i32)->i32;
  fn SetWindowPos(hwnd:isize,after:isize,x:i32,y:i32,w:i32,h:i32,flags:u32)->i32;
@@ -215,23 +214,6 @@ pub fn apply_input_region(
     }
 }
 
-/// 侧栏每帧自行绘制，无需由 HRGN 更新再发 WM_PAINT，避免动画空转。
-pub fn apply_sidebar_region(window: &winit::window::Window, region: (i32, i32, i32, i32, i32)) -> bool {
-    use windows::Win32::{Foundation::HWND, Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn}};
-    let (x0, y0, x1, y1, r) = region;
-    unsafe {
-        let hwnd = HWND(native_handle(window) as _);
-        let d = r * 2 + 4;
-        let handle = CreateRoundRectRgn(x0 - 2, y0 - 2, x1 + 2, y1 + 2, d, d);
-        if handle.is_invalid() { return false; }
-        if SetWindowRgn(hwnd, Some(handle), false) == 0 {
-            let _ = DeleteObject(handle.into());
-            return false;
-        }
-        true
-    }
-}
-
 /// 在全屏编辑模式（置顶）与日常桌面壁纸层（置底）之间切换窗口 Z 序。
 pub fn set_dashboard_layer(window: &winit::window::Window, topmost: bool) {
     if topmost {
@@ -243,70 +225,23 @@ pub fn set_dashboard_layer(window: &winit::window::Window, topmost: bool) {
     }
 }
 
-/// 将独立右侧边栏窗口置顶显示：默认 `focus = false` 以免抢占用户正在操作的电脑窗口焦点；
-/// 点击搜索框时传入 `focus = true` 激活键盘与中文 IME。
-pub fn show_sidebar_topmost(window: &winit::window::Window, focus: bool) {
-    const SW_SHOWNOACTIVATE: i32 = 4;
-    const SWP_NOSIZE: u32 = 0x0001;
-    const SWP_NOMOVE: u32 = 0x0002;
-    const SWP_NOACTIVATE: u32 = 0x0010;
-    const SWP_SHOWWINDOW: u32 = 0x0040;
-    unsafe {
-        let hwnd = native_handle(window);
-        // 保留 NOACTIVATE：只有搜索框使用显式前台激活，其他鼠标点击不抢焦点。
-        const GWL_EXSTYLE: i32 = -20;
-        const WS_EX_NOACTIVATE: isize = 0x0800_0000;
-        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-        if style & WS_EX_NOACTIVATE == 0 {
-            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_NOACTIVATE);
-        }
-        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-        let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOACTIVATE;
-        SetWindowPos(hwnd, -1, 0, 0, 0, 0, flags);
-        // 此处只在真实搜索框点击时调用；不绑定其他进程的输入队列。
-        if focus && SetForegroundWindow(hwnd) != 0 {
-            SetFocus(hwnd);
-        }
-    }
-}
-
-pub fn foreground_window() -> isize { unsafe { GetForegroundWindow() } }
-
-/// 用户结束输入时交还焦点；若用户已切到第三方窗口，绝不抢回来。
-pub fn restore_sidebar_focus(window: &winit::window::Window, previous: isize) {
-    unsafe {
-        if previous != 0 && previous != native_handle(window) && GetForegroundWindow() == native_handle(window)
-            && IsWindow(previous) != 0
-        {
-            SetForegroundWindow(previous);
-        }
-    }
-}
-
-/// 隐藏窗口（用于彻底收起独立右侧边栏）。
-pub fn hide_window(window: &winit::window::Window) {
-    unsafe {
-        ShowWindow(native_handle(window), 0);
-    }
-}
-
 use std::{
     sync::{Arc, atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering}},
     thread::{self, JoinHandle},
     time::Duration,
 };
 
-const HOTKEYS: [u32; 2] = [0xC0, 0x45]; // VK_OEM_3、VK_E
+const HOTKEYS: [u32; 1] = [0x45]; // VK_E
 
 #[derive(Default)]
-struct HotkeyEvents([AtomicU64; 2]);
+struct HotkeyEvents([AtomicU64; 1]);
 
 impl HotkeyEvents {
     fn push(&self, key: usize) {
         self.0[key].fetch_add(1, Ordering::Relaxed);
     }
 
-    fn take(&self) -> [u64; 2] {
+    fn take(&self) -> [u64; 1] {
         self.0.each_ref().map(|n| n.swap(0, Ordering::Relaxed))
     }
 }
@@ -336,7 +271,7 @@ impl HotkeyListener {
     }
 
     /// 取走累计次数；即使唤醒消息合并，连续两次切换也不会被当作一次。
-    pub fn take(&self) -> [u64; 2] {
+    pub fn take(&self) -> [u64; 1] {
         self.control.events.take()
     }
 }
@@ -386,7 +321,7 @@ fn listen_hotkeys(control: &HotkeyControl) {
         while !control.stopping.load(Ordering::SeqCst)
             && unsafe { GetMessageW(&mut msg, None, 0, 0) }.0 > 0
         {
-            if msg.message == WM_HOTKEY && (1..=2).contains(&msg.wParam.0) {
+            if msg.message == WM_HOTKEY && msg.wParam.0 == 1 {
                 control.events.push(msg.wParam.0 - 1);
                 crate::wake();
             }
@@ -410,8 +345,8 @@ fn pressed_edge(previous: &mut bool, down: bool) -> bool {
     down && !was_down
 }
 
-fn poll_failed_hotkeys(control: &HotkeyControl, failed: [bool; 2]) {
-    let mut previous = [false; 2];
+fn poll_failed_hotkeys(control: &HotkeyControl, failed: [bool; 1]) {
+    let mut previous = [false; 1];
     while !control.stopping.load(Ordering::SeqCst) {
         // 与 MOD_ALT 一致；避免把 AltGr（Ctrl+Alt）或其他组合误当成独占热键。
         let alt = unsafe { GetAsyncKeyState(0x12) < 0 &&
@@ -434,13 +369,13 @@ mod hotkey_tests {
     fn counters_keep_repeated_and_concurrent_presses() {
         let events = HotkeyEvents::default();
         thread::scope(|scope| {
-            for i in [0, 0, 1] {
+            for i in [0, 0, 0] {
                 let events = &events;
                 scope.spawn(move || { for _ in 0..100 { events.push(i); } });
             }
         });
-        assert_eq!(events.take(), [200, 100]);
-        assert_eq!(events.take(), [0, 0]);
+        assert_eq!(events.take(), [300]);
+        assert_eq!(events.take(), [0]);
     }
 
     #[test]
@@ -491,10 +426,4 @@ pub fn open_shell_path(raw: &str) {
             SW_SHOWNORMAL,
         );
     }
-}
-
-/// 保持独立桌面引擎的标准交互优先级（仅靠空闲 `WaitUntil` 节流实现低占用，避免强制小核锁频导致拖拽和动画卡顿）。
-pub fn enable_efficiency_mode() {
-    // Windows EcoQoS (`PROCESS_POWER_THROTTLING_EXECUTION_SPEED`) 会把进程强锁在最低频小核，
-    // 严重拖慢 Vello / WGPU 全屏透明画布的实时合成与拖拽，故保持常规调度。
 }

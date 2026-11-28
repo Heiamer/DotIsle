@@ -75,7 +75,7 @@ unsafe fn verification_preview(a:&mut App,dir:&Path)->Result<(),Box<dyn std::err
    ("copied","DotIsle Verification Preview","00135790","已复制验证码"),
    ("clipboard-busy","验证测试","00135790","剪贴板正忙，请再点一次")]{
    let mut alert=crate::capsule_alert::Alert::verification("synthetic-preview",source,code.into());alert.detail=detail.into();
-   let mut hub=crate::capsule_alert::Hub::default();hub.enqueue(alert);hub.begin(a.layout.capsule,a.layout.capsule.h/2.,host,24.,0.,true);
+   let mut hub=crate::capsule_alert::Hub::default();hub.enqueue(alert);hub.begin(a.layout.capsule,a.layout.capsule.h/2.,a.layout.host,24.,0.,true);
    let times=if name=="eight-long-source"&&host==448.&&dpi==144.{vec![0.,0.04,0.08,0.12,0.2,0.4,1.]}else{vec![1.]};
    for now in times{let(shell,radius,mix)=hub.banner.presentation(now);let mut s=a.scene();s.alert=hub.active.as_ref();s.alert_rect=shell;s.alert_radius=radius;s.alert_mix=mix;
     s.frame=Frame::hidden(a.options());s.panel=None;s.notification=None;s.osd=None;s.transient_only=true;s.layout_scale=scale;s.lyric="";s.title="";s.artist="";

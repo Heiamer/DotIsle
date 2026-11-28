@@ -29,8 +29,3 @@ windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsA
 name = "dotisle_desktop"
 path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
-
-[[bin]]
-name = "DotIsle-Allegro"
-path = "src/bin/dotisle_allegro.rs"
-

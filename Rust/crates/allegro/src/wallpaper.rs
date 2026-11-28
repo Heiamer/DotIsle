@@ -136,88 +136,6 @@ impl WallpaperCache {
         self.crop_acrylic_inner(monitor_key, monitor_size, card, 3, true)
     }
 
-    /// 提取并烘焙**右侧侧边栏丝绸柔雾背景**：大半径 5 次平滑高斯模糊、无粗糙颗粒噪点，
-    /// 将壁纸色彩化作类似 HyperOS / iOS 负一屏的温润丝绸散景光晕。
-    pub fn crop_sidebar_frost(
-        &mut self,
-        monitor_key: &str,
-        monitor_size: (f64, f64),
-        panel: Rect2D,
-    ) -> Option<WallpaperSample> {
-        let wall = self.wallpaper.as_ref()?;
-        let mon_w = monitor_size.0.max(1.0);
-        let mon_h = monitor_size.1.max(1.0);
-        let target_w = ((panel.w * 0.22).round() as u32).clamp(48, 128);
-        let target_h = ((panel.h * 0.22).round() as u32).clamp(96, 240);
-
-        let key = CropKey {
-            monitor_key: monitor_key.to_string(),
-            mode: 3,
-            x: (panel.x / 8.0).round() as i32,
-            y: (panel.y / 8.0).round() as i32,
-            w: target_w,
-            h: target_h,
-            passes: 5,
-            radius_q: 0,
-        };
-        if let Some(cached) = self.crops.get(&key) {
-            return Some(cached.clone());
-        }
-
-        let mut buf = vec![0u8; (target_w * target_h * 4) as usize];
-        let u0 = (panel.x / mon_w).clamp(0.0, 1.0);
-        let v0 = (panel.y / mon_h).clamp(0.0, 1.0);
-        let u1 = ((panel.x + panel.w) / mon_w).clamp(0.0, 1.0);
-        let v1 = ((panel.y + panel.h) / mon_h).clamp(0.0, 1.0);
-
-        for py in 0..target_h {
-            let v = v0 + (v1 - v0) * ((py as f64 + 0.5) / target_h as f64);
-            for px in 0..target_w {
-                let u = u0 + (u1 - u0) * ((px as f64 + 0.5) / target_w as f64);
-                let c = sample_bilinear(wall, u, v);
-                let di = ((py * target_w + px) * 4) as usize;
-                buf[di] = c[0].round().clamp(0.0, 255.0) as u8;
-                buf[di + 1] = c[1].round().clamp(0.0, 255.0) as u8;
-                buf[di + 2] = c[2].round().clamp(0.0, 255.0) as u8;
-                buf[di + 3] = 255;
-            }
-        }
-
-        // 大半径多轮分离模糊，完全抹平锐利纹理，留下柔滑奶油雾面光晕
-        let radius = ((target_w.min(target_h) / 5) as usize).clamp(8, 22);
-        for _ in 0..5 {
-            box_blur_rgba(&mut buf, target_w as usize, target_h as usize, radius);
-        }
-
-        for px in buf.chunks_exact_mut(4) {
-            let r = px[0] as f32;
-            let g = px[1] as f32;
-            let b = px[2] as f32;
-            let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-            // 柔和降饱和 0.78，避免高对比壁纸干扰白色卡片阅读
-            px[0] = (lum + (r - lum) * 0.78).clamp(0.0, 255.0) as u8;
-            px[1] = (lum + (g - lum) * 0.78).clamp(0.0, 255.0) as u8;
-            px[2] = (lum + (b - lum) * 0.78).clamp(0.0, 255.0) as u8;
-        }
-        let avg_luma = compute_luma(&buf);
-
-        let sample = WallpaperSample {
-            image: ImageData {
-                data: Blob::new(Arc::new(buf)),
-                format: ImageFormat::Rgba8,
-                alpha_type: ImageAlphaType::Alpha,
-                width: target_w,
-                height: target_h,
-            },
-            avg_luma,
-        };
-        if self.crops.len() > 128 {
-            self.crops.clear();
-        }
-        self.crops.insert(key, sample.clone());
-        Some(sample)
-    }
-
     fn crop_acrylic_inner(
         &mut self,
         monitor_key: &str,
@@ -639,7 +557,6 @@ use std::{sync::mpsc, thread};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Slot {
-    Sidebar,
     Card(String),
 }
 
@@ -710,10 +627,7 @@ impl AsyncWallpaperCache {
                     Work::Probe => Ready::Probe(probe(&mut wallpaper)),
                     Work::Slice(req) => {
                         let monitor = format!("{}:{:?}", req.key.monitor, req.key.size);
-                        let sample = match req.slot {
-                            Slot::Sidebar => wallpaper.crop_sidebar_frost(&monitor, req.size, req.area),
-                            Slot::Card(_) => wallpaper.crop_acrylic(&monitor, req.size, req.area),
-                        };
+                        let sample = wallpaper.crop_acrylic(&monitor, req.size, req.area);
                         Ready::Slice(req.slot, req.key, sample)
                     }
                 };
@@ -758,10 +672,6 @@ impl AsyncWallpaperCache {
         redraw
     }
 
-    pub fn sidebar(&mut self, monitor: &str, size: (f64, f64), area: Rect2D) -> Option<WallpaperSample> {
-        self.sample(Slot::Sidebar, monitor, size, area, true)
-    }
-
     pub fn acrylic(&mut self, id: &str, monitor: &str, size: (f64, f64), area: Rect2D, moving: bool) -> Option<WallpaperSample> {
         self.sample(Slot::Card(id.into()), monitor, size, area, !moving)
     }
@@ -769,7 +679,6 @@ impl AsyncWallpaperCache {
     pub fn retain_cards(&mut self, keep: impl Fn(&str) -> bool) {
         // 先保留仍在途的槽位，防止同一 ID 重建时把旧结果误认成新请求。
         self.slots.retain(|slot, cache| cache.pending || match slot {
-            Slot::Sidebar => true,
             Slot::Card(id) => keep(id),
         });
     }
@@ -777,16 +686,13 @@ impl AsyncWallpaperCache {
     fn sample(&mut self, slot: Slot, monitor: &str, size: (f64, f64), area: Rect2D, request: bool) -> Option<WallpaperSample> {
         let cache = self.slots.entry(slot.clone()).or_default();
         if request && !cache.pending {
-            let (step, density, w_range, h_range) = match slot {
-                Slot::Sidebar => (8.0, 0.22, (48, 128), (96, 240)),
-                Slot::Card(_) => (4.0, 0.32, (24, 200), (24, 200)),
-            };
+            let (step, density, range) = (4.0, 0.32, 24..=200);
             let key = SliceKey {
                 monitor: monitor.into(),
                 size: (size.0.to_bits(), size.1.to_bits()),
                 area: [(area.x / step).round() as i32, (area.y / step).round() as i32,
-                    ((area.w * density).round() as i32).clamp(w_range.0, w_range.1),
-                    ((area.h * density).round() as i32).clamp(h_range.0, h_range.1)],
+                    ((area.w * density).round() as i32).clamp(*range.start(), *range.end()),
+                    ((area.h * density).round() as i32).clamp(*range.start(), *range.end())],
             };
             if !cache.ready.as_ref().is_some_and(|(old, revision)| *old == key && *revision == self.revision) {
                 cache.pending = self.work.as_ref().is_some_and(|tx| tx.try_send(Work::Slice(SliceRequest { slot, key, area, size })).is_ok());
@@ -825,25 +731,25 @@ mod async_tests {
         let area = Rect2D::new(1500.0, 12.0, 400.0, 1056.0);
         let await_wake = || woken.recv_timeout(Duration::from_secs(3)).unwrap();
         assert!(!cache.poll(0.0));
-        assert!(cache.sidebar("m1", size, area).is_none());
+        assert!(cache.acrylic("card", "m1", size, area, false).is_none());
         // 同一个槽位只允许一个切片在途，而不是每帧排队计算。
-        assert!(cache.sidebar("m1", size, area).is_none());
+        assert!(cache.acrylic("card", "m1", size, area, false).is_none());
         allow.send(30).unwrap();
         await_wake(); // 探测与降采样完成
         await_wake(); // 切片完成
         assert!(cache.poll(0.0));
-        let first = cache.sidebar("m1", size, area).unwrap();
+        let first = cache.acrylic("card", "m1", size, area, false).unwrap();
         assert_eq!(cache.revision, 1);
 
         assert!(!cache.poll(5.0));
-        assert_eq!(cache.sidebar("m1", size, area).unwrap().avg_luma, first.avg_luma);
+        assert_eq!(cache.acrylic("card", "m1", size, area, false).unwrap().avg_luma, first.avg_luma);
         allow.send(230).unwrap();
         await_wake();
         assert!(cache.poll(5.0));
-        assert_eq!(cache.sidebar("m1", size, area).unwrap().avg_luma, first.avg_luma);
+        assert_eq!(cache.acrylic("card", "m1", size, area, false).unwrap().avg_luma, first.avg_luma);
         await_wake();
         assert!(cache.poll(5.0));
-        assert!(cache.sidebar("m1", size, area).unwrap().avg_luma > first.avg_luma);
+        assert!(cache.acrylic("card", "m1", size, area, false).unwrap().avg_luma > first.avg_luma);
     }
 
     #[test]

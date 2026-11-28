@@ -67,6 +67,20 @@ func overlayStyle(e *ui.Element, p *Palette) {
 	}
 }
 
+// Setup forms sit over a busy overview. Keep the glass edge and elevation,
+// but do not let underlying widgets bleed through required form fields.
+func setupDialogStyle(e *ui.Element, p *Palette) {
+	overlayStyle(e, p)
+	if p.HighContrast {
+		return
+	}
+	fill := uint32(0xF6F7FA)
+	if p.Dark {
+		fill = 0x15171D
+	}
+	e.Background(Col(fill))
+}
+
 func fieldStyle(e *ui.Element, p *Palette) {
 	surfaceStyle(e, p, p.Scheme.Container, FieldRadius)
 	e.Font(UIFont).FontSize(14).TextColor(Col(p.Scheme.OnSurface)).

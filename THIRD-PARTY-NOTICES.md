@@ -1,6 +1,6 @@
 # 第三方组件与许可
 
-本文件对应点屿 5.2.8 歌词与进度实现。项目自有源码的 MIT 许可见根目录 LICENSE，Copyright (c) 2026 Heiamer；以下依赖分别遵循各自许可。其他锁定依赖见 Rust/Cargo.lock。
+本文件对应点屿 5.2.9 随附组件。项目自有源码的 MIT 许可见根目录 LICENSE，Copyright (c) 2026 Heiamer；以下依赖分别遵循各自许可。其他锁定依赖见 Rust/Cargo.lock。
 
 ## 1. 当前歌词实现
 
@@ -19,6 +19,10 @@
 ## 5. 通知监听与旧版 SQLite 数据库兼容代码（随包捆绑 e_sqlite3.dll）
 
 通知监听（只读 Windows 通知数据库 wpndatabase.db）与旧 database/song_maps.db 的可选只读导入共用随包捆绑的 `e_sqlite3.dll`（win-x64，来自 SQLitePCLRaw 的原生 SQLite 构建，以 Apache License 2.0 分发；SQLite 本身处于公有领域：https://www.sqlite.org/copyright.html ）。该 DLL 只以只读方式打开用户数据库，绝不写入或上传内容。SQLitePCLRaw 许可详见 licenses/e_sqlite3-APACHE-2.0.txt 与 https://github.com/ericsink/SQLitePCL.raw 。
+
+## DesktopToast（飞书、钉钉通知）
+
+来源：https://github.com/PepsiColaya/desktop-toast ，提交 `467b66ab6a31aa6db26e86b97f638512eb4e5604`。MIT，Copyright (c) 2026 DesktopToast contributors。完整许可见 `licenses/DesktopToast-MIT.txt`。将 `watcher.py` 中的 Windows `UserNotificationListener` 读取、Toast 文本提取、启动基线和短期去重移植为 Rust 原生模块，使用点屿现有的应用筛选和呈现；不引入 Python、PyQt、权限弹窗或额外常驻进程。
 
 ## 6. 字体
 
@@ -105,3 +109,17 @@ lazy_static 1.5.1，https://github.com/rust-lang-nursery/lazy-static.rs ，MIT O
 
 使用 MyGo v0.9.0、purego、go-text/typesetting 与 golang.org/x 库，锁定版本见 Go/settings-center/go.mod；许可全文保存在 licenses/Go。中文字体使用 Noto Sans SC，许可见 licenses/NotoSansSC-OFL.txt。
 
+
+## BrimDeck 额度采集（Apache-2.0）
+
+`MoFeng2223/BrimDeck`，固定提交 `d3215210e2f337c93784e862bea9830754030819`。将 Codex / Claude 本机记录读取、额度来源目录、DeepSeek / DeepSeek Harness、ZCode、GLM、OpenRouter、New API、Sub2API、Command Code、OpenCode、Kimi、MiMo、Grok Bot、CodeAgent、Cursor、Qoder、千问办公、TRAE、WorkBuddy、千问、豆包／Dola 和火山方舟／BytePlus 的相关逻辑原生转译到 `Rust/crates/lyric-native/src/ai_quota*.rs`；受限自定义脚本兼容上游 `fetchUsage(ctx)` 协议。显式授权入口位于 `Go/settings-center/ui/quota_browser_login.go` 与 `quota_cookie_login.go`；各来源的当前范围见 `docs/AI-QUOTA-NATIVE.md`。修改包括 Windows DPAPI 凭据绑定、限制读取与 HTTPS 目的地、不转发重定向、剩余额度分类和灵动岛提醒。不分发 BrimDeck 二进制文件、.NET 运行时或 Antigravity 适配器。全文、原文件和修改声明：`licenses/BrimDeck-Apache-2.0.txt`、`licenses/BrimDeck-NOTICE.txt`。移植文件按 Apache-2.0 提供，其他点屿自有代码仍按其 MIT 许可。Rust 时间解析用 Chrono 0.4.45，完整上游许可见 `licenses/chrono-0.4.45-LICENSE.txt`。
+
+## 邮箱：功能参考与实际依赖
+
+邮箱交互参考 `flyl1u/fly-island` 的公开 IMAP 使用指南（提交 `569daee3afe3e0041a2362f657f04f5073e85993`，上游仓库 GPL-3.0）。点屿的 Go 邮箱为独立实现，不包含、不链接也不分发 fly-island 的代码、二进制或素材。实际引入的依赖为 `emersion/go-imap/v2` v2.0.0-beta.8、`emersion/go-message` v0.18.2 及 `emersion/go-sasl` v0.0.0-20241020182733-b788ff22d5a6，均为 MIT；全文见 `licenses/Go/emersion-go-{imap,message,sasl}-MIT.txt`。纯文本化使用项目原有的 `golang.org/x/net`（许可见 `licenses/Go/golang.org-x-net.txt`）。
+
+钉钉、飞书使用点屿既有 Windows 通知与 Shell Hook 机制，不引入第三方客户端源码；天气定位调用项目已用的 wttr.in 服务，不打包其源码。
+
+## QuotaView Windows 快捷问答（历史 MIT 版本）
+
+`Duoasa/QuotaView` 的 `v0.8.3-win.13`（提交 `7c163500afb7a75ce6fe48e54664abe83d038870`）。将 `Windows/windows/src/core/codex-desktop.cjs`、`codex-desktop-state.cjs` 中跟随会话和结构化问答的部分逻辑，以及 `Windows/webview2/native/CodexDesktopPipe.cs` 的连接校验移植到 Rust `agent_desktop.rs`。保留上游署名和 MIT 许可全文（`licenses/QuotaView-Windows-MIT.txt`）。圆环 UI 和图标由点屿原生绘制；没有引入 QuotaView 资源、运行时或现行 GPL-3.0-only 分支的实现。BrimDeck 部分仍按原 Apache-2.0 条目处理。

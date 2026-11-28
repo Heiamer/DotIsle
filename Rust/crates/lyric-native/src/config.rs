@@ -3,7 +3,6 @@ pub fn defaults() -> Value {
     let mut defaults = json!({"AutoCheckUpdatesEnabled":true,"LyricColorFromCover":true,"DeviceRemindersEnabled":true,"DeviceSoundEnabled":true,"DeviceSound":"Connect","DeviceSoundPath":"","DeviceVolume":55.,"HeadphoneConnectionRemindersEnabled":true,"SpeakerConnectionRemindersEnabled":true,"GamepadConnectionRemindersEnabled":true,"MouseConnectionRemindersEnabled":false,"KeyboardConnectionRemindersEnabled":false,"DeviceDisconnectRemindersEnabled":true,"SystemStateHintsEnabled":true,"SystemStateHintPlacement":"Island","CapsLockHintEnabled":true,"NumLockHintEnabled":true,"MicrophoneMuteHintEnabled":true,"TouchpadHintEnabled":true,"SwipeActivities":true,"AutoCompactMaxWidth":420.,"TodoDefaultColor":"#F3D79B","TodoRemindersEnabled":true,"TodoIslandEnabled":true,"AutoCompactWidth":true,"CompactTranslation":true,"ChineseTwoLine":true,"NotificationSoundEnabled":true,"TodoSoundEnabled":true,"NotificationSound":"Soft","TodoSound":"Bell","NotificationSoundPath":"","TodoSoundPath":"","QuickReminderHotkey":"","FocusCountUp":false,"FocusPauseOnLock":false,"AppEntryRemindersEnabled":false,"AppUsageRemindersEnabled":false,"NotificationVolume":35.,"TodoVolume":45.,"CompactWidth":260.,"FontSize":14.,"Floating":false,"Translation":true,"TranslationButton":true,"Animation":true,"HoverExpand":false,"ClickAnywhereExpand":true,"NotificationsEnabled":true,"PauseNotifications":false,"NotificationClickOpenApp":true,"MusicClickOpenApp":false,"MusicExpandedLayout":"SideBySide","NotificationWhitelistEnabled":false,"NotificationBlacklistEnabled":false,"NotificationBlockedApps":[],"NotificationAllowedApps":["QQNT","QQ"],"NotificationHistoryEnabled":true,"NotificationHistoryDays":7,"WordHighlight":true,"AlwaysOnTop":true,"AutoStart":true,"OnlineSongInfo":true,"CoverBackground":false,"IslandMonetPreferenceVersion":1,"HideWhenPaused":true,"IgnoredSources":["Browser"],"PlayerFilterVersion":2,"DefaultsOnboardingVersion":0,"ExpandedTextColor":"#FFFFFF","ExpandedComponentColor":"#FFFFFF","LyricProgressColor":"#DDF6FF","SettingsTheme":"System","ControlCenterStartPage":"overview","WorkflowModules":[{"id":"builtin-thinking","name":"整理思路","minutes":5,"kind":0},{"id":"builtin-focus","name":"专注","minutes":25,"kind":1},{"id":"builtin-rest","name":"休息","minutes":5,"kind":2},{"id":"builtin-review","name":"复盘","minutes":10,"kind":3},{"id":"builtin-move","name":"活动一下","minutes":3,"kind":4},{"id":"builtin-custom","name":"自定义","minutes":10,"kind":5}],"CenterX":0.5,"TopFraction":0.08,"Display":"","OffsetMilliseconds":0,"NeteaseCdpPort":"9223","LocalFolders":[],"Motion":crate::motion::Options::default()});
     defaults["TimerMonoDigits"] = json!(false);
     defaults["HiddenEdgeStripEnabled"] = json!(true);
-    defaults["HideTrigger"] = json!("RightClick");
     defaults["HiddenDisplay"] = json!("Strip");
     defaults["IslandKeepVisibleEnabled"] = json!(false);
     defaults[crate::resident::TIME] = json!(true);
@@ -16,7 +15,8 @@ pub fn defaults() -> Value {
     defaults["StartupSignatureEnabled"] = json!(true);
     defaults["StartupGreetingEnabled"] = json!(true);
     defaults["VerificationCodeEnabled"] = json!(true);
-    defaults["WeChatMessageHintsEnabled"]=json!(false);
+    defaults["WeChatMessageHintsEnabled"]=json!(true);
+    defaults["WeChatTaskbarWarningAccepted"]=json!(true);
     for key in ["FeishuMessageHintsEnabled","DingTalkMessageHintsEnabled","WeComMessageHintsEnabled"] { defaults[key]=json!(true); }
     defaults["WeatherAlertsEnabled"] = json!(true);
     defaults["ReminderPlugins"] = json!({});
@@ -67,9 +67,9 @@ pub fn defaults() -> Value {
         defaults[format!("{p}SoundSource")] = json!("Builtin");
     }
     defaults["CapsuleCornerRadius"] = Value::Null;
-    defaults["SwipeUpHide"] = json!(true);
     defaults["EdgeHoverRevealEnabled"] = json!(false);
     defaults["TaskbarModeEnabled"] = json!(false);
+    defaults["HideIslandWhenFullscreen"] = json!(false);
     defaults["TaskbarAlwaysShow"] = json!(true);
     defaults["TaskbarStyle"] = json!("Transparent");
     defaults["TaskbarDockAlign"] = json!("Free");
@@ -117,10 +117,16 @@ pub fn load(path: &std::path::Path) -> Value {
             }
         }
     }
-    if s["WeChatTaskbarWarningAccepted"] != true {
-        s["WeChatMessageHintsEnabled"] = json!(false);
+    // 一次性迁移：旧版本默认关闭微信提醒，升级后改为默认开启（之后用户手动关闭仍会保留）。
+    if s["MessageHintsDefaultsVersion"].as_u64().unwrap_or(0) < 1 {
+        s["WeChatMessageHintsEnabled"] = json!(true);
+        s["WeChatTaskbarWarningAccepted"] = json!(true);
+        s["MessageHintsDefaultsVersion"] = json!(1);
     }
+
     if let Some(fields) = s.as_object_mut() {
+        fields.remove("HideTrigger");
+        fields.remove("SwipeUpHide");
         fields.remove("IslandFluidMotion");
         fields.remove("MotionPreferenceVersion");
         fields.remove("MotionPhysicsVersion");
@@ -268,6 +274,9 @@ pub fn load(path: &std::path::Path) -> Value {
         .clamp(25., 100.));
     if !s["EdgeHoverRevealEnabled"].is_boolean() {
         s["EdgeHoverRevealEnabled"] = json!(false);
+    }
+    if !s["HideIslandWhenFullscreen"].is_boolean() {
+        s["HideIslandWhenFullscreen"] = json!(false);
     }
     if !s["TaskbarModeEnabled"].is_boolean() {
         s["TaskbarModeEnabled"] = json!(false);
@@ -587,12 +596,6 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
             return Err("invalid size mode".into());
         }
         json!(s)
-    } else if key == "HideTrigger" {
-        let s = value.as_str().ok_or("invalid hide trigger")?;
-        if !["RightClick", "SwipeUp"].contains(&s) {
-            return Err("invalid hide trigger".into());
-        }
-        json!(s)
     } else if key == "HiddenDisplay" {
         let s = value.as_str().ok_or("invalid hidden display")?;
         if !["None", "Strip", "Mini"].contains(&s) {
@@ -663,9 +666,9 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
         "DeviceRemindersEnabled",
         "DeviceSoundEnabled",
         "SwipeActivities",
-        "SwipeUpHide",
         "EdgeHoverRevealEnabled",
         "TaskbarModeEnabled",
+        "HideIslandWhenFullscreen",
         "TaskbarAlwaysShow",
         "GestureTutorialSeen",
         "GesturePracticeSeen",
@@ -1019,6 +1022,18 @@ pub fn validate_setting(v: Value) -> Result<Value, String> {
 mod unified_osd_tests {
     use super::*;
     #[test]
+    fn fullscreen_auto_hide_is_an_opt_in_boolean_independent_of_taskbar_mode() {
+        let key = "HideIslandWhenFullscreen";
+        assert_eq!(defaults()[key], false);
+        let mut settings = defaults();
+        for value in [true, false] {
+            settings = validate_setting(json!({"key":key,"value":value,"settings":settings})).unwrap();
+            assert_eq!(settings[key], value);
+            assert_eq!(settings["TaskbarModeEnabled"], false);
+        }
+        assert!(validate_setting(json!({"key":key,"value":"true","settings":settings})).is_err());
+    }
+    #[test]
     fn mini_material_has_an_independent_clear_default_and_three_choices() {
         let d = defaults();
         assert_eq!(d["IslandSizeMode"], "Classic");
@@ -1199,7 +1214,7 @@ mod material_tests {
         let s = defaults();
         assert_eq!(s["AutoStart"], true);
         assert_eq!(s["IslandMaterial"], "LightField");
-        for value in ["LightField", "Acrylic"] {
+        for value in ["LightField", "Acrylic", "LiquidGlass"] {
             let updated = validate_setting(
                 json!({"key":"IslandMaterial","value":value,"settings":s.clone()}),
             )
@@ -1297,8 +1312,8 @@ mod expanded_material_tests {
             std::env::temp_dir().join(format!("dotisle-mini-card-{}.json", std::process::id()));
         let mut settings = defaults();
         assert_eq!(settings["MiniExpandedMaterial"], "LightField");
-        for classic in ["LightField", "Acrylic"] {
-            for mini in ["LightField", "Acrylic"] {
+        for classic in ["LightField", "Acrylic", "LiquidGlass"] {
+            for mini in ["LightField", "Acrylic", "LiquidGlass"] {
                 settings = validate_setting(
                     json!({"key":"IslandMaterial","value":classic,"settings":settings}),
                 )
@@ -1633,7 +1648,7 @@ mod expressive_preferences {
         assert_eq!(s["ControlCenterDynamicColorEnabled"],false);
         s=validate_setting(json!({"key":"ControlCenterDynamicColorEnabled","value":true,"settings":s})).unwrap();
         s=validate_setting(json!({"key":"ControlCenterCustomColor","value":"#A9D8C2","settings":s})).unwrap();
-        assert_eq!(s["WeChatMessageHintsEnabled"],false);
+        assert_eq!(s["WeChatMessageHintsEnabled"],true);
         for key in ["FeishuMessageHintsEnabled","DingTalkMessageHintsEnabled","WeComMessageHintsEnabled"] {
             assert_eq!(s[key],true);
             s=validate_setting(json!({"key":key,"value":false,"settings":s})).unwrap();
@@ -1642,7 +1657,8 @@ mod expressive_preferences {
         let restored=load(&path);
         assert_eq!(restored["ControlCenterDynamicColorEnabled"],true);
         assert_eq!(restored["ControlCenterCustomColor"],"#A9D8C2");
-        for key in ["WeChatMessageHintsEnabled","FeishuMessageHintsEnabled","DingTalkMessageHintsEnabled","WeComMessageHintsEnabled"] {assert_eq!(restored[key],false);}
+        assert_eq!(restored["WeChatMessageHintsEnabled"],true);
+        for key in ["FeishuMessageHintsEnabled","DingTalkMessageHintsEnabled","WeComMessageHintsEnabled"] {assert_eq!(restored[key],false);}
         assert!(validate_setting(json!({"key":"ControlCenterCustomColor","value":"green","settings":restored})).is_err());
         std::fs::remove_file(path).unwrap();
     }
@@ -1802,6 +1818,18 @@ mod progress_style_tests {
             .is_err());
         }
     }
+    #[test]
+    fn legacy_upward_hide_preferences_are_removed_on_load() {
+        let file = std::env::temp_dir().join(format!("dotisle-legacy-hide-{}.json", std::process::id()));
+        std::fs::write(&file, r#"{"HideTrigger":"SwipeUp","SwipeUpHide":true,"HiddenDisplay":"Mini"}"#).unwrap();
+        let loaded = load(&file);
+        assert!(loaded.get("HideTrigger").is_none());
+        assert!(loaded.get("SwipeUpHide").is_none());
+        assert_eq!(loaded["HiddenDisplay"], "Mini");
+        assert!(validate_setting(json!({"key":"HideTrigger","value":"SwipeUp","settings":loaded})).is_err());
+        let _ = std::fs::remove_file(file);
+    }
+
     #[test]
     fn an_unknown_stored_style_falls_back_once_and_a_known_one_survives_reload() {
         let file = std::env::temp_dir().join(format!(

@@ -77,7 +77,6 @@ def main():
     # prefers it); its icon and manifest are embedded at link time via
     # rsrc_windows_amd64.syso, so no PE resource rewrite here.
     shutil.copy2(center,runtime/'LyricIsland.Center.exe')
-    shutil.copy2(args.binary_dir/'DotIsle-Allegro.exe',runtime/'DotIsle-Allegro.exe')
     for module in ['dotisle_core.dll', 'dotisle_desktop.dll', 'dotisle_focus.dll', 'dotisle_todos.dll', 'dotisle_music.dll', 'dotisle_lyrics.dll', 'dotisle_notifications.dll', 'dotisle_history.dll', 'dotisle_automation.dll', 'dotisle_devices.dll', 'dotisle_osd.dll', 'dotisle_sound.dll', 'dotisle_widgets.dll', 'dotisle_themes.dll', 'dotisle_glow.dll']:
         shutil.copy2(args.binary_dir/module,runtime/module)
     copy_runtime_assets(root/'Assets', runtime/'Assets')
@@ -92,6 +91,7 @@ def main():
     shutil.copy2(root/'docs/PLUGIN-DEVELOPMENT.md',runtime/'docs/PLUGIN-DEVELOPMENT.md')
     shutil.copy2(root/'docs/UNIFIED-CONTROL-CENTER.md',runtime/'docs/UNIFIED-CONTROL-CENTER.md')
     shutil.copy2(root/'docs/DISCLAIMER.md',runtime/'docs/DISCLAIMER.md')
+    shutil.copy2(root/'docs/AI-QUOTA-NATIVE.md',runtime/'docs/AI-QUOTA-NATIVE.md')
     shutil.copytree(root/'examples/plugins',runtime/'examples/plugins')
     shutil.copy2(out/(name+'-Notes.md'),runtime/'ReleaseNotes.md')
     # Ownership and original hashes let a later successful update retire only

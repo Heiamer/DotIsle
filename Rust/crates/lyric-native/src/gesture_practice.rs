@@ -129,7 +129,7 @@ impl App {
         self.leave_at = None;
         self.manual_until = None;
         self.dragging = None;
-        self.hide_drag = None;
+        self.press_origin = None;
         self.swipe = None;
         self.seeking = false;
         self.pressed = 0;
@@ -138,7 +138,6 @@ impl App {
         self.previous_panel = None;
         self.slide.set(0.);
         self.switching = false;
-        self.dismiss_offset.set(0.);
         if !self.hwnd.0.is_null() { let _ = unsafe { ReleaseCapture() }; }
     }
 

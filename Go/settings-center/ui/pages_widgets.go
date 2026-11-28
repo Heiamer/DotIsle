@@ -62,9 +62,6 @@ func (a *App) widgetSizeOf(kind string) string {
 
 // widgetsPage mirrors desktop_cards.rs gallery at the same section rhythm.
 func (a *App) widgetsPage(c *ui.Context, x, y, w float32) float32 {
-	if a.AllegroAvailable {
-		return a.allegroGallery(c, x, y, w)
-	}
 	return a.appleWidgetsGallery(c, x, y, w)
 }
 

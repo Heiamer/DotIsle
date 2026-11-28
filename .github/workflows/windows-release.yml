@@ -127,6 +127,8 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Center build failed'}
           if(-not(Test-Path -LiteralPath $dst)){throw "Center build produced no binary at $dst"}
           if((Get-Item -LiteralPath $dst).Length -le 0){throw "Center build produced an empty binary at $dst"}
+          & $goExe test @buildFlags -count=1 -timeout=120s ./...
+          if($LASTEXITCODE -ne 0){throw 'Control center tests failed'}
           Write-Host "Center binary: $dst ($((Get-Item -LiteralPath $dst).Length) bytes)"
         working-directory: Go/settings-center
 
@@ -169,6 +171,17 @@ jobs:
           $declared=@($inventory.files.Keys | Where-Object { $_ -match '^dotisle_[^/]+\.dll$' })
           if(@(Compare-Object @($modules.Name) $declared).Count -ne 0){throw 'Packaged modules do not match the runtime inventory'}
           Write-Host "Control center packaged: $center ($((Get-Item -LiteralPath $center).Length) bytes); dotisle modules: $($modules.Count)"
+
+      - name: Verify release source and notification regressions
+        run: |
+          python build/verify_release_source.py --version $env:VERSION --report validation/source.json
+          if($LASTEXITCODE -ne 0){throw 'Release source checks failed'}
+          foreach($filter in @('desktop_toast::tests','desktop_toast_apps_do_not_use_legacy_database_payloads')){
+            powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 test --release --locked --package dotisle-notifications $filter
+            if($LASTEXITCODE -ne 0){throw "Notification regression failed: $filter"}
+          }
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools/li-cargo.ps1 test --release --locked --package lyric-native zcode
+          if($LASTEXITCODE -ne 0){throw 'ZCode regression failed'}
 
       - name: Select public downloads
         run: |

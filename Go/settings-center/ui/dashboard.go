@@ -32,6 +32,8 @@ func (a *App) renderOverviewCardBody(c *ui.Context, r overviewRect) {
 		return
 	}
 	switch r.key {
+	case "aiQuota":
+		a.dashboardQuota(c, r)
 	case "music":
 		previous := a.Palette
 		a.Palette = a.musicCardPalette()

@@ -10,8 +10,8 @@ import (
 )
 
 type cityPromptState struct {
-	text, sent, error string
-	saving            bool
+	text, sent, error, location string
+	saving, locating            bool
 }
 
 // Background widget startup must not ask for input until the center is shown.
@@ -29,6 +29,10 @@ func (a *App) BeginCenterVisit() {
 
 func (a *App) EndCenterVisit() {
 	a.centerVisible = false
+	a.mailOpen = false
+	a.mail.secret = ""
+	a.mail.selected = 0
+	a.mail.body = ""
 	a.cancelWechatWarning()
 	a.cancelGestureTutorial()
 	a.signaturePending = false
@@ -61,13 +65,13 @@ func (a *App) configuredWeatherCity() string {
 }
 
 func (a *App) maybePromptCity() {
-	if !a.EnableCityPrompt || !a.centerVisible || !a.Connected || a.cityPromptAsked || a.cityPrompt != nil {
+	if !a.EnableCityPrompt || !a.centerVisible || !a.Connected || a.cityPromptAsked || a.cityPrompt != nil || a.mailOpen {
 		return
 	}
 	if _, ready := a.State["settings"].(map[string]any); !ready {
 		return
 	}
-	if (a.configuredWeatherCity() != "" && (!a.AllegroAvailable || a.allegroSettings.OnboardingDone)) || a.signaturePending || !a.signatureStart.IsZero() {
+	if a.configuredWeatherCity() != "" || a.signaturePending || !a.signatureStart.IsZero() {
 		return
 	}
 	if a.picker != nil || a.showRuleDialog || a.showQuickReminder || a.widgetEditor != nil || a.overviewEditor != nil || a.todoDialog || a.fontPicker != nil || a.gestureTutorial != nil || a.paletteOpen || a.navigationOpen || a.overview.manage {
@@ -102,9 +106,6 @@ func (a *App) applyCitySaveReply(draft *cityPromptState, reply map[string]any, e
 		a.State["settings"] = settings
 	}
 	settings["WeatherCity"] = draft.sent
-	if a.AllegroAvailable {
-		a.allegroChange(func(s *allegroSettings) { s.OnboardingDone = true })
-	}
 	a.cityPrompt = nil
 	a.pushToast("城市已保存")
 }
@@ -138,37 +139,36 @@ func (a *App) cityPromptView(c *ui.Context) {
 	draft, p := a.cityPrompt, &a.Palette
 	s := &p.Scheme
 	open := true
-	dw, dh := float32(560), float32(300)
-	if a.AllegroAvailable {
-		dh = 590
-	}
+	dw, dh := float32(560), float32(387)
 	ui.DialogBase(c, &open, func(backdrop, panel ui.Element) {
 		backdrop.Background(AlphaCol(0, .42))
 		panel.Width(dw).Height(dh)
-		overlayStyle(&panel, p)
+		setupDialogStyle(&panel, p)
 		panel.Children(func() {
-			Label(c, map[bool]string{true: "设置城市与侧边栏", false: "设置所在城市"}[a.AllegroAvailable], 28, 24, 20, s.OnSurface, true, dw-110)
+			Label(c, "设置所在城市", 28, 24, 20, s.OnSurface, true, dw-110)
 			IconButton(c, p, "稍后填写城市", dw-68, 17, 44, 44, "close", false, !draft.saving, func() { open = false })
 			Label(c, "填写城市后，查看当地天气和降水提醒。", 28, 69, 13, s.OnSurfaceVariant, false, dw-56)
+			const inputTop, locationGap float32 = 104, 18
+			const locationTop = inputTop + dialogFieldHeight + locationGap
 			if draft.saving {
 				Label(c, draft.sent, 42, 126, 16, s.OnSurface, true, dw-84)
 			} else {
-				a.dialogField(c, p, 28, 104, dw-56, "城市 · 例如 上海 / Beijing", &draft.text, 64)
+				a.dialogField(c, p, 28, inputTop, dw-56, "城市 · 例如 上海 / Beijing", &draft.text, 64)
 			}
-			if a.AllegroAvailable {
-				settingToggleRow(c, p, "onboard-sidebar", "启用效率侧边栏", "使用热键展开搜索与组件面板", 28, 184, dw-56, a.allegroSettings.Enabled, func() { a.allegroChange(func(s *allegroSettings) { s.Enabled = !s.Enabled }) })
-				Label(c, "侧边栏热键", 28, 272, 14, s.OnSurface, true, dw-56)
-				a.allegroHotkeyChoices(c, p, 28, 304, dw-56)
-				Label(c, "之后可在 设置 → 侧边栏与组件 中更改。", 28, 447, 12, s.OnSurfaceVariant, false, dw-56)
+			locationLabel := "定位当前城市"
+			if draft.locating {
+				locationLabel = "正在定位…"
+			}
+			Button(c, p, "定位当前城市", 28, locationTop, 150, 38, locationLabel, "", true, !draft.locating && !draft.saving, func() { a.requestWeatherLocation(draft) })
+			Label(c, "按网络 IP 估算（wttr.in），不上传 GPS。", 192, locationTop+10, 12, s.OnSurfaceVariant, false, dw-220)
+			if draft.location != "" {
+				Label(c, "定位结果："+draft.location+" · 请确认或直接修改", 28, locationTop+50, 12, s.OnSurfaceVariant, false, dw-56)
 			}
 			if draft.error != "" {
-				Label(c, draft.error, 28, dh-108, 12, s.Error, false, dw-56)
+				Label(c, draft.error, 28, locationTop+77, 12, s.Error, false, dw-56)
 			}
 			Button(c, p, "稍后填写", 28, dh-65, 122, 40, "稍后填写", "", true, !draft.saving, func() { open = false })
 			label := "保存城市"
-			if a.AllegroAvailable {
-				label = "保存并开始使用"
-			}
 			if draft.saving {
 				label = "正在保存…"
 			}

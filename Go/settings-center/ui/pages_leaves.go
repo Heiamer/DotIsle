@@ -39,8 +39,6 @@ func (a *App) leafSettingsBody(c *ui.Context, p *Palette, x, y, w float32, tab u
 		return a.focusPrefsBody(c, p, x, y, w)
 	case 9:
 		return a.moduleManagerBody(c, p, x, y, w)
-	case 10:
-		return a.allegroSettingsBody(c, p, x, y, w)
 	}
 	return y
 }
@@ -621,10 +619,14 @@ func (a *App) notificationPrefsBody(c *ui.Context, p *Palette, x, y, w float32) 
 	y = leafHeading(c, p, "消息灵动岛", x, y, w)
 	y = a.leafToggles(c, p, x, y, w, []leafToggleRow{
 		{"微信", "默认关闭；确认警告后才启用任务栏闪烁提醒。", wechatHintsKey, false},
-		{"飞书", "有通知正文时直接显示内容，不重复提醒有新消息。", "FeishuMessageHintsEnabled", true},
-		{"钉钉", "有通知正文时直接显示内容，不重复提醒有新消息。", "DingTalkMessageHintsEnabled", true},
+		{"飞书", "需在飞书中开启 Windows 系统通知。", "FeishuMessageHintsEnabled", true},
+		{"钉钉", "需在钉钉中开启 Windows 系统通知。", "DingTalkMessageHintsEnabled", true},
 		{"企业微信", "仅提醒有新消息，不读取聊天内容。", "WeComMessageHintsEnabled", true},
 	})
+	if status := stateString(a.State, "", "notificationState", "desktopToast", "message"); status != "" {
+		Label(c, status, x+8, y, 12, p.Scheme.OnSurfaceVariant, false, w-16)
+		y += 25
+	}
 	y = leafHeading(c, p, "通知记录", x, y, w)
 	y = a.leafToggles(c, p, x, y, w, []leafToggleRow{
 		{"保留通知历史", "仅保留点屿实际接收的记录。", "NotificationHistoryEnabled", true},
@@ -697,7 +699,11 @@ func (a *App) windowBody(c *ui.Context, p *Palette, x, y, w float32) float32 {
 		{"开机问候", "启动时显示昨日用机时长和今日天气。", "StartupGreetingEnabled", true},
 	})
 	y = leafHeading(c, p, "天气与日常", x, y, w)
-	y = a.leafEditRow(c, p, x, y, w, "WeatherCity", "所在城市", "用于今日天气和降水提醒，也可沿用天气组件的城市。", "设置城市", "城市 · 如 上海 / Beijing")
+	y = leafAction(c, p, x, y, w, "所在城市", "定位后确认，或手动设置天气和降水提醒的城市。", "设置城市", func() {
+		a.cityPromptAsked = true
+		a.cityPrompt = &cityPromptState{text: a.configuredWeatherCity()}
+		a.Refresh()
+	})
 	y = a.leafToggles(c, p, x, y, w, []leafToggleRow{
 		{"降水与降雪提醒", "提前约两小时提醒预计降水时段，精度随小时或三小时来源而定。", "WeatherAlertsEnabled", true},
 	})

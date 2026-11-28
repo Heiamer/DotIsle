@@ -41,7 +41,7 @@ def run(runtime, output):
     settings.write_text(json.dumps(dict(json.loads(settings.read_text(encoding='utf-8')),
                                        Animation=False, IslandSizeMode='Classic',
                                        ClickAnywhereExpand=True, HoverExpand=False,
-                                       SwipeActivities=True, SwipeUpHide=True,
+                                       SwipeActivities=True, HideTrigger='SwipeUp', SwipeUpHide=True,
                                        AllowedSources=['DotIsle.VerifyPractice'])), encoding='utf-8')
     owner = uuid.uuid4().hex
 
@@ -65,6 +65,12 @@ def run(runtime, output):
     try:
         initial = app.launch()
         assert initial['settings']['GestureTutorialSeen'] and not initial['settings']['GesturePracticeSeen']
+        assert 'HideTrigger' not in initial['settings'] and 'SwipeUpHide' not in initial['settings']
+        # Guarantee two real components even on a desktop without a running player.
+        app.create({'mode': 'stopwatch'})
+        app.create({'mode': 'stopwatch'})
+        initial = wait(lambda: (state if len((state := app.request('state'))['components']) > 1 else None),
+                       'two components for the horizontal gesture')
         hwnd = wait(lambda: input_window(app.process.pid), 'isolated island input window')
         assert lesson('start')['success']
         step('clickExpand')
@@ -83,7 +89,13 @@ def run(runtime, output):
             debug = app.request('state')
             raise AssertionError({k: debug.get(k) for k in ('gesturePractice', 'activeComponent', 'components', 'expanded', 'islandGeometry', 'islandVisible', 'lastError')}) from err
         assert app.request('state')['activeComponent'] == 'practice:second'
+        drag(0, -12)  # Releasing inside the same capsule still must not click/expand it.
+        same = app.request('state')
+        assert same['islandEnabled'] and not same['expanded'] and same['gesturePractice']['step'] == 'hide'
         drag(0, -102)
+        assert app.request('state')['islandEnabled'], 'upward drag must not hide the island'
+        step('hide')
+        assert user.PostMessageW(hwnd, 0x204, 2, 0)  # Right button down on the same island HWND.
         step('recover')
         app.request('toggleVisibility')
         step('recover')  # Non-tray visibility commands must not mark recovery done.
@@ -98,7 +110,7 @@ def run(runtime, output):
         assert lesson('start')['success'], 'manual replay must remain available'
         assert lesson('cancel')['success']
         return {'success': True, 'checks': ['old tutorial flag ignored', 'click expand and collapse',
-                 'drag between cards', 'swipe up', 'tray-only recovery gate', 'cancel restores',
+                 'drag between cards', 'upward drag ignored', 'right click hides', 'tray-only recovery gate', 'cancel restores',
                  'skip survives restart', 'manual replay']}
     finally:
         stop(app)

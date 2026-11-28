@@ -7,13 +7,12 @@ use crate::{
     gpu::Gpu,
     model::{Action, Model},
     platform,
-    sidebar_io::{self, SidebarIo},
     views::{TodoEdit, TodoField},
 };
 use allegro::{
     canvas::{hit_test, plan_monitor_slots, union_input_rects, CanvasSlot, MonitorDesc},
     efficiency::{
-        resolve_dropped_launcher, toggle_note_checkbox, DashboardState, DropzoneStore, NoteEdit,
+        resolve_dropped_launcher, toggle_note_checkbox, DropzoneStore, NoteEdit,
         PhotoFrameState,
     },
     snap::{
@@ -21,7 +20,6 @@ use allegro::{
         snap_resize, Rect2D, SnapConfig, SnapGuide, SnapPeer,
     },
     stack::{ContextSignals, StackManager},
-    stage::{resolve_stage_results, AppIndex, ClipboardHistory, StageResultKind, StageSlashCmd, StageState},
     telemetry::ProTelemetry,
     theme::{self as allegro_theme, WidgetMaterial},
     wallpaper::AsyncWallpaperCache,
@@ -30,7 +28,6 @@ use dotisle_domain::desktop_widgets::Kind;
 use serde_json::json;
 use std::{
     collections::HashMap,
-    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -66,54 +63,6 @@ struct MonitorCanvas {
     last_input_rects: Vec<(i32, i32, i32, i32, i32)>,
     last_allow_full: bool,
     dirty: bool,
-}
-
-/// 贴屏幕右侧独立滑出的负一屏风格侧边栏窗口（完全独立于桌面画布，展开时电脑其余区域 100% 正常交互）。
-struct SidebarWindow {
-    mon: MonitorDesc,
-    window: Arc<Window>,
-    surface: dotisle_render::surface::Surface,
-    metrics: crate::stage_overlay::SidebarMetrics,
-    win_log: (f64, f64),
-    hits: Vec<HitEntry>,
-    card_slots: Vec<(String, Rect)>,
-    viewport: Rect,
-    max_scroll: f64,
-    pointer: (f64, f64),
-    hovered_hit: Option<usize>,
-    visible: bool,
-    last_region: Option<(i32, i32, i32, i32, i32)>,
-    previous_foreground: Option<isize>,
-    dirty: bool,
-}
-
-impl SidebarWindow {
-    fn prime_region(&mut self) {
-        self.update_region(sidebar_initial_panel(self.metrics, self.win_log.1));
-    }
-
-    fn update_region(&mut self, panel: Rect) {
-        let region = sidebar_region(panel, self.mon.scale.max(0.5));
-        if self.last_region != Some(region) && platform::apply_sidebar_region(&self.window, region) {
-            self.last_region = Some(region);
-        }
-    }
-}
-
-/// 首帧即允许显示，关闭时等弹簧收敛到零后再交还窗口区域。
-fn sidebar_should_show(dashboard: &DashboardState) -> bool {
-    dashboard.open || dashboard.opacity > 0.0
-}
-
-/// 首帧之前使用既有面板边界，不拦截左侧桌面，也不从空 HRGN 启动。
-fn sidebar_initial_panel(metrics: crate::stage_overlay::SidebarMetrics, height: f64) -> Rect {
-    rect(metrics.shadow_left, 12.0, metrics.panel_w, (height - 24.0).max(360.0))
-}
-
-fn sidebar_region(panel: Rect, scale: f64) -> (i32, i32, i32, i32, i32) {
-    ((panel.x0 * scale).floor() as i32, (panel.y0 * scale).floor() as i32,
-     (panel.x1 * scale).ceil() as i32, (panel.y1 * scale).ceil() as i32,
-     (26.0 * scale).round() as i32)
 }
 
 #[derive(Clone, Debug)]
@@ -179,24 +128,15 @@ struct ResizeState {
 
 /// 桌面小组件全屏合批宿主的全局状态机。
 pub struct Host {
-    data_dir: PathBuf,
     canvases: Vec<MonitorCanvas>,
-    sidebar_win: Option<SidebarWindow>,
     wallpaper: AsyncWallpaperCache,
     hotkeys: platform::HotkeyListener,
     stacks: StackManager,
-    dashboard: DashboardState,
     dropzone: DropzoneStore,
     photos: PhotoFrameState,
     telemetry: ProTelemetry,
     edit_mode: bool,
-    stage: StageState,
-    clipboard: ClipboardHistory,
-    sidebar_io: Option<SidebarIo>,
-    app_index: AppIndex,
-    index_ready: bool,
     menu_for: Option<(String, (f64, f64))>,
-    sidebar_menu_for: Option<(String, (f64, f64))>,
     scroll_for: HashMap<String, f64>,
     quote_indices: HashMap<String, usize>,
     todo_edit: Option<(String, TodoEdit)>,
@@ -211,32 +151,22 @@ pub struct Host {
 
 impl Default for Host {
     fn default() -> Self {
-        Self::with_data_dir(PathBuf::new())
+        Self::new()
     }
 }
 
 impl Host {
-    /// 使用指定配置目录构造宿主（侧边栏独立组件持久化在 `allegro-sidebar.json`，与桌面解耦）。
-    pub fn with_data_dir(data_dir: PathBuf) -> Self {
+    pub fn new() -> Self {
         Self {
-            data_dir,
             canvases: Vec::new(),
-            sidebar_win: None,
             wallpaper: AsyncWallpaperCache::new(crate::wake),
             hotkeys: platform::HotkeyListener::start(),
             stacks: StackManager::new(),
-            dashboard: DashboardState::default(),
             dropzone: DropzoneStore::default(),
             photos: PhotoFrameState::with_wake(crate::wake),
             telemetry: ProTelemetry::with_wake(crate::wake),
             edit_mode: false,
-            stage: StageState::default(),
-            clipboard: ClipboardHistory::default(),
-            sidebar_io: None,
-            app_index: AppIndex::with_wake(crate::wake),
-            index_ready: false,
             menu_for: None,
-            sidebar_menu_for: None,
             scroll_for: HashMap::new(),
             quote_indices: HashMap::new(),
             todo_edit: None,
@@ -261,23 +191,7 @@ impl Host {
         now_sec: f64,
     ) -> bool {
         self.now_sec = now_sec;
-        let sidebar_data_changed = self.sync_sidebar_data(model.demo);
-
-        let [dashboard_presses, edit_presses] = self.hotkeys.take();
-        // 两路都是纯切换命令；合并唤醒时按奇偶处理，避免重复显示和隐藏。
-        if dashboard_presses % 2 != 0 {
-            if self.dashboard.open {
-                self.close_sidebar();
-            } else {
-                self.dashboard.toggle();
-                self.sidebar_menu_for = None;
-                self.app_index.ensure_loaded();
-                if let Some(io) = &mut self.sidebar_io { io.poll_clipboard(); }
-                self.stage.clear_query();
-                self.stage.search_focused = false;
-                if let Some(sb) = &mut self.sidebar_win { sb.dirty = true; }
-            }
-        }
+        let [edit_presses] = self.hotkeys.take();
         if edit_presses % 2 != 0 {
             self.edit_mode = !self.edit_mode;
             self.menu_for = None;
@@ -287,9 +201,6 @@ impl Host {
             }
         }
 
-        let dash_anim = self.dashboard.tick(dt);
-        let toast_was_visible = self.stage.toast.is_some();
-        let toast_active = self.stage.tick(dt);
         let placements = &model.desktop_widgets.items;
         self.stacks.sync_from_placements(placements);
         self.dropzone.sync_from_placements(placements);
@@ -309,8 +220,6 @@ impl Host {
         }
         let cpu_now = model.native_state["systemMetrics"]["cpuPercent"].as_f64();
         let telemetry_changed = self.telemetry.poll_updates(cpu_now);
-        let index_changed = !self.index_ready && self.app_index.is_ready();
-        self.index_ready |= index_changed;
 
         let signals = ContextSignals {
             music_playing: model.playing(),
@@ -334,29 +243,13 @@ impl Host {
         let second_tick = self.last_second.elapsed() >= tick_interval;
         if second_tick {
             self.last_second = Instant::now();
-            if let Some(io) = &mut self.sidebar_io { io.poll_clipboard(); }
         }
 
         let descs = collect_monitors(event);
 
-        // 同步独立右侧侧边栏窗口（完全不触碰桌面画布 Z 序与点击穿透选区，保证电脑正常操作）
-        self.sync_sidebar_window(event, gpu, &descs);
-        let sidebar_visible = sidebar_should_show(&self.dashboard);
-        if let Some(sb) = &mut self.sidebar_win {
-            if sidebar_visible && (sb.dirty || changed || second_tick || dash_anim || toast_was_visible
-                || wallpaper_changed || telemetry_changed || index_changed || sidebar_data_changed) {
-                sb.dirty = false;
-                sb.window.request_redraw();
-            }
-        }
-
-        // 无任何桌面小组件时释放桌面全屏画布，做到零占用（侧边栏独立运行不受影响）
+        // 无任何桌面小组件时释放桌面全屏画布，做到零占用
         if placements.is_empty() {
             self.canvases.clear();
-            return dash_anim || toast_active;
-        }
-        if descs.is_empty() {
-            return dash_anim || toast_active;
         }
 
         // 移除已不存在或已无任何可见/隐藏槽位的桌面画布
@@ -402,7 +295,6 @@ impl Host {
         self.refresh_input_regions();
 
         let editing = self.todo_edit.is_some() || self.note_edit.is_some();
-        let active_anim = moving || dash_anim || toast_active;
         let sleeping = !self.canvases.is_empty()
             && !changed
             && !self.edit_mode
@@ -420,7 +312,7 @@ impl Host {
             }
         }
 
-        (active_anim && !sleeping) || (sidebar_visible && (dash_anim || toast_active))
+        moving && !sleeping
     }
 
     /// 计算 Apple 玻璃右键浮层在画布内的防越界逻辑矩形。
@@ -432,7 +324,7 @@ impl Host {
         Rect2D::new(x, y, mw, mh)
     }
 
-    /// 同步所有桌面画布上的精确 Win32 `SetWindowRgn` 穿透选区（不再被侧边栏占用全屏）。
+    /// 同步所有桌面画布上的精确 Win32 `SetWindowRgn` 穿透选区。
     fn refresh_input_regions(&mut self) {
         let allow_full = self.edit_mode || self.drag.is_some() || self.resize.is_some();
         for c in &mut self.canvases {
@@ -468,7 +360,7 @@ impl Host {
         }
     }
 
-    /// 处理窗口事件（先路由至独立右侧侧边栏窗口，再路由至桌面全屏画布）。
+    /// 处理桌面全屏画布的窗口事件。
     pub fn event(
         &mut self,
         id: WindowId,
@@ -479,9 +371,6 @@ impl Host {
         time: f64,
         media_position: Option<f64>,
     ) -> Option<Action> {
-        if self.sidebar_win.as_ref().is_some_and(|sb| sb.window.id() == id) {
-            return self.handle_sidebar_event(event, model, gpu, text, time, media_position);
-        }
         let idx = self.canvases.iter().position(|c| c.window.id() == id)?;
 
         match event {
@@ -656,7 +545,6 @@ impl Host {
                 pro: Some(&self.telemetry),
                 stack_info: slot.stack_info,
                 quote_index: quote_idx,
-                in_sidebar: false,
             };
             let view = desktop_cards::render_allegro_card(model, text, &ctx);
             scene.append(&view.scene, Some(Affine::translate((draw_r.x, draw_r.y))));
@@ -1388,7 +1276,7 @@ impl Host {
                 self.edit_mode = !self.edit_mode;
                 self.menu_for = None;
                 for c in &self.canvases {
-                    platform::set_dashboard_layer(&c.window, self.dashboard.open || self.edit_mode);
+                    platform::set_dashboard_layer(&c.window, self.edit_mode);
                     c.window.request_redraw();
                 }
                 self.refresh_input_regions();
@@ -1781,636 +1669,6 @@ impl Host {
         }
     }
 
-    /// 同步右侧独立置顶侧边栏窗口：按 `Alt+~` 显示于主屏右侧并保持左侧电脑 100% 可操作。
-    fn sync_sidebar_window(
-        &mut self,
-        event: &ActiveEventLoop,
-        gpu: &mut Gpu,
-        descs: &[MonitorDesc],
-    ) {
-        let should_show = sidebar_should_show(&self.dashboard);
-        if !should_show {
-            if let Some(sb) = &mut self.sidebar_win {
-                if sb.visible {
-                    sb.visible = false;
-                    sb.window.set_ime_allowed(false);
-                    platform::hide_window(&sb.window);
-                    sb.last_region = None;
-                    sb.hits.clear();
-                    sb.pointer = (-1000.0, -1000.0);
-                    sb.hovered_hit = None;
-                }
-            }
-            return;
-        }
-        let Some(mon) = descs.first() else {
-            return;
-        };
-        let scale = mon.scale.max(0.5);
-        let mon_log_w = mon.phys_w as f64 / scale;
-        let mon_log_h = mon.phys_h as f64 / scale;
-        let metrics = crate::stage_overlay::sidebar_layout_metrics(mon_log_w);
-        let win_log_w = metrics.win_w;
-        let win_phys_w = (win_log_w * scale).round().max(1.0) as u32;
-        let win_phys_h = mon.phys_h.max(1);
-        let win_phys_x = mon.phys_x + mon.phys_w as i32 - win_phys_w as i32;
-        let win_phys_y = mon.phys_y;
-
-        if let Some(sb) = &mut self.sidebar_win {
-            if sb.mon != *mon || (sb.win_log.0 - win_log_w).abs() > 1.0 {
-                sb.mon = mon.clone();
-                sb.metrics = metrics;
-                sb.win_log = (win_log_w, mon_log_h);
-                let _ = sb
-                    .window
-                    .request_inner_size(PhysicalSize::new(win_phys_w, win_phys_h));
-                sb.window
-                    .set_outer_position(PhysicalPosition::new(win_phys_x, win_phys_y));
-                sb.surface.resize(win_phys_w, win_phys_h);
-                sb.prime_region();
-                sb.dirty = true;
-            }
-            if !sb.visible {
-                sb.prime_region();
-                sb.visible = true;
-                sb.dirty = true;
-                platform::show_sidebar_topmost(&sb.window, false);
-                sb.window.request_redraw();
-            }
-            return;
-        }
-
-        let attrs = Window::default_attributes()
-            .with_title("DotIsle Allegro Sidebar")
-            .with_decorations(false)
-            .with_transparent(true)
-            .with_no_redirection_bitmap(true)
-            .with_undecorated_shadow(false)
-            .with_resizable(false)
-            .with_skip_taskbar(true)
-            .with_visible(false)
-            .with_active(false)
-            .with_inner_size(PhysicalSize::new(win_phys_w, win_phys_h))
-            .with_position(PhysicalPosition::new(win_phys_x, win_phys_y));
-        let Ok(window) = event.create_window(attrs) else {
-            return;
-        };
-        let window = Arc::new(window);
-        platform::remove_dwm_frame(&window);
-        let region = sidebar_region(sidebar_initial_panel(metrics, mon_log_h), scale);
-        let region_applied = platform::apply_sidebar_region(&window, region);
-        // 首次用 winit 同步可见标记；后续从 Win32 无激活显示/隐藏，避免 SW_SHOW 抢焦点。
-        window.set_visible(true);
-        platform::show_sidebar_topmost(&window, false);
-        let surface = match gpu.surface(window.clone()) {
-            Ok(surface) => surface,
-            Err(err) => {
-                platform::hide_window(&window);
-                eprintln!("Allegro sidebar surface: {err}");
-                self.error = Some(err);
-                return;
-            }
-        };
-        window.request_redraw();
-        self.sidebar_win = Some(SidebarWindow {
-            mon: mon.clone(),
-            window,
-            surface,
-            metrics,
-            win_log: (win_log_w, mon_log_h),
-            hits: Vec::new(),
-            card_slots: Vec::new(),
-            viewport: Rect::ZERO,
-            max_scroll: 0.0,
-            pointer: (-1000.0, -1000.0),
-            hovered_hit: None,
-            visible: true,
-            last_region: region_applied.then_some(region),
-            previous_foreground: None,
-            dirty: true,
-        });
-    }
-
-    /// 首帧可先画默认组件；文件加载完成前禁止覆盖已有配置。
-    fn sync_sidebar_data(&mut self, demo: bool) -> bool {
-        if self.sidebar_io.is_none() {
-            let path = (!demo && !self.data_dir.as_os_str().is_empty())
-                .then(|| self.data_dir.join("allegro-sidebar.json"));
-            let loading = path.is_some();
-            let io = SidebarIo::start(path);
-            self.stage.ensure_sidebar_loaded(None, demo);
-            self.stage.sidebar_loaded = !loading || !io.available();
-            self.sidebar_io = Some(io);
-        }
-        let io = self.sidebar_io.as_mut().unwrap();
-        let mut changed = false;
-        while let Some(result) = io.take() {
-            match result {
-                sidebar_io::Result::Loaded(widgets) => {
-                    self.stage.sidebar_widgets = widgets;
-                    self.stage.sidebar_loaded = true;
-                    changed = true;
-                }
-                sidebar_io::Result::Clipboard(items) if !items.is_empty() => {
-                    self.clipboard.items = items;
-                    changed = true;
-                }
-                sidebar_io::Result::Copied(Some(text)) => {
-                    self.stage.set_toast(if text.is_empty() { "已复制到剪贴板".into() }
-                        else { format!("已复制 {text} 到剪贴板") });
-                    io.poll_clipboard();
-                    changed = true;
-                }
-                _ => {}
-            }
-        }
-        changed
-    }
-
-    fn request_sidebar_redraw(&self) {
-        if let Some(sb) = &self.sidebar_win {
-            sb.window.request_redraw();
-        }
-    }
-
-    fn end_sidebar_search(&mut self) {
-        self.stage.search_focused = false;
-        self.stage.preedit.clear();
-        if let Some(sb) = &mut self.sidebar_win {
-            sb.window.set_ime_allowed(false);
-            if let Some(previous) = sb.previous_foreground.take() {
-                platform::restore_sidebar_focus(&sb.window, previous);
-            }
-        }
-    }
-
-    fn close_sidebar(&mut self) {
-        self.dashboard.close();
-        self.sidebar_menu_for = None;
-        self.end_sidebar_search();
-        self.stage.sidebar_add_open = false;
-        self.stage.clear_query();
-        if let Some(sb) = &mut self.sidebar_win {
-            sb.window.set_ime_allowed(false);
-            sb.window.request_redraw();
-        }
-    }
-
-    fn handle_sidebar_event(
-        &mut self,
-        event: WindowEvent,
-        model: &mut Model,
-        gpu: &mut Gpu,
-        text: &mut Text,
-        time: f64,
-        media_position: Option<f64>,
-    ) -> Option<Action> {
-        match event {
-            WindowEvent::Resized(new_size) => {
-                if let Some(sb) = &mut self.sidebar_win {
-                    let scale = sb.mon.scale.max(0.5);
-                    sb.win_log = (new_size.width.max(1) as f64 / scale, new_size.height.max(1) as f64 / scale);
-                    sb.surface.resize(new_size.width.max(1), new_size.height.max(1));
-                    if sb.visible { sb.prime_region(); }
-                    sb.window.request_redraw();
-                }
-                None
-            }
-            WindowEvent::RedrawRequested => {
-                self.redraw_sidebar(model, gpu, text, time, media_position);
-                None
-            }
-            WindowEvent::CursorMoved { position, .. } => {
-                let Some(sb) = &mut self.sidebar_win else {
-                    return None;
-                };
-                let scale = sb.mon.scale.max(0.5);
-                let pt = position.to_logical::<f64>(scale);
-                sb.pointer = (pt.x, pt.y);
-                let next_hit = sb.hits.iter().rposition(|h| h.enabled && h.rect.contains((pt.x, pt.y)));
-                if sb.hovered_hit != next_hit || self.sidebar_menu_for.is_some() {
-                    sb.hovered_hit = next_hit;
-                    sb.window.request_redraw();
-                }
-                None
-            }
-            WindowEvent::CursorLeft { .. } => {
-                if let Some(sb) = &mut self.sidebar_win {
-                    sb.pointer = (-1000.0, -1000.0);
-                    if sb.hovered_hit.take().is_some() || self.sidebar_menu_for.is_some() {
-                        sb.window.request_redraw();
-                    }
-                }
-                None
-            }
-            WindowEvent::MouseWheel { delta, .. } => {
-                let dy = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y as f64 * 36.0,
-                    MouseScrollDelta::PixelDelta(p) => p.y,
-                };
-                if let Some(sb) = &mut self.sidebar_win {
-                    if sb.viewport.contains(sb.pointer) && sb.max_scroll > 0.0 {
-                        self.stage.sidebar_scroll =
-                            (self.stage.sidebar_scroll - dy).clamp(0.0, sb.max_scroll);
-                        sb.window.request_redraw();
-                    }
-                }
-                None
-            }
-            WindowEvent::MouseInput { state, button, .. } => {
-                let Some(sb) = &self.sidebar_win else {
-                    return None;
-                };
-                let pt = sb.pointer;
-                let win = sb.window.clone();
-                let win_log = sb.win_log;
-                if button == MouseButton::Right {
-                    if state == ElementState::Released {
-                        if let Some((wid, _)) = sb.card_slots.iter().rev().find(|(_, r)| r.contains(pt)) {
-                            self.sidebar_menu_for = Some((wid.clone(), pt));
-                            win.request_redraw();
-                        } else if self.sidebar_menu_for.take().is_some() {
-                            win.request_redraw();
-                        }
-                    }
-                    return None;
-                }
-                if button != MouseButton::Left || state != ElementState::Released {
-                    return None;
-                }
-                if let Some((_, m_anchor)) = self.sidebar_menu_for {
-                    let mr = Self::clamped_menu_rect(win_log.0, win_log.1, m_anchor);
-                    if !mr.contains(pt.0, pt.1) {
-                        self.sidebar_menu_for = None;
-                        win.request_redraw();
-                        return None;
-                    }
-                }
-                let hit_action = sb
-                    .hits
-                    .iter()
-                    .rev()
-                    .find(|h| h.enabled && h.rect.contains(pt))
-                    .map(|h| h.action.clone());
-                if let Some(act) = hit_action {
-                    return self.apply_sidebar_action(act, model);
-                } else if self.stage.search_focused {
-                    self.end_sidebar_search();
-                    win.request_redraw();
-                }
-                None
-            }
-            WindowEvent::Focused(focused) => {
-                if !focused && self.stage.search_focused {
-                    self.end_sidebar_search();
-                    self.request_sidebar_redraw();
-                }
-                None
-            }
-            WindowEvent::KeyboardInput { event, .. } => {
-                if event.state != ElementState::Pressed {
-                    return None;
-                }
-                match event.logical_key {
-                    Key::Named(NamedKey::Escape) => {
-                        if self.sidebar_menu_for.take().is_some() {
-                            self.request_sidebar_redraw();
-                        } else if !self.stage.query.is_empty() {
-                            self.stage.clear_query();
-                            self.request_sidebar_redraw();
-                        } else if self.stage.search_focused {
-                            self.end_sidebar_search();
-                            self.request_sidebar_redraw();
-                        } else {
-                            self.close_sidebar();
-                        }
-                    }
-                    Key::Named(NamedKey::ArrowDown) => {
-                        let total = resolve_stage_results(&self.stage.query, &self.app_index).len();
-                        self.stage.step_selection(1, total);
-                        self.request_sidebar_redraw();
-                    }
-                    Key::Named(NamedKey::ArrowUp) => {
-                        let total = resolve_stage_results(&self.stage.query, &self.app_index).len();
-                        self.stage.step_selection(-1, total);
-                        self.request_sidebar_redraw();
-                    }
-                    Key::Named(NamedKey::Backspace) => {
-                        self.stage.backspace();
-                        self.request_sidebar_redraw();
-                    }
-                    Key::Named(NamedKey::Enter) => {
-                        let results = resolve_stage_results(&self.stage.query, &self.app_index);
-                        if let Some(chosen) = results.get(self.stage.selected).cloned() {
-                            let act = match chosen.kind {
-                                StageResultKind::MathCopy(v) => Action::StageCopyText(v),
-                                StageResultKind::LaunchApp { target, .. } => Action::StageRunApp(target),
-                                StageResultKind::RunCommand(cmd) => Action::StageSlash(cmd),
-                            };
-                            return self.apply_sidebar_action(act, model);
-                        }
-                    }
-                    Key::Named(NamedKey::Space) => {
-                        self.stage.push_str(" ");
-                        self.request_sidebar_redraw();
-                    }
-                    Key::Character(s) => {
-                        self.stage.push_str(&s);
-                        self.request_sidebar_redraw();
-                    }
-                    _ => {}
-                }
-                None
-            }
-            WindowEvent::Ime(ime) => {
-                if self.stage.search_focused {
-                    match ime {
-                        Ime::Preedit(s, _) => self.stage.preedit = s,
-                        Ime::Commit(s) => self.stage.push_str(&s),
-                        Ime::Disabled => self.stage.preedit.clear(),
-                        Ime::Enabled => {}
-                    }
-                    self.request_sidebar_redraw();
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
-    fn redraw_sidebar(
-        &mut self,
-        model: &Model,
-        gpu: &mut Gpu,
-        text: &mut Text,
-        time: f64,
-        media_position: Option<f64>,
-    ) {
-        let Some(sb) = self.sidebar_win.as_mut().filter(|sb| sb.visible) else {
-            return;
-        };
-        let scale = sb.mon.scale.max(0.5);
-        let mon_key = sb.mon.key.clone();
-        let mon_log = (sb.mon.phys_w as f64 / scale, sb.mon.phys_h as f64 / scale);
-        let panel_rect_global = Rect2D::new(
-            (mon_log.0 - sb.win_log.0 + sb.metrics.shadow_left).max(0.0),
-            12.0,
-            sb.metrics.panel_w,
-            (sb.win_log.1 - 24.0).max(360.0),
-        );
-        let frost = self.wallpaper.sidebar(&mon_key, mon_log, panel_rect_global);
-        let results = resolve_stage_results(&self.stage.query, &self.app_index);
-
-        let mut scene = Scene::new();
-        let out = crate::stage_overlay::paint_stage_overlay(
-            &mut scene,
-            text,
-            model,
-            sb.win_log,
-            sb.metrics,
-            sb.pointer,
-            model.prefs.dark,
-            self.dashboard.opacity as f32,
-            time,
-            media_position,
-            frost.as_ref().map(|s| &s.image),
-            &self.stage,
-            &results,
-            &self.clipboard.items,
-            Some(&self.telemetry),
-            &self.quote_indices,
-        );
-
-        let mut next_hits = Vec::new();
-        for h in out.hits {
-            next_hits.push(HitEntry {
-                rect: h.rect,
-                action: h.action,
-                label: h.label,
-                enabled: true,
-                widget_id: String::new(),
-            });
-        }
-        if let Some((ref wid, anchor)) = self.sidebar_menu_for {
-            if let Some(p) = self.stage.sidebar_widgets.iter().find(|w| &w.id == wid) {
-                let mr = Self::clamped_menu_rect(sb.win_log.0, sb.win_log.1, anchor);
-                let scheme = dotisle_domain::monet::scheme(0x0A84FF, model.prefs.dark);
-                let mut menu_ui = crate::widgets::Ui::new(
-                    &mut scene,
-                    text,
-                    scheme,
-                    sb.pointer,
-                    rect(0., 0., sb.win_log.0, sb.win_log.1),
-                );
-                let _ = desktop_cards::paint_sidebar_context_menu(
-                    &mut menu_ui,
-                    p,
-                    (mr.x, mr.y),
-                    model.prefs.dark,
-                );
-                for hit in menu_ui.hits {
-                    next_hits.push(HitEntry {
-                        rect: hit.rect,
-                        action: hit.action,
-                        label: hit.label,
-                        enabled: hit.enabled,
-                        widget_id: p.id.clone(),
-                    });
-                }
-            }
-        }
-
-        sb.viewport = out.viewport;
-        sb.max_scroll = out.max_scroll;
-        sb.card_slots = out.card_slots;
-        self.stage.sidebar_scroll = self.stage.sidebar_scroll.clamp(0.0, out.max_scroll);
-        sb.hits = next_hits;
-
-        // 仅面板自身圆角矩形响应鼠标，外围透明投影缓冲直接穿透给桌面或应用
-        sb.update_region(out.panel);
-
-        if let Err(err) = gpu.draw(&mut sb.surface, &scene, scale) {
-            eprintln!("Allegro sidebar gpu.draw failed: {err}");
-            self.error = Some(err);
-        }
-    }
-
-    fn apply_sidebar_action(&mut self, action: Action, model: &mut Model) -> Option<Action> {
-        if !self.dashboard.open { return None; }
-        let mutates_widgets = matches!(action,
-            Action::SidebarAddWidget(..) | Action::SidebarRemoveWidget(..) | Action::SidebarSetSize(..)
-            | Action::SidebarCycleSize(..) | Action::SidebarSetMaterial(..) | Action::SidebarMove(..)
-            | Action::SidebarAppFolderToggleGrid(..) | Action::SidebarNoteToggleCheck(..));
-        if mutates_widgets && !self.stage.sidebar_loaded { return None; }
-        let previous = mutates_widgets.then(|| self.stage.sidebar_widgets.clone());
-        let result = self.apply_sidebar_action_inner(action, model);
-        if previous.is_some_and(|old| old != self.stage.sidebar_widgets) {
-            if let Some(io) = &self.sidebar_io { io.save(self.stage.sidebar_widgets.clone()); }
-        }
-        result
-    }
-
-    fn apply_sidebar_action_inner(&mut self, action: Action, model: &mut Model) -> Option<Action> {
-        let clicked_search = matches!(action, Action::SidebarFocusSearch);
-        if !clicked_search && self.stage.search_focused {
-            self.end_sidebar_search();
-        }
-        match action {
-            Action::SidebarClose => {
-                self.close_sidebar();
-                None
-            }
-            Action::SidebarFocusSearch => {
-                self.stage.search_focused = true;
-                if let Some(io) = &mut self.sidebar_io { io.poll_clipboard(); }
-                self.app_index.ensure_loaded();
-                if let Some(sb) = &mut self.sidebar_win {
-                    sb.previous_foreground.get_or_insert_with(platform::foreground_window);
-                    platform::show_sidebar_topmost(&sb.window, true);
-                    sb.window.set_ime_allowed(true);
-                    sb.window.request_redraw();
-                }
-                None
-            }
-            Action::SidebarToggleEdit => {
-                self.sidebar_menu_for = None;
-                self.stage.sidebar_edit = !self.stage.sidebar_edit;
-                self.request_sidebar_redraw();
-                None
-            }
-            Action::SidebarToggleAdd => {
-                self.sidebar_menu_for = None;
-                self.stage.sidebar_add_open = !self.stage.sidebar_add_open;
-                self.request_sidebar_redraw();
-                None
-            }
-            Action::SidebarAddWidget(kind, size, cap) => {
-                self.stage.add_sidebar_widget(kind, size, &cap);
-                let span_lbl = match size {
-                    dotisle_domain::desktop_widgets::Size::Small => "1×1 小",
-                    dotisle_domain::desktop_widgets::Size::Medium => "2×1 大",
-                    dotisle_domain::desktop_widgets::Size::Large => "2×2 特大",
-                };
-                self.stage.set_toast(format!("已添加到侧边栏：{} ({span_lbl})", kind.label()));
-                self.request_sidebar_redraw();
-                None
-            }
-            Action::SidebarRemoveWidget(id) => {
-                self.sidebar_menu_for = None;
-                if self.stage.remove_sidebar_widget(&id) {
-                    self.stage.set_toast("已从侧边栏移除组件");
-                }
-                self.request_sidebar_redraw();
-                None
-            }
-            Action::SidebarSetSize(id, size) => {
-                if self.stage.set_sidebar_size(&id, size) {
-                    self.stage.set_toast(format!("已切换为「{}」区块", size.label()));
-                }
-                self.request_sidebar_redraw();
-                None
-            }
-            Action::SidebarCycleSize(id) => {
-                if let Some(next) = self.stage.cycle_sidebar_size(&id) {
-                    self.stage.set_toast(format!("区块尺寸已切换为「{}」", next.label()));
-                }
-                self.request_sidebar_redraw();
-                None
-            }
-            Action::SidebarSetMaterial(id, mat) => {
-                let _ = self.stage.set_sidebar_material(&id, &mat);
-                self.request_sidebar_redraw();
-                None
-            }
-            Action::SidebarMove(id, delta) => {
-                self.sidebar_menu_for = None;
-                if self.stage.move_sidebar_widget(&id, delta) {
-                    self.stage.set_toast("已调整区块顺序");
-                }
-                self.request_sidebar_redraw();
-                None
-            }
-            Action::SidebarAppFolderLaunch(id, item_idx) => {
-                if let Some(p) = self.stage.sidebar_widgets.iter().find(|w| w.id == id) {
-                    let entries = crate::apple_desktop::app_folder_entries(&p.config);
-                    if let Some(entry) = entries.get(item_idx) {
-                        platform::open_shell_path(&entry.target);
-                    }
-                }
-                None
-            }
-            Action::SidebarAppFolderToggleGrid(id) => {
-                self.sidebar_menu_for = None;
-                let _ = self.stage.toggle_sidebar_app_folder_grid(&id);
-                self.request_sidebar_redraw();
-                None
-            }
-            Action::SidebarNoteToggleCheck(id, line_idx) => {
-                let _ = self.stage.toggle_sidebar_note_check(&id, line_idx);
-                self.request_sidebar_redraw();
-                None
-            }
-            Action::SidebarQuoteNext(id) => {
-                let entry = self.quote_indices.entry(id).or_insert(0);
-                *entry = entry.wrapping_add(1);
-                self.request_sidebar_redraw();
-                None
-            }
-            Action::StageClipboardCopy(cb_idx) => {
-                if let (Some(io), Some(item)) = (&self.sidebar_io, self.clipboard.items.get(cb_idx)) {
-                    io.copy(item.text.clone(), true);
-                }
-                None
-            }
-            Action::StageCopyText(txt) => {
-                if let Some(io) = &self.sidebar_io { io.copy(txt, false); }
-                None
-            }
-            Action::StageRunApp(target) => {
-                platform::open_shell_path(&target);
-                self.stage.clear_query();
-                self.request_sidebar_redraw();
-                None
-            }
-            Action::StageSlash(cmd) => {
-                match cmd {
-                    StageSlashCmd::StartFocus(mins) => {
-                        model.native_command(
-                            "timerCreate",
-                            json!({"mode":"pomodoro","duration": (mins as u64)*60,"focus": (mins as u64)*60,"rest":300,"rounds":4}),
-                        );
-                        self.stage.set_toast(format!("已开启 {mins} 分钟番茄专注"));
-                        self.stage.clear_query();
-                    }
-                    StageSlashCmd::AddTodo(title) => {
-                        model.native_command("todoCreate", json!({"title": title}));
-                        self.stage.set_toast(format!("已添加待办：{title}"));
-                        self.stage.clear_query();
-                    }
-                    StageSlashCmd::EnterGridEdit => {
-                        self.close_sidebar();
-                        self.edit_mode = true;
-                        for c in &self.canvases {
-                            platform::set_dashboard_layer(&c.window, true);
-                            c.window.request_redraw();
-                        }
-                        self.refresh_input_regions();
-                    }
-                    StageSlashCmd::QuickAddSidebarWidget(kind, size, cap) => {
-                        self.stage.add_sidebar_widget(kind, size, &cap);
-                        self.stage.set_toast(format!("已向侧边栏添加「{}」", kind.label()));
-                        self.stage.clear_query();
-                    }
-                }
-                self.request_sidebar_redraw();
-                None
-            }
-            Action::ToggleTodo(_) | Action::Timer(..) | Action::QuickFocus | Action::Media(_) => {
-                Some(action)
-            }
-            _ => None,
-        }
-    }
 }
 
 fn push_todo_field(ed: &mut TodoEdit, text: &str) {
@@ -2519,34 +1777,4 @@ fn create_canvas(
         last_allow_full: false,
         dirty: true,
     })
-}
-
-#[cfg(test)]
-mod sidebar_lifecycle_tests {
-    use super::*;
-
-    #[test]
-    fn shows_before_first_tick_and_hides_only_after_exit_animation() {
-        let mut state = DashboardState::default();
-        assert!(!sidebar_should_show(&state));
-        state.toggle();
-        assert_eq!(state.opacity, 0.0);
-        assert!(sidebar_should_show(&state));
-        state.tick(0.016);
-        state.close();
-        assert!(sidebar_should_show(&state));
-        for _ in 0..60 { state.tick(0.016); }
-        assert_eq!(state.opacity, 0.0);
-        assert!(!sidebar_should_show(&state));
-    }
-
-    #[test]
-    fn initial_region_is_nonempty_and_excludes_shadow_at_multiple_dpis() {
-        let metrics = crate::stage_overlay::sidebar_layout_metrics(1707.0);
-        for scale in [1.0, 1.25, 1.5, 2.0] {
-            let (left, top, right, bottom, radius) = sidebar_region(sidebar_initial_panel(metrics, 900.0), scale);
-            assert!(left > 2 && top > 2 && right > left && bottom > top && radius > 0);
-            assert!(right < (metrics.win_w * scale).ceil() as i32);
-        }
-    }
 }

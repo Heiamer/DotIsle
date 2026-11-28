@@ -243,7 +243,6 @@ fn allegro_new_kinds_photo_dropzone_and_system_pro_render_and_stay_inside() {
             pro: Some(&pro),
             stack_info: None,
             quote_index: 0,
-            in_sidebar: false,
         };
         let view = desktop_cards::render_allegro_card(&m, &mut text, &ctx);
         assert!(!view.scene.is_empty());
@@ -297,7 +296,6 @@ fn allegro_three_materials_and_extended_menu() {
             pro: None,
             stack_info: Some((0, 2)),
             quote_index: 0,
-            in_sidebar: false,
         };
         let view = desktop_cards::render_allegro_card(&m, &mut text, &ctx);
         assert_inside(&view, w, h);
@@ -344,7 +342,6 @@ fn allegro_note_checkboxes_and_inline_edit_hits() {
         pro: None,
         stack_info: None,
         quote_index: 0,
-        in_sidebar: false,
     };
     let view = desktop_cards::render_allegro_card(&m, &mut text, &ctx);
     assert_inside(&view, w, h);
@@ -444,7 +441,6 @@ fn allegro_all_26_kinds_render_cleanly_in_all_three_materials() {
                         pro: None,
                         stack_info: None,
                         quote_index: 2,
-                        in_sidebar: false,
                     };
                     let view = desktop_cards::render_allegro_card(&m, &mut text, &ctx);
                     assert!(!view.scene.is_empty(), "{:?} {:?} {:?} empty scene", kind, size, mat);
@@ -516,114 +512,4 @@ fn apple_context_menu_exposes_sizes_materials_and_actions() {
     p_folder.kind = Kind::AppFolder;
     let _ = desktop_cards::paint_apple_context_menu(&mut ui2, &p_folder, (20., 30.), false);
     assert!(ui2.hits.iter().any(|h| matches!(h.action, Action::AppFolderToggleGrid(ref id) if id == "folder-1")));
-}
-
-#[test]
-fn stage_overlay_renders_right_sidebar_blocks_edit_and_search_within_bounds() {
-    let m = model();
-    let mut text = Text::new_lazy_japanese();
-    let mut apps = allegro::stage::AppIndex::default();
-    apps.ensure_loaded();
-    let mut cb = allegro::stage::ClipboardHistory::default();
-    cb.push_text("cargo build --release");
-    let quotes = std::collections::HashMap::new();
-    let metrics = crate::stage_overlay::sidebar_layout_metrics(1600.);
-    let win_size = (metrics.win_w, 960.);
-
-    for dark in [false, true] {
-        // 1. 独立右侧丝绸雾面侧边栏默认态
-        let mut scene = vello::Scene::new();
-        let mut stage = allegro::stage::StageState::default();
-        stage.ensure_sidebar_loaded(None, true);
-        let out = crate::stage_overlay::paint_stage_overlay(
-            &mut scene,
-            &mut text,
-            &m,
-            win_size,
-            metrics,
-            (-1., -1.),
-            dark,
-            1.0,
-            0.2,
-            None,
-            None,
-            &stage,
-            &[],
-            &cb.items,
-            None,
-            &quotes,
-        );
-        assert!(out.panel.x0 >= 0. && out.panel.y0 >= 0. && out.panel.x1 <= win_size.0 && out.panel.y1 <= win_size.1);
-        assert!(!out.card_slots.is_empty());
-        assert!(out.hits.iter().any(|h| matches!(h.action, Action::SidebarFocusSearch)));
-        assert!(out.hits.iter().any(|h| matches!(h.action, Action::SidebarToggleEdit)));
-        assert!(out.hits.iter().any(|h| matches!(h.action, Action::SidebarToggleAdd)));
-        assert!(out.hits.iter().any(|h| matches!(h.action, Action::SidebarClose)));
-        assert!(!out.hits.iter().any(|h| matches!(h.action, Action::WidgetRemove(_) | Action::WidgetResize(..))));
-
-        // 2. 编辑区块态：展示添加抽屉、删除角标、尺寸轮切与前移操作
-        let mut stage_edit = allegro::stage::StageState::default();
-        stage_edit.ensure_sidebar_loaded(None, true);
-        stage_edit.sidebar_edit = true;
-        let out_edit = crate::stage_overlay::paint_stage_overlay(
-            &mut scene,
-            &mut text,
-            &m,
-            win_size,
-            metrics,
-            (-1., -1.),
-            dark,
-            1.0,
-            0.3,
-            None,
-            None,
-            &stage_edit,
-            &[],
-            &cb.items,
-            None,
-            &quotes,
-        );
-        assert!(out_edit.hits.iter().any(|h| matches!(h.action, Action::SidebarAddWidget(..))));
-        assert!(out_edit.hits.iter().any(|h| matches!(h.action, Action::SidebarRemoveWidget(_))));
-        assert!(out_edit.hits.iter().any(|h| matches!(h.action, Action::SidebarCycleSize(_))));
-        assert!(out_edit.hits.iter().any(|h| matches!(h.action, Action::SidebarMove(_, -1))));
-
-        // 3. Spotlight 搜索计算态
-        let mut s_search = allegro::stage::StageState::default();
-        s_search.ensure_sidebar_loaded(None, true);
-        s_search.search_focused = true;
-        s_search.query = "128*36".into();
-        let results = allegro::stage::resolve_stage_results(&s_search.query, &apps);
-        let out_search = crate::stage_overlay::paint_stage_overlay(
-            &mut scene,
-            &mut text,
-            &m,
-            win_size,
-            metrics,
-            (-1., -1.),
-            dark,
-            1.0,
-            0.4,
-            None,
-            None,
-            &s_search,
-            &results,
-            &cb.items,
-            None,
-            &quotes,
-        );
-        assert!(out_search.hits.iter().any(|h| matches!(h.action, Action::StageCopyText(ref s) if s == "4608")));
-    }
-
-    // 4. 侧边栏专属右键菜单仅触发 Sidebar* 动作
-    let s = dotisle_domain::monet::scheme(0x0088FF, false);
-    let mut scene = vello::Scene::new();
-    let mut ui = crate::widgets::Ui::new(&mut scene, &mut text, s, (-1., -1.), crate::draw::rect(0., 0., 400., 400.));
-    let sb_item = allegro::stage::default_sidebar_widgets().remove(0);
-    let _ = desktop_cards::paint_sidebar_context_menu(&mut ui, &sb_item, (20., 20.), false);
-    for sz in Size::ALL {
-        assert!(ui.hits.iter().any(|h| matches!(h.action, Action::SidebarSetSize(_, s2) if s2 == sz)));
-    }
-    assert!(ui.hits.iter().any(|h| matches!(h.action, Action::SidebarRemoveWidget(_))));
-    assert!(!ui.hits.iter().any(|h| matches!(h.action, Action::WidgetRemove(_))));
 }

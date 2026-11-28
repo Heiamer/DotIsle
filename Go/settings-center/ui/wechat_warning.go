@@ -122,7 +122,7 @@ func (a *App) wechatWarningView(c *ui.Context, width, height float32) {
 			Label(c, "微信提醒风险提示", 28, 24, 22, s.OnSurface, true, dw-56)
 			Label(c, "旧版微信正文读取可能触发账号风控、限制或封号。", 28, 76, 14, s.OnSurface, true, dw-56)
 			Label(c, "此版本只检测 Windows 任务栏闪烁，不读取正文。", 28, 106, 14, s.OnSurfaceVariant, false, dw-56)
-			Label(c, "默认关闭。请阅读提示，等待倒计时结束后再决定是否启用。", 28, 136, 14, s.OnSurfaceVariant, false, dw-56)
+			Label(c, "微信提醒默认开启。请阅读提示，等待倒计时结束后再确认。", 28, 136, 14, s.OnSurfaceVariant, false, dw-56)
 			left := w.remaining(time.Now())
 			label := "确认并启用"
 			if left != 0 {

@@ -7,7 +7,7 @@ pub struct Notice {pub app_id:String,pub app_name:String,pub title:String,pub bo
 impl Notice {
     pub fn example(base:&std::path::Path)->Self {Self{app_id:"LyricIsland".into(),app_name:"点屿".into(),title:"通知预览".into(),body:"这是一条通知预览。音乐继续，重要消息也不会错过。".into(),icon:std::fs::read(base.join("Assets/LyricIsland-v3.png")).ok()}}
 }
-#[derive(Clone,Default,serde::Serialize,serde::Deserialize)]
+#[derive(Clone,Default,PartialEq,serde::Serialize,serde::Deserialize)]
 pub struct Policy {pub enabled:bool,pub paused:bool,pub whitelist_enabled:bool,pub allowed:Vec<String>,pub blacklist_enabled:bool,#[serde(default)]pub message_apps:Vec<String>,pub blocked:Vec<String>}
 impl Policy {
     pub fn from_settings(v:&Value)->Self {Self{message_apps:[crate::message_hints::App::WeChat,crate::message_hints::App::Feishu,crate::message_hints::App::DingTalk,crate::message_hints::App::WeCom].into_iter().filter(|app|if *app==crate::message_hints::App::WeChat {v[app.setting()]==true&&v["WeChatTaskbarWarningAccepted"]==true}else{v[app.setting()].as_bool().unwrap_or(true)}).map(|app|app.id().to_owned()).collect(),blacklist_enabled:v["NotificationBlacklistEnabled"].as_bool().unwrap_or(false),blocked:v["NotificationBlockedApps"].as_array().map(|a|a.iter().filter_map(Value::as_str).map(str::to_owned).collect()).unwrap_or_default(),enabled:v["NotificationsEnabled"].as_bool().unwrap_or(true),paused:v["PauseNotifications"].as_bool().unwrap_or(false),whitelist_enabled:v["NotificationWhitelistEnabled"].as_bool().unwrap_or(false),allowed:v["NotificationAllowedApps"].as_array().map(|a|a.iter().filter_map(Value::as_str).map(str::to_owned).collect()).unwrap_or_else(||vec!["QQNT".into(),"QQ".into()])}}
@@ -36,41 +36,59 @@ impl Listener {
         let thread=std::thread::spawn(move||{
             let initialized=unsafe{RoInitialize(RO_INIT_MULTITHREADED)}.is_ok();
             let shell=crate::message_hints::Shell::new();let mut gate=crate::message_hints::Gate::default();let mut icons=std::collections::HashMap::new();
+            let mut desktop_toast=crate::desktop_toast::Watcher::new();
             let mut last_state=Value::Null;let mut last_enabled=false;let mut last_paused=false;let mut apps_cache=json!([]);let mut store=crate::notification_store::Store::new();
             while !stopping.load(Ordering::Acquire) {
                 let p=shared.lock().map(|p|p.clone()).unwrap_or_default();
                 if p.enabled!=last_enabled || (last_paused&&!p.paused){store.reset();}
                 last_enabled=p.enabled;last_paused=p.paused;
                 let mut state=json!({"enabled":p.enabled,"paused":p.paused,"access":"disabled","source":"database","message":"通知提醒已关闭","apps":apps_cache});
-                if p.enabled {
+                // 消息提示（含微信 toast 兜底）不受通知总开关控制，只受应用规则与暂停控制。
+                if p.enabled||!p.message_apps.is_empty() {
                     match store.poll(&p){
-                        Ok(notices)=>{state["access"]=json!("compatible");state["message"]=json!(if p.paused{"通知已暂停，恢复后只接收新消息"}else if p.blacklist_enabled{"通知接收已连接，屏蔽黑名单中的应用"}else if p.whitelist_enabled{"通知接收已连接，按白名单提醒新通知"}else{"通知接收已连接，提醒各应用的新通知"});
+                        Ok(notices)=>{if p.enabled{state["access"]=json!("compatible");state["message"]=json!(if p.paused{"通知已暂停，恢复后只接收新消息"}else if p.blacklist_enabled{"通知接收已连接，屏蔽黑名单中的应用"}else if p.whitelist_enabled{"通知接收已连接，按白名单提醒新通知"}else{"通知接收已连接，提醒各应用的新通知"});}
                             for notice in notices{if !apps_cache.as_array().is_some_and(|a|a.iter().any(|a|a["id"]==notice.app_id)){if apps_cache.as_array().is_none_or(|a|a.len()>=32){apps_cache=json!([]);}apps_cache.as_array_mut().unwrap().push(json!({"id":notice.app_id,"name":notice.app_name}));}if let Some(app)=crate::message_hints::identify(&notice.app_id,&notice.app_name){
-                                if !app.uses_toast(){continue}
-                                if app.content_only(){if p.should_show()&&!notice.body.trim().is_empty(){let _=tx.try_send(Event::Notice(content_notice(app,notice)));}continue}
-                                if p.should_show()&&gate.accept(app,std::time::Instant::now(),false,crate::message_hints::foreground()==Some(app)){let mut hint:crate::message_hints::Hint=app.into();hint.icon=notice.icon;let _=tx.try_send(Event::MessageHint(hint));}
-                            }else{let _=tx.try_send(Event::Notice(notice));}}
+                                if !p.paused&&p.permits(app.id(),app.name())&&gate.accept(app,std::time::Instant::now(),false,crate::message_hints::foreground()==Some(app)){let mut hint:crate::message_hints::Hint=app.into();hint.icon=notice.icon;let _=tx.try_send(Event::MessageHint(hint));}
+                            }else if p.enabled{let _=tx.try_send(Event::Notice(notice));}}
                             state["apps"]=apps_cache.clone();
-                        },Err(error)=>{state["access"]=json!("unavailable");state["message"]=json!(error);}
+                        },Err(error)=>{if p.enabled{state["access"]=json!("unavailable");state["message"]=json!(error);}}
                     }
                 }
+                for event in desktop_toast.poll(&p,&stopping){
+                    match &event {
+                        Event::Notice(notice) => {
+                            if !apps_cache.as_array().is_some_and(|apps|apps.iter().any(|a|a["id"]==notice.app_id)){
+                                if apps_cache.as_array().is_none_or(|apps|apps.len()>=32){apps_cache=json!([]);}
+                                apps_cache.as_array_mut().unwrap().push(json!({"id":notice.app_id,"name":notice.app_name}));
+                            }
+                        },
+                        Event::MessageHint(hint) => {
+                            if crate::message_hints::identify(&hint.app_id,&hint.app_name)
+                                .is_some_and(|app|crate::message_hints::foreground()==Some(app)){continue;}
+                        },
+                        Event::State(_) => {},
+                    }
+                    let _=tx.try_send(event);
+                }
+                state["apps"]=apps_cache.clone();
+                state["desktopToast"]=desktop_toast.state();
                 state["messageHints"]=json!({"taskbar":shell.is_some(),"apps":p.message_apps});
                 if state!=last_state {let _=tx.try_send(Event::State(state.clone()));last_state=state;}
                 // 150ms 高频短窗轮询外壳闪烁信号与通知库变化，降低验证码到达延迟
                 for _ in 0..3 {if stopping.load(Ordering::Acquire){break}
-                    if let Some(shell)=&shell{for signal in shell.drain(){let app=signal.app;if app.content_only(){continue}
+                    if let Some(shell)=&shell{for signal in shell.drain(){let app=signal.app;
                         let current=shared.lock().map(|p|p.clone()).unwrap_or_default();
                         let fresh=gate.accept(app,std::time::Instant::now(),true,crate::message_hints::foreground()==Some(app));
-                        if current.should_show()&&current.permits(app.id(),app.name())&&fresh{let icon=icons.entry(app).or_insert_with(||crate::app_icon::shell_icon(&signal.executable).or_else(||(app==crate::message_hints::App::WeChat).then(crate::app_icon::wechat_icon))).clone();let mut hint:crate::message_hints::Hint=app.into();hint.icon=icon;let _=tx.try_send(Event::MessageHint(hint));}
-                    }}std::thread::sleep(Duration::from_millis(50));}
+                        if !current.paused&&current.permits(app.id(),app.name())&&fresh{let icon=icons.entry(app).or_insert_with(||crate::app_icon::shell_icon(&signal.executable).or_else(||(app==crate::message_hints::App::WeChat).then(crate::app_icon::wechat_icon))).clone();let mut hint:crate::message_hints::Hint=app.into();hint.icon=icon;let _=tx.try_send(Event::MessageHint(hint));}
+                    }}
+                    std::thread::sleep(Duration::from_millis(50));}
             }
             if initialized {unsafe{RoUninitialize()}}
         });Self{events,policy,stop,thread:Some(thread)}
     }
     pub fn configure(&self,p:Policy){if let Ok(mut old)=self.policy.lock(){*old=p;}}
 }
-fn content_notice(app:crate::message_hints::App,mut notice:Notice)->Notice{notice.app_id=app.id().into();notice.app_name=app.name().into();notice}
-pub fn diagnostics()->Value {json!({"packaged":windows::ApplicationModel::Package::Current().is_ok(),"readOnly":true,"source":"database","rendering":"Vello Hybrid 0.2 / wgpu 29"})}
+pub fn diagnostics()->Value {json!({"packaged":windows::ApplicationModel::Package::Current().is_ok(),"readOnly":true,"source":"database","feishuDingTalkSource":"winrt","rendering":"Vello Hybrid 0.2 / wgpu 29"})}
 
 #[cfg(test)] mod tests {
     use super::*;
@@ -92,6 +110,22 @@ pub fn diagnostics()->Value {json!({"packaged":windows::ApplicationModel::Packag
         let mut p=Policy::from_settings(&json!({"NotificationsEnabled":true,"FollowWindowsDnd":true}));assert!(!p.paused);assert!(p.should_show());p.paused=true;assert!(!p.should_show());p.paused=false;assert!(p.should_show());p.enabled=false;assert!(!p.should_show());
     }
 
+    #[test] fn message_hints_ignore_master_switch_but_not_pause(){
+        let off=Policy::from_settings(&json!({"NotificationsEnabled":false,"WeChatMessageHintsEnabled":true,"WeChatTaskbarWarningAccepted":true}));
+        assert!(!off.should_show());
+        // 微信提示单独开启时，总开关关闭仍可投递，且不依赖总开关
+        assert!(!off.paused);
+        assert!(off.permits("Tencent.WeChat","微信"));
+        let paused=Policy::from_settings(&json!({"NotificationsEnabled":false,"PauseNotifications":true,"WeChatMessageHintsEnabled":true,"WeChatTaskbarWarningAccepted":true}));
+        assert!(paused.paused);
+        assert!(paused.permits("Tencent.WeChat","微信"));
+    }
+    #[test] fn wechat_toast_shares_cooldown_with_taskbar_flash(){
+        let mut gate=crate::message_hints::Gate::default();let now=std::time::Instant::now();let app=crate::message_hints::App::WeChat;
+        assert!(gate.accept(app,now,true,false));
+        assert!(!gate.accept(app,now+std::time::Duration::from_millis(200),false,false));
+        assert!(gate.accept(app,now+std::time::Duration::from_secs(9),false,false));
+    }
     #[test] fn disabling_qqnt_does_not_leave_it_allowed_by_legacy_rule(){let p=Policy{whitelist_enabled:true,allowed:vec!["QQ".into()],..Default::default()};assert!(!p.permits("Tencent.QQ.NT","QQ"));assert!(p.permits("Tencent.QQ","QQ"));}
 }
 

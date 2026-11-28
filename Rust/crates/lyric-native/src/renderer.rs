@@ -145,6 +145,14 @@ impl Renderer {
     fn is_liquid_glass_light(&self) -> bool {
         self.liquid_glass_backdrop_luma.unwrap_or(0.0) > 0.58
     }
+    fn light_glass_ink(&self, ink: u32) -> u32 {
+        // Preserve the requested hue/alpha, but avoid near-white ink on a bright pane.
+        let channels = [(ink >> 16) & 255, (ink >> 8) & 255, ink & 255];
+        let peak = channels[0].max(channels[1]).max(channels[2]);
+        if peak <= 60 { return ink; }
+        (ink & 0xff000000) | ((channels[0] * 60 / peak) << 16)
+            | ((channels[1] * 60 / peak) << 8) | (channels[2] * 60 / peak)
+    }
     /// 向液态玻璃 Beta 管线更新裁剪后的桌面/实时画面背景纹理，并轻量采样平均亮度供前景对比度自适应。
     pub fn update_liquid_glass_backdrop(&mut self, rgba: &[u8], w: u32, h: u32) {
         if w > 0 && h > 0 && rgba.len() >= (w as usize) * (h as usize) * 4 {
@@ -590,6 +598,7 @@ impl Renderer {
             && s.notification.is_none()
             && s.osd.is_none() && s.alert.is_none()
             && immersion > 0.
+            && surface.material != Material::LiquidGlass
             && !s.dynamic_high_contrast
         {
             surface.material = Material::Acrylic;
@@ -616,32 +625,26 @@ impl Renderer {
             && self.liquid_glass_shapes.len() < dotisle_render::liquid_glass::MAX_GLASS_SHAPES
         {
             let scale = self.active_lg_scale;
-            let tint_rgb = if s.cover_background {
-                let c = self.paint_palette.background;
-                let mix_ch = |base: f32, shift: u32| -> f32 {
-                    let ch = ((c >> shift) & 0xff) as f32 / 255.;
-                    base * 0.80 + ch * 0.20
-                };
-                [mix_ch(0.035, 16), mix_ch(0.045, 8), mix_ch(0.075, 0)]
-            } else {
-                [0.035, 0.045, 0.075]
-            };
-            self.liquid_glass_shapes.push(
-                dotisle_render::liquid_glass::GlassShape::new(
-                    (r.x as f32) * scale,
-                    (r.y as f32) * scale,
-                    (r.w as f32) * scale,
-                    (r.h as f32) * scale,
-                    (radius as f32) * scale,
-                    self.active_lg_opacity,
-                    self.active_lg_refraction,
-                    self.active_lg_dispersion,
-                    self.active_lg_blur,
-                    self.active_lg_tint,
-                    p.liquid_glass as f32,
-                    tint_rgb,
-                ),
+            let mut shape = dotisle_render::liquid_glass::GlassShape::new(
+                (r.x as f32) * scale,
+                (r.y as f32) * scale,
+                (r.w as f32) * scale,
+                (r.h as f32) * scale,
+                (radius as f32) * scale,
+                self.active_lg_opacity,
+                self.active_lg_refraction,
+                self.active_lg_dispersion,
+                self.active_lg_blur,
+                self.active_lg_tint,
+                p.liquid_glass as f32,
             );
+            if let Some(resolved) = self.dynamic_resolved {
+                let dye_mix = s.liquid_glass_dye_mix(p.amount);
+                if dye_mix > 0. && self.active_lg_tint > 0. {
+                    shape = shape.with_body_dye(resolved.seed, self.active_lg_tint, dye_mix);
+                }
+            }
+            self.liquid_glass_shapes.push(shape);
         }
         let argb = |alpha: f64, rgb: u32| -> Color {
             color((((alpha.clamp(0., 1.) * 255.).round() as u32) << 24) | (rgb & 0xffffff))
@@ -1044,12 +1047,12 @@ impl Renderer {
         let phase = 1. - (1. - raw_phase).powi(4);
         let lg_light = matches!(s.classic_capsule, Material::LiquidGlass) && self.is_liquid_glass_light();
         let primary_ink = if lg_light {
-            s.text_color
+            self.light_glass_ink(s.text_color)
         } else {
             0xff000000 | tones.on_surface
         };
         let secondary_ink = if lg_light {
-            0xB8000000 | (s.text_color & 0xffffff)
+            0xCB000000 | (primary_ink & 0xffffff)
         } else {
             0xff000000 | tones.on_surface_variant
         };
@@ -1137,7 +1140,14 @@ impl Renderer {
         let c = s.layout.capsule;
         let v = s.resident;
         let tones = self.m3(s);
-        let ink = if s.mini && s.mini_light_field { s.mini_ink } else { 0xff000000 | tones.on_surface };
+        let material = if s.mini { s.mini_capsule } else { s.classic_capsule };
+        let ink = if material == Material::LiquidGlass && self.is_liquid_glass_light() {
+            self.light_glass_ink(s.text_color)
+        } else if s.mini && s.mini_light_field {
+            s.mini_ink
+        } else {
+            0xff000000 | tones.on_surface
+        };
         let font = if s.mini { crate::compact::mini_font_size(s.font_size) } else { 14. };
         let gutter = if s.mini { 10. } else { 16. };
         if v.page == crate::resident::Page::Time && !s.mini {
@@ -1466,7 +1476,195 @@ impl Renderer {
             &RoundedRect::from_rect(vr(prog), 0.7),
         );
     }
+    fn quota_arc(&mut self, x: f64, y: f64, radius: f64, width: f64, value: Option<f64>, tone: u32, track: u32) {
+        self.ring(x,y,radius,track,width);
+        let Some(percent)=value.filter(|p|*p>0.) else{return;};
+        if percent>=100. {self.ring(x,y,radius,tone,width);return;}
+        let arc=vello::kurbo::Arc::new((x,y),(radius,radius),-std::f64::consts::FRAC_PI_2,std::f64::consts::TAU*percent/100.,0.);
+        self.canvas.stroke(&Stroke::new(width).with_caps(Cap::Round),Affine::IDENTITY,color(tone),None,&arc);
+    }
+    fn quota_tile(&mut self, tile: &crate::agent_island::Tile, x: f64, y: f64, r: f64, ink: u32, hour: u32, week: u32, track: u32) {
+        use crate::agent_island::Agent;
+        if tile.agent == Agent::Harness {
+            self.ring(x,y,r,track,(r*0.12).clamp(1.6,3.));
+        } else if let Some(token) = tile.fallback_tokens() {
+            self.quota_arc(x,y,r,(r*0.14).clamp(1.8,4.),Some(100. * token.remaining as f64 / token.total as f64),hour,track);
+        } else {
+            self.quota_arc(x,y,r,(r*0.14).clamp(1.8,4.),tile.hour,hour,track);
+            self.quota_arc(x,y,r*0.71,(r*0.12).clamp(1.6,3.),tile.week,week,track);
+        }
+        let k=r*0.35;
+        match tile.agent {
+            Agent::Codex => {
+                let rect=Rect::new(x-k,y-k*0.72,k*2.,k*1.44);
+                self.outline(rect,k*0.36,ink, (r*0.075).max(1.));
+                self.line((x-k*0.51,y-k*0.25),(x-k*0.16,y),ink,1.);
+                self.line((x-k*0.16,y),(x-k*0.51,y+k*0.25),ink,1.);
+                self.line((x+k*0.08,y+k*0.25),(x+k*0.51,y+k*0.25),ink,1.);
+            }
+            Agent::ZCode => {
+                let x0=x-k*0.72;let x1=x+k*0.72;let y0=y-k*0.62;let y1=y+k*0.62;
+                let stroke=(r*0.092).max(1.);
+                self.line((x0,y0),(x1,y0),ink,stroke);
+                self.line((x1,y0),(x0,y1),ink,stroke);
+                self.line((x0,y1),(x1,y1),ink,stroke);
+            }
+            Agent::Harness => {
+                let w = (r * 0.105).max(1.);
+                self.line((x-k,y+k*0.15),(x-k*0.62,y-k*0.21),ink,w);
+                self.line((x-k*0.62,y-k*0.21),(x+k*0.45,y-k*0.25),ink,w);
+                self.line((x+k*0.45,y-k*0.25),(x+k,y-k*0.72),ink,w);
+                self.line((x+k*0.45,y-k*0.25),(x+k*0.9,y+k*0.54),ink,w);
+                self.line((x+k*0.45,y-k*0.25),(x+k*0.18,y+k*0.6),ink,w);
+                self.line((x+k*0.18,y+k*0.6),(x-k*0.65,y+k*0.55),ink,w);
+            }
+            Agent::Cursor => {
+                let w = (r * 0.102).max(1.);
+                self.line((x-k*0.7,y-k*0.82),(x+k*0.84,y),ink,w);
+                self.line((x+k*0.84,y),(x-k*0.65,y+k*0.82),ink,w);
+                self.line((x-k*0.65,y+k*0.82),(x-k*0.7,y-k*0.82),ink,w);
+            }
+            Agent::Claude => {
+                for i in 0..10 {
+                    let a=i as f64*std::f64::consts::TAU/10.;
+                    let (dy,dx)=a.sin_cos();
+                    let l=k*(if i%3==0 {0.78}else{1.});
+                    self.line((x+dx*k*0.18,y+dy*k*0.18),(x+dx*l,y+dy*l),ink,(r*0.075).max(1.));
+                }
+            }
+        }
+    }
+    fn quota_label(v: Option<f64>) -> String { v.map_or_else(||"—".to_owned(),|p|format!("{p:.0}%")) }
+    fn agent_compact(&mut self, s: &Scene<'_>) {
+        let r=s.layout.capsule;
+        let dark=!s.layout.anchor_bottom || !s.taskbar_light;
+        let (ink,muted,hour,week,track)=Self::quota_colors(dark);
+        if s.agent.tiles.is_empty() {
+            self.text_at("Codex 等待回答",r,12.,600,ink,0.5);
+            return;
+        }
+        if r.h<25. { self.text_at("AI 额度",r,9.,600,ink,0.5); return; }
+        let n=s.agent.tiles.len() as f64; let lane=(r.w/n).min(165.); let left=r.x+(r.w-lane*n)/2.;
+        for (i,tile) in s.agent.tiles.iter().enumerate(){
+            let x=left+i as f64*lane;
+            if lane<100. {self.quota_tile(tile,x+lane/2.,r.y+r.h/2.,13.,ink,hour,week,track);continue;}
+            self.quota_tile(tile,x+23.,r.y+r.h/2.,13.,ink,hour,week,track);
+            let text_w=(lane-39.).max(1.);
+            let harness = tile.agent == crate::agent_island::Agent::Harness;
+            let title=if harness { "Harness" } else if s.agent.prompt.is_some()&&tile.agent==crate::agent_island::Agent::Codex {"Codex · 待答"}else{tile.agent.name()};
+            self.text_line(title,Rect::new(x+44.,r.y+r.h/2.-14.,text_w,15.),11.,600,ink);
+            let value = if harness {
+                tile.wallet.first().cloned().unwrap_or_else(|| "余额 —".into())
+            } else if let Some(token) = tile.fallback_tokens() {
+                token.compact_label()
+            } else if tile.agent == crate::agent_island::Agent::ZCode && tile.hour.is_none() && tile.week.is_none() {
+                "—".into()
+            } else { format!("5h {} · 周 {}",Self::quota_label(tile.hour),Self::quota_label(tile.week)) };
+            self.text_line(&value,Rect::new(x+44.,r.y+r.h/2.+1.,text_w,14.),9.,500,muted);
+        }
+    }
+    fn quota_colors(dark: bool) -> (u32,u32,u32,u32,u32) {
+        if dark {(0xfff5f6fb,0xffb4bed1,0xff78b8ff,0xff9e9df4,0x477e8ba5)}
+        else {(0xff1d2835,0xff4a5b71,0xff176ac5,0xff6454c2,0x38819ab2)}
+    }
+    fn agent_card(&mut self, s: &Scene<'_>) {
+        use crate::agent_island as a;
+        let r=Rect::new(0.,0.,s.layout.card.w,s.layout.card.h);
+        let dark=s.expressive_dark;
+        let (ink,muted,hour,week,track)=Self::quota_colors(dark);
+        let background=if dark{0x36687486}else{0x227b90a7};
+        let selection=if dark{0x625085c2}else{0x3f6aa7e4};
+        let v=s.agent;
+        let close=a::close(r);
+        self.fill(close,9.,if s.hover==a::COLLAPSE{selection}else{background});
+        let (cx,cy)=(close.x+close.w/2.,close.y+close.h/2.);
+        self.line((cx-4.,cy-2.),(cx,cy+2.),ink,1.3);
+        self.line((cx,cy+2.),(cx+4.,cy-2.),ink,1.3);
+        if let Some(q)=v.question(){
+            let count=v.prompt.as_ref().map_or(1,|p|p.questions.len());
+            let head=format!("Codex 等待回答  ·  {}/{}",v.page+1,count);
+            self.text_line(&head,Rect::new(16.,12.,r.w-70.,26.),15.,650,ink);
+            // Fit the actual request, not a generic confirmation label.
+            let mut lines=Vec::new();
+            for paragraph in q.text.split('\n') {
+                let mut line=String::new();
+                for c in paragraph.chars() {
+                    line.push(c);
+                    if self.text.measure_weighted(&line,13.,550)>r.w-34. && line.chars().count()>1 {
+                        line.pop(); lines.push(line); line=String::from(c);
+                    }
+                }
+                lines.push(line);
+            }
+            for (i,line) in lines.iter().take(3).enumerate() {
+                self.text_line(line,Rect::new(16.,42.+i as f64*17.,r.w-32.,17.),13.,550,ink);
+            }
+            for (i,label) in q.labels.iter().enumerate(){
+                let bounds=a::option(r,i);
+                let selected=!v.editing&&v.answer().contains(label);
+                self.fill(bounds,8.,if selected||s.hover==a::OPTION+i as i32 {selection}else{background});
+                if selected{self.icon(Icon::Check,Rect::new(bounds.x+9.,bounds.y+6.,15.,15.),hour);}
+                self.text_line(label,Rect::new(bounds.x+31.,bounds.y,bounds.w-43.,bounds.h),11.5,550,ink);
+            }
+            if q.custom {
+                let bounds=a::custom(r);
+                self.fill(bounds,9.,if v.editing{selection}else{background});
+                if v.editing {self.outline(bounds,9.,hour,1.);}
+                let line=if v.editing {
+                    let value=String::from_utf16_lossy(&v.draft);
+                    let tail: String=value.chars().rev().take(32).collect::<Vec<_>>().into_iter().rev().collect();
+                    format!("{tail}│")
+                }else{v.answer().iter().find(|val|!q.labels.contains(val)).cloned().unwrap_or_else(||"输入自定义回复…".into())};
+                self.text_line(&line,Rect::new(bounds.x+12.,bounds.y,bounds.w-24.,bounds.h),12.,500,if v.editing{ink}else{muted});
+            }
+            for (label,bounds,enabled) in [("‹",a::prev(r),v.page>0),("›",a::next(r),v.page+1<count),("发送回复",a::send(r),v.can_send())] {
+                let is_send=label=="发送回复";
+                if !is_send&&count==1 {continue;}
+                self.fill(bounds,9.,if is_send&&enabled{hour}else{background});
+                self.text_at(label,bounds,if is_send{11.5}else{18.},650,if is_send&&enabled{if dark{0xff14283b}else{0xffffffff}}else if enabled{ink}else{muted},0.5);
+            }
+            if !v.feedback.is_empty(){
+                let x=if count>1 {114.}else{16.};
+                self.text_line(v.feedback,Rect::new(x,r.h-44.,(r.w-x-124.).max(1.),31.),10.5,500,muted);
+            }
+            return;
+        }
+        self.text_line("AI 额度",Rect::new(16.,12.,r.w-62.,27.),16.,650,ink);
+        for (i,tile) in v.tiles.iter().enumerate(){
+            let b = a::tile_rect(r, i, v.tiles.len());
+            self.fill(b,14.,background);
+            self.quota_tile(tile,b.x+32.,b.y+40.,22.,ink,hour,week,track);
+            let w = (b.w - 69.).max(0.);
+            let harness = tile.agent == a::Agent::Harness;
+            let title = self.elided_line(tile.agent.name(), w, if harness { 12. } else {13.}, 650);
+            self.text_line(&title,Rect::new(b.x+60.,b.y+9.,w,22.),if harness { 12. } else {13.},650,ink);
+            if harness {
+                let line1 = format!("余额  {}", tile.wallet.first().map(String::as_str).unwrap_or("—"));
+                self.text_line(&line1,Rect::new(b.x+60.,b.y+33.,w,16.),11.,550,hour);
+                if let Some(balance) = tile.wallet.get(1) {
+                    self.text_line(balance,Rect::new(b.x+60.,b.y+52.,w,16.),11.,550,muted);
+                }
+            } else if let Some(token) = tile.fallback_tokens() {
+                let exact = token.remaining_label();
+                let line1 = self.elided_line(&exact, w, 11., 550);
+                let line1 = if line1 == exact { line1 } else { token.compact_label() };
+                self.text_line(&line1,Rect::new(b.x+60.,b.y+33.,w,16.),11.,550,hour);
+                let line2 = format!("总量 {}", token.total);
+                let line2 = self.elided_line(&line2,w,11.,550);
+                self.text_line(&line2,Rect::new(b.x+60.,b.y+52.,w,16.),11.,550,muted);
+            } else if tile.agent == a::Agent::ZCode && tile.hour.is_none() && tile.week.is_none() {
+                self.text_line("—",Rect::new(b.x+60.,b.y+33.,w,16.),11.,550,muted);
+            } else {
+                self.text_line(&format!("5 小时  {}",Self::quota_label(tile.hour)),Rect::new(b.x+60.,b.y+33.,w,16.),11.,550,hour);
+                self.text_line(&format!("本周    {}",Self::quota_label(tile.week)),Rect::new(b.x+60.,b.y+52.,w,16.),11.,550,week);
+            }
+        }
+    }
     fn compact_view(&mut self, s: &Scene<'_>) {
+        if s.panel.is_some_and(|p|p.kind==crate::agent_island::KIND) {
+            self.agent_compact(s);
+            return;
+        }
         if s.layout.anchor_bottom {
             self.taskbar_widget_view(s);
             return;
@@ -1517,7 +1715,9 @@ impl Renderer {
                 .map(|p| format!("{}  {}", p.title, p.value))
                 .unwrap_or_else(|| s.lyric.to_string());
             let mini_font = crate::compact::mini_font_size(s.font_size);
-            let mini_ink = if s.mini_light_field {
+            let mini_ink = if s.mini_capsule == Material::LiquidGlass && self.is_liquid_glass_light() {
+                self.light_glass_ink(s.text_color)
+            } else if s.mini_light_field {
                 s.mini_ink
             } else {
                 0xff000000 | tones.on_surface
@@ -2569,7 +2769,9 @@ impl Renderer {
         let mut expanded = *s;
         expanded.mini = false;
         let s = &expanded;
-        if let Some(p) = s.panel {
+        if s.panel.is_some_and(|p|p.kind==crate::agent_island::KIND) {
+            self.agent_card(s);
+        } else if let Some(p) = s.panel {
             self.tool_expanded(s, p)
         } else {
             self.music_expanded(s)
@@ -2703,9 +2905,60 @@ impl Renderer {
             if copied{self.icon(Icon::Check,Rect::new(g.action.x+6.,g.action.y+6.,16.,16.),blue)}else{self.copy_glyph(Rect::new(g.action.x+6.,g.action.y+6.,16.,16.),blue)}
         }else{self.text_at(label,g.action,11.,500,if copied{blue}else{ink},0.5);}
     }
+    fn quota_alert_content(&mut self, title: &str, state: crate::capsule_alert::QuotaAlert, r: Rect) {
+        let ink = 0xfff5f5f7;
+        let muted = 0xffbec6d5;
+        let low = 0xffffbd81;
+        let track = 0x30b6c5dc;
+        let x = r.x + 16.;
+        let y = r.y + 14.;
+        let title_width = (r.w - 58.).max(0.);
+        let title = self.elided_line(title, title_width, 14., 650);
+        self.quota_arc(x + 11., y + 11., 8.5, 2., Some(65.), low, track);
+        self.text_line(&title, Rect::new(x + 28., y, title_width, 22.), 14., 650, ink);
+        if r.h < 116. || r.w < 260. { return; }
+        let lane = (r.w - 40.) * 0.5;
+        for (i, label) in ["5 小时剩余", "本周剩余"].into_iter().enumerate() {
+            let cell = Rect::new(x + i as f64 * (lane + 8.), y + 32., lane, 62.);
+            self.fill(cell, 12., 0x16c4d1e8);
+            let value = state.remaining[i];
+            let tone = if state.low[i] { low } else if i == 0 { 0xff83c5ff } else { 0xffbfb5ff };
+            self.quota_arc(cell.x + 26., cell.y + 31., 13., 2.6, value, tone, track);
+            let tx = cell.x + 49.;
+            let tw = lane - 57.;
+            self.text_line(label, Rect::new(tx, cell.y + 10., tw, 17.), 10., 450, muted);
+            let value_text = Self::quota_label(value);
+            self.text_line(&value_text, Rect::new(tx, cell.y + 28., tw, 25.), 17., 650, if value.is_some() { tone } else { muted });
+        }
+    }
     fn capsule_alert_content(&mut self,a:&crate::capsule_alert::Alert,r:Rect){
+        if let Some(balance) = a.balance {
+            let amber = 0xffffbd81;
+            let x = r.x + 18.;
+            let w = (r.w - 64.).max(0.);
+            self.quota_arc(x + 10., r.y + 25., 8., 2., Some(65.), amber, 0x30b6c5dc);
+            let title = self.elided_line(&a.title, w, 15., 650);
+            self.text_line(&title, Rect::new(x + 27.,r.y + 14.,w,22.),15.,650,0xfff5f5f7);
+            if r.h < 103. || r.w < 298. { return; }
+            let amount = balance.amount_label();
+            let label = if balance.key { "密钥可用余额" } else { "账户可用余额" };
+            self.text_line(label,Rect::new(x,r.y+48.,144.,17.),11.,500,0xffbec6d5);
+            let amount = self.elided_line(&amount, (r.w-165.).max(0.), 23., 650);
+            self.text_line(&amount,Rect::new(x,r.y+69.,r.w-165.,27.),23.,650,amber);
+            let pill=Rect::new(r.x+r.w-132.,r.y+66.,114.,30.);
+            self.fill(pill,11.,0x24ffbd81);
+            let threshold = if balance.currency == crate::ai_quota::RelayUnit::Points { "低于 1 积分".to_owned() }
+                else { format!("低于 {}{}", balance.currency.symbol(), crate::ai_quota::RELAY_WARNING) };
+            self.text_at(&threshold,pill,11.,600,amber,0.5);
+            return;
+        }
+        if let Some(quota) = a.quota {
+            self.quota_alert_content(&a.title, quota, r);
+            return;
+        }
         let ink=0xfff5f5f7;let muted=0xffaeb4c0;let blue=0xff75b4ff;
-        let glyph=Rect::new(r.x+17.,r.y+(r.h-26.)/2.,26.,26.);
+        let wellness = matches!(a.icon.as_str(), "WaterReminder" | "StandReminder");
+        let glyph=Rect::new(r.x+17.,if wellness {r.y+16.} else {r.y+(r.h-26.)/2.},26.,26.);
         if let Some(image)=a.image.clone(){self.image(&image,glyph,8.,1.);self.outline(glyph,8.,0x2AFFFFFF,0.75);}else{match a.icon.as_str(){
             kind if kind.starts_with("Message:")=>{
                 // App identity only: no sender, preview, unread count or chat text.
@@ -2724,6 +2977,7 @@ impl Renderer {
                 }
             },
             "Code"=>self.copy_glyph(glyph,blue),
+
             "WaterReminder"=>{
                 let x=glyph.x;let y=glyph.y;
                 for (a,b) in [( (12.,2.),(5.,12.)),((5.,12.),(4.,17.)),((4.,17.),(7.,21.)),
@@ -2743,6 +2997,29 @@ impl Renderer {
             kind=>self.device_glyph(glyph,kind,blue),
         }}
         let x=r.x+56.;let w=(r.w-76.).max(0.);
+        if wellness {
+            let accent = if a.icon == "WaterReminder" { 0xff85c7ff } else { 0xffffc27b };
+            self.text_line(&a.title,Rect::new(x,r.y+14.,w,25.),17.,650,ink);
+            if let Some(water) = a.hydration {
+                let amount = format!("今日已喝 {} / {} mL", water.drank_ml, water.goal_ml);
+                self.text_line(&amount, Rect::new(x, r.y+44., w, 20.), 13., 500, muted);
+                let Some(crate::capsule_alert::WaterLayout {track,later,record}) =
+                    crate::capsule_alert::WaterLayout::in_card(r) else { return; };
+                self.fill(track, 2.5, 0x36ffffff);
+                let fraction = (water.drank_ml as f64 / water.goal_ml as f64).min(1.);
+                self.fill(Rect::new(track.x, track.y, track.w*fraction, track.h), 2.5, accent);
+                self.fill(later, 11., 0x22ffffff);
+                self.fill(record, 11., accent);
+                self.text_at("稍后", later, 12., 550, ink, 0.5);
+                self.text_at(&format!("已喝 {} mL",water.serving_ml), record, 12., 650, 0xff112033, 0.5);
+                return;
+            }
+            self.text_line(&a.detail,Rect::new(x,r.y+43.,w,20.),12.,450,muted);
+            let button = Rect::new(r.x + r.w - 102., r.y + 69., 84., 25.);
+            self.fill(button, 12.5, 0x26ffffff);
+            self.text_at("知道了",button,11.,550,accent,0.5);
+            return;
+        }
         if a.detail.is_empty(){
             self.text_line(&a.title,Rect::new(x,r.y+(r.h-20.)/2.,if a.trailing.is_empty(){w}else{w-65.},22.),13.,500,ink);
             if !a.trailing.is_empty(){self.text_at(&a.trailing,Rect::new(r.x+r.w-74.,r.y+(r.h-22.)/2.,54.,24.),15.,600,ink,1.);}
@@ -3014,6 +3291,10 @@ impl Renderer {
                     themed.text_color = 0xff000000 | resolved.roles.on_surface;
                 }
             }
+        }
+        if s.material == Material::LiquidGlass && self.is_liquid_glass_light() {
+            themed.text_color = self.light_glass_ink(themed.text_color);
+            themed.component_color = self.light_glass_ink(themed.component_color);
         }
         let s = &themed;
         if s.cover_age_ms >= 280. && self.cover_changed.elapsed() >= Duration::from_millis(280) {
@@ -3526,6 +3807,9 @@ impl Renderer {
         self.dpi = dpi;
         self.active_lg_scale = dpi / 96.;
     }
+    pub(crate) fn preview_glass_rect(&self) -> Option<[f32; 4]> {
+        self.liquid_glass_shapes.first().map(|s| s.rect)
+    }
     pub fn wait_idle(&self) {
         self.gpu.wait_idle();
     }
@@ -3568,6 +3852,7 @@ impl Renderer {
             && s.notification.is_none()
             && s.osd.is_none() && s.alert.is_none()
             && immersion > 0.
+            && surface.material != Material::LiquidGlass
             && !s.dynamic_high_contrast
         {
             surface.material = Material::Acrylic;
@@ -3674,6 +3959,7 @@ impl MaterialTheme {
 }
 #[derive(Clone, Copy)]
 pub struct Scene<'a> {
+    pub agent: &'a crate::agent_island::View,
     pub background_opacity: f32,
     pub alert:Option<&'a crate::capsule_alert::Alert>,
     pub alert_rect:Rect,pub alert_radius:f64,pub alert_mix:f64,

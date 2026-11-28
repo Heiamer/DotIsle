@@ -71,30 +71,9 @@ type Host struct {
 	finished bool
 }
 
-func hasStandaloneAllegro() bool {
-	if os.Getenv("DOTISLE_FORCE_INPROC_DESKTOP") == "1" {
-		return false
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return false
-	}
-	dir := filepath.Dir(exe)
-	for _, name := range []string{"DotIsle-Allegro.exe", "DotIsle.Allegro.exe"} {
-		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
-			return true
-		}
-	}
-	return false
-}
-
 func New(data string) *Host { return &Host{data: data} }
 func (h *Host) Apply(state map[string]any) error {
 	if h.finished {
-		return nil
-	}
-	if !h.started && hasStandaloneAllegro() {
-		// 存在独立 DotIsle-Allegro.exe 进程时交由外置引擎托管桌面画布，避免进程内双开冲突。
 		return nil
 	}
 	if h.started {

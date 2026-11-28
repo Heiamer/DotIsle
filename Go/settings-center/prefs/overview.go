@@ -26,7 +26,7 @@ type CardSize struct {
 var OverviewCardIDs = []string{"music", "clock", "todos", "focus", "quick", "stats", "notifications", "widgets",
 	"widget:calendar", "widget:system", "widget:note", "widget:anniversary", "widget:weather", "widget:today",
 	"widget:schedule", "widget:screenTime", "widget:battery", "widget:storage", "widget:worldClock", "widget:launcher", "widget:focusStats",
-	"wireless", "agenda", "cpu", "memory", "week"}
+	"wireless", "agenda", "cpu", "memory", "week", "aiQuota"}
 
 func DefaultOverview() Overview {
 	return Overview{View: "cards", Cards: []string{"music", "widget:calendar", "widget:screenTime", "todos", "focus", "quick"},

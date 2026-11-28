@@ -650,7 +650,77 @@ pub unsafe fn liquid_glass_beta(a: &mut App, dir: &Path) -> Result<(), Box<dyn s
     let card_path = dir.join("liquid-glass-card.png");
     r.snapshot(&card_path)?;
     save_desktop_composite(&card_path, &dir.join("liquid-glass-card-desktop.png"))?;
+    liquid_glass_body_cases(a, &mut r, dir)?;
 
     a.renderer = Some(r);
+    Ok(())
+}
+
+
+/// Capture production shader output with the backdrop held constant while only the seed changes.
+unsafe fn liquid_glass_body_cases(a: &mut App, r: &mut Renderer, dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let dir = dir.join("body-cases");
+    std::fs::create_dir_all(&dir)?;
+    let (w, h) = (r.width, r.height);
+    let mut rows = Vec::new();
+    for (background, base) in [("light", 232i32), ("dark", 30i32)] {
+        let bg = image::RgbaImage::from_fn(w, h, |x, y| {
+            let wave = (f64::from(x) / 38. + f64::from(y) / 27.).sin() * 8.;
+            let line = if (x + y * 2) % 88 < 3 { -12 } else { 0 };
+            let v = (base + wave.round() as i32 + line) as u8;
+            image::Rgba([v, v, v, 255])
+        });
+        bg.save(dir.join(format!("{background}-background.png")))?;
+        // Reset the preceding sample's luma smoothing; each backdrop starts with its own brightness sample.
+        r.release_liquid_glass();
+        r.update_liquid_glass_backdrop(bg.as_raw(), w, h);
+        let card = a.layout.card;
+        for form in ["classic", "mini", "expanded", "immersive"] {
+            let expanded = matches!(form, "expanded" | "immersive");
+            a.settings["IslandSizeMode"] = json!(if form == "mini" { "Mini" } else { "Classic" });
+            a.settings["MiniMaterial"] = json!("LiquidGlass");
+            let immersive = form == "immersive";
+            a.settings["MusicExpandedLayout"] = json!(if immersive { "Immersive" } else { "SideBySide" });
+            a.music_mix = if immersive { 4. } else { 0. };
+            a.layout.card = card;
+            a.layout.set_compact(if form == "mini" { 250. } else { 236. }, if form == "mini" { 22. } else { 42. });
+            a.frame = if expanded { Frame::expanded() } else { Frame::hidden(a.options()) };
+            a.expanded = expanded;
+            for (name, source, custom, enabled, tint) in [
+                ("off", "Custom", 0xff7147, false, 6.),
+                ("warm", "Custom", 0xff7147, true, 6.),
+                ("cool", "Custom", 0x497dff, true, 6.),
+                ("system", "System", 0xff7147, true, 6.),
+                ("cover", "Content", 0xff7147, true, 6.),
+                ("zero-warm", "Custom", 0xff7147, true, 0.),
+                ("zero-cool", "Custom", 0x497dff, true, 0.),
+            ] {
+                if immersive && name != "warm" { continue; }
+                let mut scene = a.scene();
+                scene.has_track = true;
+                scene.playing = true;
+                scene.title = "DIA VERAO";
+                scene.artist = "DotIsle";
+                scene.lyric = "同一背景 · 液态玻璃";
+                scene.animate = false;
+                scene.cover_age_ms = 1000.;
+                scene.lyric_age_ms = 1000.;
+                scene.dynamic_source = source;
+                scene.dynamic_system_seed = Some(0x32c9a6);
+                scene.dynamic_custom_seed = custom;
+                scene.expanded_cover_background = if expanded { enabled } else { !enabled };
+                scene.cover_background = if expanded { !enabled } else { enabled };
+                scene.cover_overlay = false;
+                scene.acrylic_capsule_opacity = 0.;
+                scene.liquid_glass_tint = tint;
+                r.render(&scene, false)?;
+                let bounds = r.preview_glass_rect().ok_or("expected the selected LiquidGlass material")?;
+                let png = format!("{background}-{form}-{name}.png");
+                r.snapshot(&dir.join(&png))?;
+                rows.push(json!({"file":png,"background":background,"form":form,"case":name,"bounds":bounds}));
+            }
+        }
+    }
+    std::fs::write(dir.join("cases.json"), serde_json::to_vec_pretty(&rows)?)?;
     Ok(())
 }

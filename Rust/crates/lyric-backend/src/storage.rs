@@ -65,6 +65,27 @@ impl Sqlite{
         Ok(Self{_library:lib,open:symbol!("sqlite3_open_v2"),close:symbol!("sqlite3_close"),prepare:symbol!("sqlite3_prepare_v2"),step:symbol!("sqlite3_step"),text:symbol!("sqlite3_column_text"),int:symbol!("sqlite3_column_int"),finalize:symbol!("sqlite3_finalize")})
     }
 }
+/// Read a single bounded text cell from a third-party application state DB.
+/// Callers supply only hard-coded SQL and a known database path.
+pub fn readonly_state_text(database: &Path, sql: &'static CStr) -> Option<String> {
+    if !database.is_file() { return None; }
+    let path = CString::new(database.to_str()?).ok()?;
+    unsafe {
+        let api = Sqlite::load().ok()?;
+        let mut db = null_mut();
+        let mut statement = null_mut();
+        let result = if (api.open)(path.as_ptr(), &mut db, 1, std::ptr::null()) == 0
+            && (api.prepare)(db, sql.as_ptr(), -1, &mut statement, null_mut()) == 0
+            && (api.step)(statement) == 100 {
+            let cell = (api.text)(statement, 0);
+            if cell.is_null() { None }
+            else { CStr::from_ptr(cell.cast()).to_str().ok().filter(|v| v.len() <= 16_384).map(str::to_owned) }
+        } else { None };
+        if !statement.is_null() { (api.finalize)(statement); }
+        if !db.is_null() { (api.close)(db); }
+        result
+    }
+}
 impl Drop for Sqlite{fn drop(&mut self){unsafe{let _=windows::Win32::Foundation::FreeLibrary(self._library);}}}
 pub struct MappingDb(pub PathBuf);
 pub struct Mapping{pub title:String,pub artist:String,pub album:Option<String>,pub preferred_provider:Option<String>,pub is_pure_music:bool}

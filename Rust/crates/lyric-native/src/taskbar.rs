@@ -2,11 +2,13 @@
 use windows::core::w;
 use windows::Win32::{
     Foundation::{HWND, LPARAM, RECT},
-    Graphics::Gdi::{MonitorFromRect, HMONITOR, MONITOR_DEFAULTTONEAREST},
+    Graphics::Gdi::{MonitorFromRect, MonitorFromWindow, GetMonitorInfoW, MONITORINFO, HMONITOR, MONITOR_DEFAULTTONEAREST},
     System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD},
+    UI::Shell::{SHAppBarMessage, APPBARDATA, ABM_GETSTATE, ABS_AUTOHIDE},
     UI::WindowsAndMessaging::{
         EnumWindows, FindWindowExW, FindWindowW, GetClassNameW, GetWindow, GetWindowRect,
-        IsWindowVisible, GW_HWNDPREV,
+        IsWindowVisible, GetForegroundWindow, IsIconic, GW_HWNDPREV,
+        GetWindowLongPtrW, GetWindowThreadProcessId, IsZoomed, GWL_STYLE, WS_CAPTION,
     },
 };
 
@@ -85,6 +87,102 @@ unsafe extern "system" fn find_secondary_cb(hwnd: HWND, lparam: LPARAM) -> windo
         }
     }
     true.into()
+}
+
+/// True when at most a reveal strip of the taskbar intersects the monitor.
+fn reveal_strip(taskbar: RECT, monitor: RECT) -> bool {
+    let width = taskbar.right.min(monitor.right) - taskbar.left.max(monitor.left);
+    let height = taskbar.bottom.min(monitor.bottom) - taskbar.top.max(monitor.top);
+    width.min(height) <= 4
+}
+fn covers_monitor(window: RECT, monitor: RECT) -> bool {
+    window.left <= monitor.left + 2 && window.top <= monitor.top + 2 &&
+        window.right >= monitor.right - 2 && window.bottom >= monitor.bottom - 2
+}
+/// Auto-hide only for the foreground fullscreen app on the island's display.
+pub unsafe fn foreground_fullscreen_on(monitor: HMONITOR) -> bool {
+    use windows::Win32::UI::Shell::{SHQueryUserNotificationState, QUNS_RUNNING_D3D_FULL_SCREEN};
+    let Some(window) = foreground_app() else { return false; };
+    let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+    if !GetMonitorInfoW(monitor, &mut info).as_bool() { return false; }
+    if frame_bounds(window).is_some_and(|bounds| fullscreen_frame(bounds, info.rcMonitor, captioned_maximized(window))) {
+        return true;
+    }
+    // The shell's exclusive-game signal is desktop-wide; associate it with
+    // the foreground window's display rather than hiding the island everywhere.
+    MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST) == monitor
+        && SHQueryUserNotificationState().ok() == Some(QUNS_RUNNING_D3D_FULL_SCREEN)
+}
+
+unsafe fn foreground_app() -> Option<HWND> {
+    let window = GetForegroundWindow();
+    if window.is_invalid() || !IsWindowVisible(window).as_bool() || IsIconic(window).as_bool() { return None; }
+    let mut process = 0;
+    GetWindowThreadProcessId(window, Some(&mut process));
+    if process == 0 || process == std::process::id() { return None; }
+    let mut class = [0u16; 64];
+    let n = GetClassNameW(window, &mut class).max(0) as usize;
+    if matches!(String::from_utf16_lossy(&class[..n]).as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd") { return None; }
+    Some(window)
+}
+
+unsafe fn captioned_maximized(window: HWND) -> bool {
+    IsZoomed(window).as_bool() && (GetWindowLongPtrW(window, GWL_STYLE) as u32 & WS_CAPTION.0) == WS_CAPTION.0
+}
+
+/// Protect exclusive Direct3D, borderless fullscreen on any monitor, and a
+/// foreground application that has confined the pointer. Only read OS state.
+pub fn blocks_wellness_interrupt() -> bool {
+    use windows::Win32::UI::{
+        Shell::{SHQueryUserNotificationState, QUNS_RUNNING_D3D_FULL_SCREEN},
+        WindowsAndMessaging::{GetClipCursor, GetSystemMetrics, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN},
+    };
+    unsafe {
+        if SHQueryUserNotificationState().ok() == Some(QUNS_RUNNING_D3D_FULL_SCREEN) { return true; }
+        let Some(foreground) = foreground_app() else { return false; };
+        let mut clip = RECT::default();
+        if GetClipCursor(&mut clip).is_ok() {
+            let (left, top) = (GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN));
+            let desktop = RECT { left, top, right: left + GetSystemMetrics(SM_CXVIRTUALSCREEN), bottom: top + GetSystemMetrics(SM_CYVIRTUALSCREEN) };
+            if desktop.right > left && desktop.bottom > top && clipped_within_desktop(clip, desktop) { return true; }
+        }
+        let Some(bounds) = frame_bounds(foreground) else { return false; };
+        let monitor = MonitorFromRect(&bounds, MONITOR_DEFAULTTONEAREST);
+        let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if !GetMonitorInfoW(monitor, &mut info).as_bool() { return false; }
+        fullscreen_frame(bounds, info.rcMonitor, captioned_maximized(foreground))
+    }
+}
+fn fullscreen_frame(bounds: RECT, monitor: RECT, captioned_maximized: bool) -> bool {
+    !captioned_maximized && covers_monitor(bounds, monitor)
+}
+fn clipped_within_desktop(clip: RECT, desktop: RECT) -> bool {
+    // A border at only one edge is sufficient (e.g. game on an adjacent display).
+    clip.left > desktop.left + 2 || clip.top > desktop.top + 2 || clip.right < desktop.right - 2 || clip.bottom < desktop.bottom - 2
+}
+unsafe fn frame_bounds(window: HWND) -> Option<RECT> {
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+    let mut bounds = RECT::default();
+    if DwmGetWindowAttribute(window, DWMWA_EXTENDED_FRAME_BOUNDS, (&mut bounds as *mut RECT).cast(), std::mem::size_of::<RECT>() as u32).is_err()
+        && GetWindowRect(window, &mut bounds).is_err() { return None; }
+    Some(bounds)
+}
+pub fn top_dock(taskbar: RECT, monitor: RECT) -> bool {
+    taskbar.bottom - taskbar.top < taskbar.right - taskbar.left &&
+        (taskbar.top - monitor.top).abs() < (taskbar.bottom - monitor.bottom).abs()
+}
+pub unsafe fn should_suppress(monitor: HMONITOR, probe: Option<TaskbarProbe>, input: HWND, visual: HWND) -> bool {
+    let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+    if !GetMonitorInfoW(monitor, &mut info).as_bool() { return false; }
+    let mut data = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, ..Default::default() };
+    let auto_hide = SHAppBarMessage(ABM_GETSTATE, &mut data) & ABS_AUTOHIDE as usize != 0;
+    if auto_hide && probe.is_none_or(|p| reveal_strip(p.taskbar, info.rcMonitor)) { return true; }
+    let foreground = GetForegroundWindow();
+    if foreground.is_invalid() || foreground == input || foreground == visual || IsIconic(foreground).as_bool() { return false; }
+    let mut class = [0u16; 64];
+    let n = GetClassNameW(foreground,&mut class).max(0) as usize;
+    if matches!(String::from_utf16_lossy(&class[..n]).as_str(),"Progman"|"WorkerW"|"Shell_TrayWnd"|"Shell_SecondaryTrayWnd") { return false; }
+    frame_bounds(foreground).is_some_and(|bounds| covers_monitor(bounds, info.rcMonitor))
 }
 
 /// 探测目标显示器上正在运行的任务栏及系统托盘安全矩形。
@@ -280,5 +378,43 @@ mod tests {
         assert!(left_cx < mid_cx && mid_cx < right_cx);
         assert!(left_cx - 170. >= 0.);
         assert!(right_cx + 170. <= 1680.);
+    }
+}
+
+#[cfg(test)]
+mod visibility_tests {
+    use super::*;
+    #[test] fn top_and_bottom_reveal_strips_are_not_visible_taskbars() {
+        let m=RECT{left:-1920,top:0,right:0,bottom:1080};
+        for (top,bottom) in [(-46,2),(1078,1126)] { assert!(reveal_strip(RECT{top,bottom,..m},m)); }
+        assert!(!reveal_strip(RECT{bottom:48,..m},m));
+        assert!(top_dock(RECT{bottom:48,..m},m));
+        assert!(!top_dock(RECT{top:1032,..m},m));
+        assert!(covers_monitor(m,m));
+        assert!(!covers_monitor(RECT{top:48,..m},m));
+    }
+}
+
+#[cfg(test)]
+mod foreground_guard_tests {
+    use super::*;
+    fn r(left:i32, top:i32, right:i32, bottom:i32)->RECT { RECT{left,top,right,bottom} }
+
+    #[test]
+    fn recognizes_borderless_fullscreen_on_an_extended_monitor_without_treating_maximized_apps_as_games() {
+        let monitor = r(-1920,120,0,1200);
+        assert!(fullscreen_frame(r(-1921,120,0,1200), monitor, false));
+        assert!(!fullscreen_frame(monitor, monitor, true));
+        assert!(!fullscreen_frame(r(-1920,155,0,1200), monitor, false));
+        assert!(!fullscreen_frame(r(0,0,2560,1440), monitor, false));
+    }
+
+    #[test]
+    fn confinement_to_either_display_is_not_the_full_virtual_desktop() {
+        let desktop = r(-1920,0,2560,1440);
+        assert!(!clipped_within_desktop(desktop,desktop));
+        assert!(clipped_within_desktop(r(-1920,120,0,1200),desktop));
+        assert!(clipped_within_desktop(r(0,0,2560,1440),desktop));
+        assert!(clipped_within_desktop(r(20,30,21,31),desktop));
     }
 }

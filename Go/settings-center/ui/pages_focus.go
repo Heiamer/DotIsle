@@ -1428,16 +1428,28 @@ func (a *App) dialogCard(c *ui.Context, open *bool, dw, dh float32, build func(p
 
 // dialogField is the 68px input field of views.rs dialog: high fill, radius 12,
 // 11px primary label, 15px value input.
+const dialogFieldHeight float32 = 68
+
 func (a *App) dialogField(c *ui.Context, p *Palette, x, y, w float32, label string, value *string, max int) {
+	a.dialogFieldInput(c, p, x, y, w, label, value, max, false, false)
+}
+
+func (a *App) dialogFieldInput(c *ui.Context, p *Palette, x, y, w float32, label string, value *string, max int, password, disabled bool) {
 	s := &p.Scheme
-	field := ui.Box(c).Absolute().Left(x).Top(y).Width(w).Height(68)
+	field := ui.Box(c).Absolute().Left(x).Top(y).Width(w).Height(dialogFieldHeight)
 	surfaceStyle(&field, p, s.Container, FieldRadius)
 	input := ui.TextInputBase(c, value).Absolute().Left(x + 14).Top(y + 26).
-		Width(w - 28).Height(36).Font(UIFont).FontSize(14).TextColor(Col(s.OnSurface)).MaxLength(max)
+		Width(w - 28).Height(36).Font(UIFont).FontSize(14).TextColor(Col(s.OnSurface)).MaxLength(max).Label(label)
+	if password {
+		input.Password()
+	}
+	if disabled {
+		input.Disabled(true)
+	}
 	// Built on every frame, transparent while unfocused: inserting this box on
 	// focus shifted the identity of the panel's later children and dropped the
 	// press already bound to the dialog's buttons (kit.go FieldOutline).
-	FieldOutline(c, x, y, w, 68, 12, input.Focused(), s.Primary)
+	FieldOutline(c, x, y, w, dialogFieldHeight, 12, input.Focused(), s.Primary)
 	Label(c, label, x+14, y+8, 12, s.OnSurfaceVariant, true, w-28)
 }
 

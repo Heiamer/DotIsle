@@ -11,7 +11,7 @@ func (a *App) DetachCenterWindow() {
 // CanIdleExit preserves widget ownership and edits not yet stored by the island.
 func (a *App) CanIdleExit() bool {
 	widgets, known := a.State["desktopWidgets"].([]any)
-	if a.centerVisible || !a.Connected || !known || len(widgets) != 0 || a.asyncRequests.Load() != 0 ||
+	if a.mail.configured || a.centerVisible || !a.Connected || !known || len(widgets) != 0 || a.asyncRequests.Load() != 0 ||
 		stateString(a.State, "", "pendingPage") != "" {
 		return false
 	}

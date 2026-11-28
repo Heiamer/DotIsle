@@ -47,7 +47,7 @@ fn delete_targets_work_in_classic_and_mini_without_stealing_content_or_gestures(
                 let x=shape.x+(close.x+close.w/2.)*scale;
                 let y=shape.y+(close.y+close.h/2.+fixture.app.frame.content_offset_y)*scale;
                 assert_eq!(fixture.app.hit(x,y),hit,"{mode} {width} {id} {reveal}");
-                assert!(!fixture.app.can_swipe(hit));assert!(!fixture.app.can_hide(hit));
+                assert!(!fixture.app.can_swipe(hit));
             }
             let panel=fixture.app.panel.as_ref();
             assert_eq!(layout::mini_hit(width,220.,panel,close.x+close.w/2.,close.y+close.h/2.),hit);

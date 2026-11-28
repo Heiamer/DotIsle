@@ -56,7 +56,7 @@ func overviewName(key string) string {
 	if key == "information" {
 		return "信息组件"
 	}
-	names := map[string]string{"music": "音乐", "clock": "时钟与日历", "todos": "待办事项", "focus": "专注计时", "quick": "快捷设置", "stats": "使用概况", "notifications": "通知记录", "widgets": "桌面组件", "wireless": "无线设备电量", "agenda": "接下来", "cpu": "处理器", "memory": "内存", "week": "本周进度"}
+	names := map[string]string{"music": "音乐", "clock": "时钟与日历", "todos": "待办事项", "focus": "专注计时", "quick": "快捷设置", "aiQuota": "AI 额度", "stats": "使用概况", "notifications": "通知记录", "widgets": "桌面组件", "wireless": "无线设备电量", "agenda": "接下来", "cpu": "处理器", "memory": "内存", "week": "本周进度"}
 	if name := names[key]; name != "" {
 		return name
 	}

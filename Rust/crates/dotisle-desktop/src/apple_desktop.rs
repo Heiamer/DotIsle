@@ -45,7 +45,7 @@ pub struct CardExtras<'a> {
     pub stack_info: Option<(usize, usize)>,
     /// 杂志日签当前语录索引。
     pub quote_index: usize,
-    /// 直接透传的组件配置（用于独立侧边栏卡片，不依赖桌面列表查找）。
+    /// 直接透传的组件配置，不依赖桌面列表查找。
     pub config_override: Option<&'a widget_config::Config>,
 }
 

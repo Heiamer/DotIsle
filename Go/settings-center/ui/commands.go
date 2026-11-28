@@ -75,5 +75,12 @@ func (a *App) applyCommandReply(name string, reply map[string]any, err error) bo
 		a.State["reminderPlugins"] = reminders
 		a.pushToast("已保存")
 	}
+	if today, ok := reply["hydrationToday"]; ok {
+		if a.State == nil {
+			a.State = map[string]any{}
+		}
+		a.State["hydrationToday"] = today
+		a.pushToast(stateString(reply, "已记录喝水", "message"))
+	}
 	return name == "moduleApply"
 }

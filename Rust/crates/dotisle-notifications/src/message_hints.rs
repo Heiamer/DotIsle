@@ -1,7 +1,7 @@
 //! Taskbar signals for metadata-only message reminders.
 use std::{collections::HashMap,time::{Duration,Instant}};
 
-#[derive(Clone,Copy,Debug,PartialEq,Eq,Hash)]
+#[derive(Clone,Copy,Debug,PartialEq,Eq,Hash,serde::Deserialize)]
 pub enum App { WeChat, Feishu, DingTalk, WeCom }
 impl App {
     pub fn id(self)->&'static str { match self { Self::WeChat=>"WeChat",Self::Feishu=>"Feishu",Self::DingTalk=>"DingTalk",Self::WeCom=>"WXWork" } }
@@ -9,7 +9,7 @@ impl App {
     pub fn setting(self)->&'static str { match self { Self::WeChat=>"WeChatMessageHintsEnabled",Self::Feishu=>"FeishuMessageHintsEnabled",Self::DingTalk=>"DingTalkMessageHintsEnabled",Self::WeCom=>"WeComMessageHintsEnabled" } }
     pub fn uses_toast(self)->bool { self!=Self::WeChat }
     pub fn content_only(self)->bool { matches!(self,Self::Feishu|Self::DingTalk) }
-    pub fn notice(self)->crate::notifications::Notice { crate::notifications::Notice { app_id:self.id().into(),app_name:self.name().into(),title:if self.content_only(){String::new()}else{"有新消息".into()},..Default::default() } }
+    pub fn notice(self)->crate::notifications::Notice { crate::notifications::Notice { app_id:self.id().into(),app_name:self.name().into(),title:"有新消息".into(),..Default::default() } }
 }
 
 pub fn from_executable(path:&str)->Option<App> {
@@ -68,7 +68,7 @@ impl Shell {
         let mut result=Vec::new();let mut msg=MSG::default();
         for _ in 0..256 { if !PeekMessageW(&mut msg,Some(self.window),0,0,PM_REMOVE).as_bool(){break}
             if msg.message==self.message&&msg.wParam.0==0x8006 {
-                if let Some((app,executable))=window_identity(HWND(msg.lParam.0 as *mut _)) { if !result.iter().any(|s:&Signal|s.app==app){result.push(Signal{app,executable})} }
+                if let Some((app,executable))=window_identity(HWND(msg.lParam.0 as *mut _)) { if !app.content_only()&&!result.iter().any(|s:&Signal|s.app==app){result.push(Signal{app,executable})} }
             }
             let _=DispatchMessageW(&msg);
         } result
@@ -101,12 +101,12 @@ unsafe fn window_identity(window:windows::Win32::Foundation::HWND)->Option<(App,
         for name in ["FakeWeChat.exe","WeChatAppEx.exe","DingTalkUpdater.exe","QQMusic.exe"] {assert_eq!(from_executable(name),None)}
         assert_eq!(identify("FakeWeChat",""),None);
     }
-    #[test] fn wechat_is_a_shell_only_hint() {
-        assert!(!App::WeChat.uses_toast());
+    #[test] fn wechat_is_a_metadata_only_hint_with_toast_fallback() {
         assert!(!App::WeChat.content_only());
         let hint:Hint=App::WeChat.into();
         assert_eq!(hint.app_id,"WeChat");
         assert_eq!(hint.app_name,"微信");
+        assert!(hint.icon.is_none());
     }
     #[test] fn flashing_and_toast_share_cooldown_without_replaying_foreground() {
         let mut gate=Gate::default();let now=Instant::now();let a=App::WeChat;

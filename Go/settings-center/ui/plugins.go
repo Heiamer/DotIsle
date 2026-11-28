@@ -60,6 +60,8 @@ func (a *App) pluginsPage(c *ui.Context, x, y, w float32) float32 {
 	p, s := &a.Palette, &a.Palette.Scheme
 	y = a.reminderPluginRows(c, x, y, w)
 	y = a.overviewPluginRow(c, x, y, w)
+	y = a.quotaPluginRow(c, x, y, w)
+	y = a.mailPluginRow(c, x, y, w)
 	Label(c, "插件积木", x, y, 24, s.OnSurface, true, w-170)
 	Button(c, p, "安装插件", x+w-150, y, 150, 38, "添加本地插件", "add", true, a.Connected, func() {
 		if a.Win != nil {
@@ -135,6 +137,64 @@ func reminderMinutes(text string) (int, bool) {
 	return v, err == nil && v >= 1 && v <= 1440
 }
 
+func hydrationAmounts(goalText, servingText string) (int, int, bool) {
+	goal, e1 := strconv.Atoi(strings.TrimSpace(goalText))
+	serving, e2 := strconv.Atoi(strings.TrimSpace(servingText))
+	return goal, serving, e1 == nil && e2 == nil && goal >= 100 && goal <= 10000 && serving >= 10 && serving <= 3000 && serving <= goal
+}
+
+func (a *App) hydrationPlanRows(c *ui.Context, p *Palette, x, y, w float32, value map[string]any, available bool) {
+	s := &p.Scheme
+	goal, serving := &a.reminderFields[2], &a.reminderFields[3]
+	for i, item := range []struct {
+		key, label string
+		draft      *leafEditField
+	}{{"goalMl", "每日总目标（mL）", goal}, {"servingMl", "每次喝多少（mL）", serving}} {
+		stored, ok := stateFloat(value, item.key)
+		native := ""
+		if ok && stored > 0 {
+			native = strconv.Itoa(int(stored))
+		}
+		if !item.draft.seeded || native != item.draft.lastNative {
+			item.draft.text, item.draft.lastNative, item.draft.seeded = native, native, true
+		}
+		fieldWidth := min(float32(156), (w-155)/2)
+		left := x + 22 + float32(i)*(fieldWidth+12)
+		Label(c, item.label, left, y+134, 12, s.OnSurfaceVariant, false, fieldWidth)
+		input := ui.TextInput(c, &item.draft.text).Absolute().Left(left).Top(y + 156).Width(fieldWidth).Height(40).
+			FontSize(14).TextColor(Col(s.OnSurface)).Label(item.label).MaxLength(5)
+		fieldStyle(&input, p)
+		if !available {
+			input.Disabled(true)
+		}
+	}
+	g, per, valid := hydrationAmounts(goal.text, serving.text)
+	changed := strconv.Itoa(g) != goal.lastNative || strconv.Itoa(per) != serving.lastNative
+	fieldWidth := min(float32(156), (w-155)/2)
+	Button(c, p, "保存喝水目标", x+58+2*fieldWidth, y+156, 84, 40, "保存目标", "", true, available && valid && changed, func() {
+		a.command("reminderPluginConfigure", map[string]any{"id": "hydration", "goalMl": g, "servingMl": per})
+	})
+	stats, _ := a.State["hydrationToday"].(map[string]any)
+	drank, _ := stateFloat(stats, "drankMl")
+	storedGoal, goalKnown := stateFloat(value, "goalMl")
+	storedServing, servingKnown := stateFloat(value, "servingMl")
+	progress := "今日进度 · 暂不可用"
+	if available && goalKnown {
+		progress = "今日已喝 " + strconv.Itoa(int(drank)) + " / " + strconv.Itoa(int(storedGoal)) + " mL"
+		if drank >= storedGoal {
+			progress += " · 已达标"
+		}
+	}
+	Label(c, progress, x+22, y+220, 13, s.OnSurface, true, w-188)
+	text := "记录喝水"
+	if servingKnown {
+		text = "记录 " + strconv.Itoa(int(storedServing)) + " mL"
+	}
+	Button(c, p, "记录一次喝水", x+w-154, y+208, 132, 36, text, "", true, available && servingKnown, func() {
+		a.command("hydrationRecord", nil)
+	})
+}
+
 func (a *App) reminderPluginRows(c *ui.Context, x, y, w float32) float32 {
 	p, s := &a.Palette, &a.Palette.Scheme
 	Label(c, "内置插件", x, y, 24, s.OnSurface, true, w)
@@ -144,7 +204,10 @@ func (a *App) reminderPluginRows(c *ui.Context, x, y, w float32) float32 {
 		{"sedentary", "久坐提醒", "连续用机时计时；离席后重新计时。"},
 		{"hydration", "喝水提醒", "累计活跃用机时间；离席期间暂停。"},
 	} {
-		const height = 138
+		height := float32(138)
+		if plugin.id == "hydration" {
+			height = 263
+		}
 		if y+height < a.scrollY() || y > a.scrollY()+float32(clipH) {
 			y += height + 12
 			continue
@@ -185,6 +248,9 @@ func (a *App) reminderPluginRows(c *ui.Context, x, y, w float32) float32 {
 		}
 		Label(c, "分钟", x+30+fieldWidth, y+90, 12, s.OnSurfaceVariant, false, 32)
 		Button(c, p, "保存"+plugin.name+"间隔", x+70+fieldWidth, y+78, 76, 40, "保存", "", true, canSave, save)
+		if plugin.id == "hydration" {
+			a.hydrationPlanRows(c, p, x, y, w, value, available)
+		}
 		y += height + 12
 	}
 	return y + 22

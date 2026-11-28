@@ -289,8 +289,8 @@ func (a *App) islandTabMaterial(c *ui.Context, p *Palette, x, y, w float32) floa
 	a.anchorPicker(entry, "IslandDynamicSeedColor")
 	y += 64
 	y = a.islandToggles(c, p, x, y, w, []islandToggleRow{
-		{"胶囊与迷你细条动态色彩", "收起形态的独立开关，与展开卡片互不影响。", "CoverBackground", false},
-		{"展开卡片动态色彩", "从选定来源生成强调色与主题氛围。", "ExpandedMonetEnabled", true},
+		{"胶囊与迷你细条动态色彩", "让收起时的液态玻璃本体随选定色源变色，不影响展开卡片。", "CoverBackground", false},
+		{"展开卡片动态色彩", "让展开卡片的液态玻璃本体随选定色源变色，也生成主题强调色。", "ExpandedMonetEnabled", true},
 		{"歌词进度涂色", "跟随演唱进度填充原文歌词。", "WordHighlight", true},
 		{"歌词填色动态色彩", "使用同一来源的强调色，与展开卡片背景独立；关闭后使用下方自定填色。", "LyricColorFromCover", true},
 		{"封面磨砂叠层", "在亚克力与曜光玻璃展开卡片中叠加高级氛围色场封面。", "ExpandedCoverOverlay", false},
@@ -322,7 +322,7 @@ func (a *App) islandTabMaterial(c *ui.Context, p *Palette, x, y, w float32) floa
 	y = a.islandRange(c, p, x, y, w, "边缘折射强度", "LiquidGlassRefraction", 76, 0, 100, "%")
 	y = a.islandRange(c, p, x, y, w, "边缘色散", "LiquidGlassDispersion", 46, 0, 100, "%")
 	y = a.islandRange(c, p, x, y, w, "背景模糊", "LiquidGlassBlur", 8, 0, 100, "%")
-	y = a.islandRange(c, p, x, y, w, "玻璃着色深度", "LiquidGlassTint", 6, 0, 100, "%")
+	y = a.islandRange(c, p, x, y, w, "玻璃本体着色深度（0% 不染色）", "LiquidGlassTint", 6, 0, 100, "%")
 	return y
 }
 
@@ -360,12 +360,11 @@ func (a *App) islandTabGestures(c *ui.Context, p *Palette, x, y, w float32) floa
 		{"左右滑动切换", "在胶囊或卡片空白处拖动，切换音乐、计时与待办。", "SwipeActivities", true},
 	})
 	y = a.islandHeading(c, p, "隐藏行为", x, y, w)
-	y = a.islandChoices(c, p, x, y, w, "隐藏方式", "HideTrigger", "RightClick",
-		[][2]string{{"右键隐藏", "RightClick"}, {"上滑隐藏", "SwipeUp"}})
 	y = a.islandChoices(c, p, x, y, w, "隐藏后显示", "HiddenDisplay", "Strip",
 		[][2]string{{"无显示", "None"}, {"蓝条", "Strip"}, {"Mini", "Mini"}})
 	y = a.islandToggles(c, p, x, y, w, []islandToggleRow{
-		{"鼠标触碰边缘显示", "仅在「隐藏后显示」为无显示时生效；点击任务栏托盘也可找回。", "EdgeHoverRevealEnabled", false},
+		{"全屏时自动隐藏", "灵动岛所在屏幕有前台全屏应用时隐藏，退出全屏后自动恢复。", "HideIslandWhenFullscreen", false},
+		{"鼠标触碰边缘显示", "右键可隐藏灵动岛；设为无显示时可触碰边缘或用托盘找回。", "EdgeHoverRevealEnabled", false},
 		{"自由悬浮", "允许直接按住胶囊或卡片拖动到任意位置或屏幕，并自动保存。", "Floating", false},
 		{"点击封面或歌名打开播放器", "只影响音乐卡片的封面和标题。", "MusicClickOpenApp", false},
 	})

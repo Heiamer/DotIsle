@@ -176,8 +176,6 @@ pub struct AllegroCardContext<'a> {
     pub pro: Option<&'a allegro::telemetry::ProTelemetry>,
     pub stack_info: Option<(usize, usize)>,
     pub quote_index: usize,
-    /// 是否运行在右侧独立侧边栏中（自动启用通透雾面玻璃与侧边栏专用微配色）。
-    pub in_sidebar: bool,
 }
 
 fn scheme_from_tokens(t: allegro::theme::ThemeTokens) -> dotisle_domain::monet::Scheme {
@@ -228,7 +226,7 @@ pub fn render_allegro_card(
         opacity,
         radius: tokens.radius,
         accent: accent_override,
-        blur_wallpaper: !ctx.in_sidebar,
+        blur_wallpaper: true,
     };
 
     let mut ui = Ui::new(&mut scene, text, s, ctx.pointer, rect(0., 0., w, h));
@@ -483,201 +481,7 @@ pub fn paint_apple_context_menu(
     panel
 }
 
-/// 绘制右侧侧边栏独立组件的右键菜单（所有操作仅影响侧边栏独立列表，不与桌面同步）。
-pub fn paint_sidebar_context_menu(
-    ui: &mut crate::widgets::Ui,
-    p: &dotisle_domain::desktop_widgets::Placement,
-    origin: (f64, f64),
-    dark: bool,
-) -> vello::kurbo::Rect {
-    use allegro::theme::{rgba, squircle_path, WidgetMaterial};
-    use vello::kurbo::{Affine, Stroke};
-    use vello::peniko::Fill;
-
-    let panel = rect(origin.0, origin.1, CONTEXT_MENU_W, CONTEXT_MENU_H);
-    let rad = 14.0;
-    let shape = squircle_path(panel, rad);
-
-    ui.scene.fill(
-        Fill::NonZero,
-        Affine::translate((0., 8.)),
-        rgba(0x000000, if dark { 0.42 } else { 0.18 }),
-        None,
-        &squircle_path(panel, rad),
-    );
-    ui.scene.fill(
-        Fill::NonZero,
-        Affine::translate((0., 2.)),
-        rgba(0x000000, if dark { 0.24 } else { 0.10 }),
-        None,
-        &squircle_path(panel, rad),
-    );
-
-    let bg = if dark { rgba(0x161A24, 0.82) } else { rgba(0xF8FAFE, 0.86) };
-    ui.scene.fill(Fill::NonZero, Affine::IDENTITY, bg, None, &shape);
-    ui.scene.stroke(
-        &Stroke::new(0.8),
-        Affine::IDENTITY,
-        rgba(if dark { 0xFFFFFF } else { 0x0F172A }, if dark { 0.16 } else { 0.08 }),
-        None,
-        &shape,
-    );
-    ui.scene.stroke(
-        &Stroke::new(0.9),
-        Affine::IDENTITY,
-        rgba(0xFFFFFF, if dark { 0.22 } else { 0.72 }),
-        None,
-        &squircle_path(rect(panel.x0 + 1.0, panel.y0 + 1.0, panel.width() - 2.0, panel.height() - 2.0), rad - 1.0),
-    );
-
-    let fg = if dark { 0xF5F7FA } else { 0x1D1D1F };
-    let muted = if dark { 0xA1A8B8 } else { 0x6E737D };
-    let groove_col = rgba(if dark { 0xFFFFFF } else { 0x0F172A }, if dark { 0.08 } else { 0.055 });
-    let pill_active = rgba(if dark { 0x3A3F50 } else { 0xFFFFFF }, 1.0);
-    let pad = 8.0;
-    let inner_w = CONTEXT_MENU_W - pad * 2.0;
-
-    // 1. 区块尺寸分段控制器：小 (1×1) / 大 (2×1) / 特大 (2×2)
-    let seg1_y = panel.y0 + 7.0;
-    ui.scene.fill(
-        Fill::NonZero,
-        Affine::IDENTITY,
-        groove_col,
-        None,
-        &squircle_path(rect(panel.x0 + pad, seg1_y, inner_w, 24.0), 8.0),
-    );
-    let sw = inner_w / 3.0;
-    for (i, choice) in Size::ALL.iter().enumerate() {
-        let r = rect(panel.x0 + pad + i as f64 * sw + 2.0, seg1_y + 2.0, sw - 4.0, 20.0);
-        let active = p.size == *choice;
-        let hovered = r.contains(ui.pointer);
-        if active {
-            ui.scene.fill(Fill::NonZero, Affine::IDENTITY, pill_active, None, &squircle_path(r, 6.0));
-        } else if hovered {
-            ui.scene.fill(
-                Fill::NonZero,
-                Affine::IDENTITY,
-                rgba(if dark { 0xFFFFFF } else { 0x000000 }, 0.06),
-                None,
-                &squircle_path(r, 6.0),
-            );
-        }
-        ui.center(choice.label(), r, 10.5, if active { fg } else { muted }, active);
-        ui.hit(r, choice.label(), Action::SidebarSetSize(p.id.clone(), *choice), true);
-    }
-
-    // 2. 透明亚克力挡位分段控制器：柔雾 / 清透
-    let seg2_y = seg1_y + 28.0;
-    let cur_mat = WidgetMaterial::from_str_opt(&p.material);
-    ui.scene.fill(
-        Fill::NonZero,
-        Affine::IDENTITY,
-        groove_col,
-        None,
-        &squircle_path(rect(panel.x0 + pad, seg2_y, inner_w, 24.0), 8.0),
-    );
-    let mat_items = [
-        (WidgetMaterial::Lumen, "柔雾"),
-        (WidgetMaterial::Acrylic, "清透"),
-    ];
-    let mw = inner_w / 2.0;
-    for (i, (m_kind, lbl)) in mat_items.iter().enumerate() {
-        let r = rect(panel.x0 + pad + i as f64 * mw + 2.0, seg2_y + 2.0, mw - 4.0, 20.0);
-        let active = cur_mat == *m_kind;
-        let hovered = r.contains(ui.pointer);
-        if active {
-            ui.scene.fill(Fill::NonZero, Affine::IDENTITY, pill_active, None, &squircle_path(r, 6.0));
-        } else if hovered {
-            ui.scene.fill(
-                Fill::NonZero,
-                Affine::IDENTITY,
-                rgba(if dark { 0xFFFFFF } else { 0x000000 }, 0.06),
-                None,
-                &squircle_path(r, 6.0),
-            );
-        }
-        ui.center(lbl, r, 10.5, if active { fg } else { muted }, active);
-        ui.hit(r, lbl, Action::SidebarSetMaterial(p.id.clone(), m_kind.as_str().into()), true);
-    }
-
-    let div_col = rgba(if dark { 0xFFFFFF } else { 0x0F172A }, if dark { 0.11 } else { 0.09 });
-    let div1_y = seg2_y + 28.0;
-    ui.scene.fill(
-        Fill::NonZero,
-        Affine::IDENTITY,
-        div_col,
-        None,
-        &rect(panel.x0 + 10.0, div1_y, CONTEXT_MENU_W - 20.0, 0.7),
-    );
-
-    let row_h = 22.0;
-    let row1_y = div1_y + 3.0;
-    if p.kind == Kind::AppFolder {
-        let is_nine = p.config.caption.trim() == "9";
-        menu_row(
-            ui,
-            rect(panel.x0 + 6.0, row1_y, CONTEXT_MENU_W - 12.0, row_h),
-            if is_nine { "切换为 4 宫格 (2×2)" } else { "切换为 9 宫格 (3×3)" },
-            Action::SidebarAppFolderToggleGrid(p.id.clone()),
-            fg,
-            false,
-            dark,
-        );
-    } else {
-        menu_row(
-            ui,
-            rect(panel.x0 + 6.0, row1_y, CONTEXT_MENU_W - 12.0, row_h),
-            "区块顺序前移",
-            Action::SidebarMove(p.id.clone(), -1),
-            fg,
-            false,
-            dark,
-        );
-    }
-    let row2_y = row1_y + row_h + 1.5;
-    menu_row(
-        ui,
-        rect(panel.x0 + 6.0, row2_y, CONTEXT_MENU_W - 12.0, row_h),
-        "区块顺序后移",
-        Action::SidebarMove(p.id.clone(), 1),
-        fg,
-        false,
-        dark,
-    );
-    let row3_y = row2_y + row_h + 1.5;
-    menu_row(
-        ui,
-        rect(panel.x0 + 6.0, row3_y, CONTEXT_MENU_W - 12.0, row_h),
-        "编辑侧边栏区块…",
-        Action::SidebarToggleEdit,
-        fg,
-        false,
-        dark,
-    );
-
-    let div2_y = row3_y + row_h + 3.0;
-    ui.scene.fill(
-        Fill::NonZero,
-        Affine::IDENTITY,
-        div_col,
-        None,
-        &rect(panel.x0 + 10.0, div2_y, CONTEXT_MENU_W - 20.0, 0.7),
-    );
-
-    let row4_y = div2_y + 3.0;
-    menu_row(
-        ui,
-        rect(panel.x0 + 6.0, row4_y, CONTEXT_MENU_W - 12.0, row_h),
-        "从侧边栏移除",
-        Action::SidebarRemoveWidget(p.id.clone()),
-        if dark { 0xFF453A } else { 0xFF3B30 },
-        true,
-        dark,
-    );
-
-    panel
-}
-
+/// Draw one row in the desktop widget context menu.
 fn menu_row(
     ui: &mut crate::widgets::Ui,
     r: vello::kurbo::Rect,

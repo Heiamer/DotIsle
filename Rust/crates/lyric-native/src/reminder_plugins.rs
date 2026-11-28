@@ -2,6 +2,26 @@ use serde_json::{json, Value};
 
 pub const AWAY_MS: u64 = 5 * 60_000;
 const MAX_MINUTES: u64 = 1_440;
+const MAX_LOGGED_ML: u64 = 100_000;
+
+#[derive(Clone, Copy, Debug)]
+pub struct Hydration {
+    pub goal_ml: u64,
+    pub serving_ml: u64,
+    pub drank_ml: u64,
+}
+
+impl Hydration {
+    pub fn log(self, date: &str) -> Result<Value, &'static str> {
+        let total = self.drank_ml + self.serving_ml;
+        if total > MAX_LOGGED_ML { return Err("今天的记录已达到上限"); }
+        Ok(json!({"date":date,"drankMl":total}))
+    }
+}
+
+fn amount(value: &Value, min: u64, max: u64) -> Option<u64> {
+    value.as_u64().filter(|v| (min..=max).contains(v))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -25,6 +45,8 @@ impl Kind {
 struct Preference {
     minutes: Option<u64>,
     enabled: bool,
+    goal_ml: u64,
+    serving_ml: u64,
 }
 
 fn minutes(value: &Value) -> Option<u64> {
@@ -34,10 +56,19 @@ fn minutes(value: &Value) -> Option<u64> {
 impl Preference {
     fn read(value: &Value) -> Self {
         let minutes = minutes(&value["minutes"]);
-        Self { minutes, enabled: minutes.is_some() && value["enabled"] == true }
+        let goal_ml = amount(&value["goalMl"], 100, 10_000).unwrap_or(2000);
+        let serving_ml = amount(&value["servingMl"], 10, 3000).filter(|v| *v <= goal_ml).unwrap_or(250.min(goal_ml));
+        Self { minutes, enabled: minutes.is_some() && value["enabled"] == true, goal_ml, serving_ml }
     }
 
-    fn value(self) -> Value { json!({"minutes":self.minutes,"enabled":self.enabled}) }
+    fn value(self, kind: Kind) -> Value {
+        let mut result = json!({"minutes":self.minutes,"enabled":self.enabled});
+        if kind == Kind::Water {
+            result["goalMl"] = json!(self.goal_ml);
+            result["servingMl"] = json!(self.serving_ml);
+        }
+        result
+    }
 }
 
 #[derive(Default)]
@@ -52,7 +83,15 @@ impl Scheduler {
     }
 
     pub fn state(&self) -> Value {
-        Value::Object(Kind::ALL.into_iter().map(|k| (k.id().into(), self.preferences[k as usize].value())).collect())
+        Value::Object(Kind::ALL.into_iter().map(|k| (k.id().into(), self.preferences[k as usize].value(k))).collect())
+    }
+
+    pub fn hydration(&self, stored: &Value, date: &str) -> Hydration {
+        let p = self.preferences[Kind::Water as usize];
+        let drank_ml = if stored["date"].as_str() == Some(date) {
+            amount(&stored["drankMl"], 0, MAX_LOGGED_ML).unwrap_or(0)
+        } else { 0 };
+        Hydration { goal_ml: p.goal_ml, serving_ml: p.serving_ml, drank_ml }
     }
 
     pub fn enabled(&self) -> bool { self.preferences.iter().any(|p| p.enabled) }
@@ -61,6 +100,17 @@ impl Scheduler {
     pub fn proposed(&self, request: &Value) -> Result<(Kind, Value), &'static str> {
         let kind = Kind::ALL.into_iter().find(|k| request["id"] == k.id()).ok_or("内置插件不存在")?;
         let mut p = self.preferences[kind as usize];
+        if request.get("goalMl").is_some() || request.get("servingMl").is_some() {
+            if kind != Kind::Water || request.get("minutes").is_some() || request.get("enabled").is_some() {
+                return Err("饮水计划设置无效");
+            }
+            p.goal_ml = amount(&request["goalMl"], 100, 10_000).ok_or("每日目标须为 100–10000 毫升的整数")?;
+            p.serving_ml = amount(&request["servingMl"], 10, 3000).filter(|v| *v <= p.goal_ml)
+                .ok_or("每次须为 10–3000 毫升的整数，且不能超过每日目标")?;
+            let mut next = self.state();
+            next[kind.id()] = p.value(kind);
+            return Ok((kind, next));
+        }
         match (request.get("minutes"), request.get("enabled")) {
             (Some(value), None) => p.minutes = Some(minutes(value).ok_or("请输入 1–1440 之间的整数分钟")?),
             (None, Some(value)) => {
@@ -70,7 +120,7 @@ impl Scheduler {
             _ => return Err("缺少有效的插件设置"),
         }
         let mut next = self.state();
-        next[kind.id()] = p.value();
+        next[kind.id()] = p.value(kind);
         Ok((kind, next))
     }
 
@@ -78,8 +128,10 @@ impl Scheduler {
         let i = kind as usize;
         let preference = Preference::read(&next[kind.id()]);
         if self.preferences[i] == preference { return false; }
-        self.preferences[i] = preference;
-        self.progress[i] = 0;
+        let previous = std::mem::replace(&mut self.preferences[i], preference);
+        if previous.minutes != preference.minutes || previous.enabled != preference.enabled {
+            self.progress[i] = 0;
+        }
         true
     }
 
@@ -109,6 +161,23 @@ impl Scheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hydration_targets_validate_and_logging_is_local_day_scoped() {
+        let mut s = Scheduler::new(&json!({}));
+        assert!(!s.enabled());
+        for (goal, serving) in [(99, 15), (150, 151), (3000, 3001), (1600, 0)] {
+            assert!(s.proposed(&json!({"id":"hydration","goalMl":goal,"servingMl":serving})).is_err());
+        }
+        let (k,next) = s.proposed(&json!({"id":"hydration","goalMl":1500,"servingMl":180})).unwrap();
+        assert!(s.apply(k, &next));
+        assert!(!s.enabled());
+        let empty = s.hydration(&Value::Null, "2026-11-28");
+        let log = empty.log("2026-11-28").unwrap();
+        assert_eq!(empty.goal_ml, 1500);
+        assert_eq!(s.hydration(&log, "2026-11-28").drank_ml, 180);
+        assert_eq!(s.hydration(&log, "2026-11-29").drank_ml, 0);
+    }
 
     fn setup() -> Scheduler {
         Scheduler::new(&json!({"sedentary":{"enabled":true,"minutes":1},"hydration":{"enabled":true,"minutes":1}}))
